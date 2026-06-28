@@ -1,0 +1,30 @@
+# ──────────────────────────────────────────────────────────────────────────
+# Personal records — these contain PII (names, address, partial card / GSTIN,
+# Dell service tags, AWBs, order numbers). They are kept LOCAL and NOT committed
+# by default. The *system* (scripts, schema, docs) IS versioned.
+#
+# To version your records too (ONLY in a private repo you control), delete the
+# two lines below — or force-add a file with:  git add -f data/invoices.jsonl
+# ──────────────────────────────────────────────────────────────────────────
+/data/*.jsonl
+/documents/**/*.pdf
+
+# Atomic-write temp files from store.py
+/data/*.jsonl.tmp
+
+# Local Claude Code settings (machine-specific)
+/.claude/settings.local.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Misc temp
+*.tmp
+*.bak
