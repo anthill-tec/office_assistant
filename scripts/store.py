@@ -130,6 +130,16 @@ def cmd_query(a):
             val = getp(r, k)
             if val is None or sub.lower() not in str(val).lower():
                 return False
+        for w in (a.after or []):
+            k, _, d = w.partition("=")
+            val = getp(r, k)
+            if val is None or str(val)[:10] < d:  # ISO date >= bound (inclusive); datetime -> date portion
+                return False
+        for w in (a.before or []):
+            k, _, d = w.partition("=")
+            val = getp(r, k)
+            if val is None or str(val)[:10] > d:  # ISO date <= bound (inclusive)
+                return False
         return True
     res = [r for r in rows if ok(r)]
     if a.sort:
@@ -208,6 +218,10 @@ def main():
         sp.add_argument("type", choices=STORES.keys())
     q = sub.add_parser("query"); with_type(q)
     q.add_argument("--where", action="append"); q.add_argument("--contains", action="append")
+    q.add_argument("--after", action="append",
+                   help="FIELD=YYYY-MM-DD: keep rows where ISO date FIELD >= value (inclusive); repeatable, dotted paths ok")
+    q.add_argument("--before", action="append",
+                   help="FIELD=YYYY-MM-DD: keep rows where ISO date FIELD <= value (inclusive); repeatable")
     q.add_argument("--fields"); q.add_argument("--sort"); q.add_argument("--limit", type=int)
     q.add_argument("--expand", help="comma list of FK fields to resolve inline (e.g. contact_id,invoice_id)")
     q.set_defaults(func=cmd_query)

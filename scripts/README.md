@@ -24,8 +24,10 @@ python3 scripts/store.py rm invoices doc_x
 python3 scripts/store.py stats invoices --by acct
 ```
 
-Filters: `--where field=value` (exact), `--contains field=substr` (case-insensitive); both accept
-**dotted paths** (`source.email_id`, `registration.done`). `--fields a,b,c` projects; `--sort`, `--limit`.
+Filters: `--where field=value` (exact), `--contains field=substr` (case-insensitive), and date-range
+`--after field=YYYY-MM-DD` / `--before field=YYYY-MM-DD` (ISO date, **inclusive** on both ends; null/missing
+dates are excluded). All are repeatable and AND-combined, and accept **dotted paths** (`source.email_id`,
+`registration.done`, `last_contact.date`). `--fields a,b,c` projects; `--sort`, `--limit`.
 Output is compact JSON on stdout; warnings go to stderr; writes are atomic (temp + replace).
 
 ## Conventions

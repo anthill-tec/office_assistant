@@ -19,7 +19,7 @@ Types: `contacts` · `invoices` · `warranties` · `cases` · `products`. Full f
 
 ```bash
 # read — filter + project only what you need (dotted paths supported: source.email_id, registration.done)
-python3 scripts/store.py query <type> [--where f=v] [--contains f=sub] [--fields a,b.c] [--sort f] [--limit N]
+python3 scripts/store.py query <type> [--where f=v] [--contains f=sub] [--after f=YYYY-MM-DD] [--before f=YYYY-MM-DD] [--fields a,b.c] [--sort f] [--limit N]   # --after/--before = inclusive ISO date range
 python3 scripts/store.py get <type> <id> [--fields ...] [--expand <fk,fk>]   # --expand resolves FKs inline as <fk>_obj
 
 # write — id + updated auto-filled; --json takes ONE object OR an array (bulk); add de-dupes by id
