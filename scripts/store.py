@@ -244,50 +244,57 @@ def cmd_get(a):
 
 
 def cmd_add(a):
+    import oa_mongo
+    from pymongo.errors import DuplicateKeyError
     payload = json.loads(a.json)
     recs = payload if isinstance(payload, list) else [payload]
-    rows = load(a.type)
-    existing = {r.get("id") for r in rows}
+    coll = oa_mongo.coll(a.type)
+    existing = {d["id"] for d in coll.find({}, {"id": 1, "_id": 0})}
     added, skipped = [], []
     for rec in recs:
         rec["id"] = rec.get("id") or gen_id(a.type, rec, existing)
         if rec["id"] in existing:
             skipped.append(rec["id"]); continue
         rec.setdefault("updated", today())
-        rows.append(rec); existing.add(rec["id"]); added.append(rec["id"])
-    save(a.type, rows)
+        try:
+            coll.insert_one(dict(rec))
+        except DuplicateKeyError:
+            skipped.append(rec["id"]); continue
+        existing.add(rec["id"]); added.append(rec["id"])
     out({"added": added, "skipped": skipped})
 
 
 def cmd_update(a):
-    rows = load(a.type); patch = json.loads(a.json) if a.json else {}
-    hit = None
-    for r in rows:
-        if r.get("id") == a.id:
-            r.update(patch)
-            if a.append_log is not None:
-                r.setdefault("log", []).append({"date": today(), "note": a.append_log})
-            r["updated"] = today(); hit = r; break
-    if not hit:
+    import oa_mongo
+    coll = oa_mongo.coll(a.type)
+    patch = json.loads(a.json) if a.json else {}
+    upd = {"$set": {**patch, "updated": today()}}
+    if a.append_log is not None:
+        upd["$push"] = {"log": {"date": today(), "note": a.append_log}}
+    res = coll.update_one({"id": a.id}, upd)
+    if res.matched_count == 0:
         out({"error": "not found", "id": a.id}); sys.exit(1)
-    save(a.type, rows); out({"updated": a.id})
+    out({"updated": a.id})
 
 
 def cmd_rm(a):
-    rows = load(a.type); new = [r for r in rows if r.get("id") != a.id]
-    save(a.type, new); out({"removed": a.id, "remaining": len(new)})
+    import oa_mongo
+    coll = oa_mongo.coll(a.type)
+    coll.delete_one({"id": a.id})
+    out({"removed": a.id, "remaining": coll.count_documents({})})
 
 
 def cmd_stats(a):
-    rows = load(a.type)
+    import oa_mongo
+    coll = oa_mongo.coll(a.type)
+    total = coll.count_documents({})
     if a.by:
         counts = {}
-        for r in rows:
-            key = str(getp(r, a.by))
-            counts[key] = counts.get(key, 0) + 1
-        out({"type": a.type, "total": len(rows), "by": a.by, "counts": counts})
+        for doc in coll.aggregate([{"$group": {"_id": f"${a.by}", "n": {"$sum": 1}}}]):
+            counts[str(doc["_id"])] = doc["n"]
+        out({"type": a.type, "total": total, "by": a.by, "counts": counts})
     else:
-        out({"type": a.type, "total": len(rows)})
+        out({"type": a.type, "total": total})
 
 
 # ── Tracking-state verbs ──────────────────────────────────────────────────────
