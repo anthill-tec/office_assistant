@@ -364,13 +364,61 @@ def cmd_warranty_sweep(a):
     out({"expired": changed, "count": len(changed), "dry_run": bool(a.dry_run)})
 
 
+SCHEMA_DIR = os.path.normpath(os.path.join(HERE, "..", "data", "schema"))
+
+
+def _load_schema(t):
+    """Load the JSON Schema for store type `t` from data/schema/<t>.schema.json."""
+    with open(os.path.join(SCHEMA_DIR, f"{t}.schema.json"), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _apply_validators():
+    """Attach each store's `$jsonSchema` validator to its collection (idempotent)."""
+    import oa_mongo
+    db = oa_mongo.db()
+    existing = set(db.list_collection_names())
+    for t in STORES:
+        if t not in existing:
+            db.create_collection(t)
+            existing.add(t)
+        db.command("collMod", t, validator={"$jsonSchema": _load_schema(t)},
+                   validationLevel="moderate", validationAction="error")
+    return list(STORES)
+
+
+def cmd_apply_validators(a):
+    """Attach each store's `$jsonSchema` validator to its MongoDB collection (idempotent)."""
+    import oa_mongo
+    done = _apply_validators()
+    out({"validated": done, "db": oa_mongo.db().name})
+
+
+def _nonconforming_ids(t):
+    """Ids of documents in collection `t` that do NOT match the store's $jsonSchema."""
+    import oa_mongo
+    return [d["id"] for d in oa_mongo.coll(t).find(
+        {"$nor": [{"$jsonSchema": _load_schema(t)}]}, {"id": 1, "_id": 0})]
+
+
+def cmd_validate(a):
+    """List ids of non-conforming documents. With a <type>, print a bare id array for
+    that collection; with none, print a {type: [ids], ...} object across all STORES."""
+    if a.type:
+        out(_nonconforming_ids(a.type))
+    else:
+        out({t: _nonconforming_ids(t) for t in STORES})
+
+
 def cmd_init(a):
-    """Create each store's MongoDB collection + a unique index on `id` (idempotent)."""
+    """Create each store's MongoDB collection + a unique index on `id`, then attach
+    the `$jsonSchema` validators (idempotent)."""
     import oa_mongo
     done = []
     for t in STORES:
         oa_mongo.coll(t).create_index("id", unique=True)
         done.append(t)
+    _apply_validators()
     out({"initialized": done, "db": oa_mongo.db().name})
 
 
@@ -412,7 +460,10 @@ def main():
     at.set_defaults(func=cmd_attention)
     ws = sub.add_parser("warranty-sweep"); ws.add_argument("--dry-run", action="store_true", dest="dry_run")
     ws.set_defaults(func=cmd_warranty_sweep)
+    va = sub.add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys())
+    va.set_defaults(func=cmd_validate)
     it = sub.add_parser("init"); it.set_defaults(func=cmd_init)
+    av = sub.add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
 
     a = p.parse_args(); a.func(a)
 

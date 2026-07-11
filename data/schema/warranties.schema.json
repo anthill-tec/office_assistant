@@ -1,0 +1,38 @@
+{
+  "bsonType": "object",
+  "required": ["id"],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "bsonType": "string",
+      "pattern": "^war_"
+    },
+    "product": {
+      "bsonType": "string"
+    },
+    "vendor": {
+      "bsonType": "string"
+    },
+    "acct": {
+      "enum": ["personal", "business"]
+    },
+    "status": {
+      "enum": ["NEW", "UNKNOWN", "IN_PROGRESS", "COMPLETED", "EXPIRED", "DUE"]
+    },
+    "actions": {
+      "bsonType": "array",
+      "items": {
+        "bsonType": "object",
+        "additionalProperties": true,
+        "properties": {
+          "status": {
+            "enum": ["OPEN", "RESOLVED"]
+          }
+        }
+      }
+    },
+    "documents": {
+      "bsonType": "array"
+    }
+  }
+}
