@@ -394,6 +394,22 @@ def cmd_apply_validators(a):
     out({"validated": done, "db": oa_mongo.db().name})
 
 
+def _nonconforming_ids(t):
+    """Ids of documents in collection `t` that do NOT match the store's $jsonSchema."""
+    import oa_mongo
+    return [d["id"] for d in oa_mongo.coll(t).find(
+        {"$nor": [{"$jsonSchema": _load_schema(t)}]}, {"id": 1, "_id": 0})]
+
+
+def cmd_validate(a):
+    """List ids of non-conforming documents. With a <type>, print a bare id array for
+    that collection; with none, print a {type: [ids], ...} object across all STORES."""
+    if a.type:
+        out(_nonconforming_ids(a.type))
+    else:
+        out({t: _nonconforming_ids(t) for t in STORES})
+
+
 def cmd_init(a):
     """Create each store's MongoDB collection + a unique index on `id`, then attach
     the `$jsonSchema` validators (idempotent)."""
@@ -444,6 +460,8 @@ def main():
     at.set_defaults(func=cmd_attention)
     ws = sub.add_parser("warranty-sweep"); ws.add_argument("--dry-run", action="store_true", dest="dry_run")
     ws.set_defaults(func=cmd_warranty_sweep)
+    va = sub.add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys())
+    va.set_defaults(func=cmd_validate)
     it = sub.add_parser("init"); it.set_defaults(func=cmd_init)
     av = sub.add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
 
