@@ -9,15 +9,25 @@ Stores (../data/*.jsonl) — see ../data/schema.md:
   invoices    invoices.jsonl          purchase documents: po | invoice | receipt | creditnote
   warranties  warranties.jsonl        warranty coverage + expiry
   cases       support_cases.jsonl     support / claim / RMA cases
+  products    product_catalogue.jsonl owned-product knowledge base
 
-Usage:
-  store.py query <type> [--where f=v ...] [--contains f=sub ...] [--fields a,b.c] [--sort f] [--limit N]
-  store.py get <type> <id>
-  store.py add <type> --json '{...}'         # id/updated auto-filled if absent
+CRUD:
+  store.py query <type> [--where f=v ...] [--contains f=sub ...] [--after f=D] [--before f=D] [--fields a,b.c] [--sort f] [--limit N] [--expand fk,fk]
+  store.py get <type> <id> [--fields ...] [--expand fk,fk]
+  store.py add <type> --json '{...}'          # id/updated auto-filled if absent; array = bulk
   store.py update <type> <id> --json '{...}'  # shallow-merge patch (+ --append-log "note" for cases)
   store.py rm <type> <id>
   store.py stats <type> [--by field]
-Fields support dotted paths (e.g. source.email_id). Output is compact JSON.
+
+Tracking-state framework (see schema.md "Tracking state framework"):
+  store.py set-status <type> <STATUS> (--id ID | --where f=v ...)   # lifecycle: NEW|UNKNOWN|IN_PROGRESS|COMPLETED|EXPIRED
+  store.py action-add <type> <id> <slug> [--detail T] [--owner user|agent] [--due D]   # open a domain action
+  store.py action-resolve <type> <id> <slug>                       # flip an OPEN action -> RESOLVED
+  store.py doc-add <type> <id> <asset-type> <path> [--number N] [--date D]   # attach a domain document asset
+  store.py attention [<type>]                                      # records needing attention (OPEN actions / NEW / UNKNOWN / EXPIRED)
+  store.py warranty-sweep [--dry-run]                              # recompute ACTIVE->EXPIRED from expiry; auto-open renew-or-extend
+
+Fields support dotted paths (e.g. source.email_id). Output is compact JSON on stdout; warnings to stderr.
 """
 import argparse, json, os, sys, datetime, re
 
@@ -31,6 +41,33 @@ PREFIX = {"contacts": "ven", "invoices": "doc", "warranties": "war", "cases": "c
 # Foreign keys: field name -> store it references. `--expand` resolves them inline.
 FK_MAP = {"contact_id": "contacts", "invoice_id": "invoices",
           "warranty_id": "warranties", "product_id": "products"}
+
+# ── Tracking-state framework ──────────────────────────────────────────────────
+# Shared lifecycle vocabulary across every domain; `warranties` adds EXPIRED
+# (the ACTIVE->EXPIRED refinement). null/absent status is treated as UNKNOWN.
+STATUSES = ["NEW", "UNKNOWN", "IN_PROGRESS", "COMPLETED", "EXPIRED"]
+TERMINAL = {"COMPLETED"}                       # dropped from routine re-tracking (unless an action is still OPEN)
+ATTENTION_STATUSES = {"NEW", "UNKNOWN", "EXPIRED"}  # surfaced by `attention` even with no OPEN action
+ACTION_STATUSES = ["OPEN", "RESOLVED"]         # an action runs OPEN -> RESOLVED
+# Domain-specific ACTION vocabularies (advisory: unknown slugs warn but are allowed).
+ACTION_SETS = {
+    "invoices":   ["payment", "shipment", "in-transit", "out-for-delivery", "delivery",
+                   "customs-clearance", "duty-payment", "kyc", "return", "refund", "tax-invoice"],
+    "warranties": ["register-product", "capture-serial", "confirm-term", "confirm-warranty-start",
+                   "renew-or-extend", "expiry-reminder", "warranty-query"],
+    "cases":      ["raise-ticket", "rma-issue", "ship-back", "repair", "replace", "resolution-confirm"],
+    "products":   [],
+    "contacts":   [],
+}
+# Domain-specific DOCUMENT-ASSET vocabularies (advisory).
+DOC_ASSETS = {
+    "invoices":   ["purchase-order", "invoice", "receipt", "credit-note",
+                   "customs-boe", "duty-invoice", "tax-invoice", "packing-slip"],
+    "warranties": ["warranty-card", "registration", "extended-warranty", "amc"],
+    "cases":      ["ticket", "rma-authorization", "service-report", "replacement-invoice"],
+    "products":   ["manual", "datasheet", "spec-sheet"],
+    "contacts":   [],
+}
 _CACHE = {}
 
 
@@ -104,6 +141,30 @@ def out(obj):
     print(json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
 
 
+def find(rows, rid):
+    for r in rows:
+        if r.get("id") == rid:
+            return r
+    return None
+
+
+def _match(r, where, contains):
+    for w in (where or []):
+        k, _, v = w.partition("=")
+        if str(getp(r, k)) != v:
+            return False
+    for c in (contains or []):
+        k, _, sub = c.partition("=")
+        val = getp(r, k)
+        if val is None or sub.lower() not in str(val).lower():
+            return False
+    return True
+
+
+def _open_actions(r):
+    return [x.get("action") for x in (r.get("actions") or []) if x.get("status") == "OPEN"]
+
+
 def gen_id(t, rec, existing):
     anchor = rec.get("manufacturer") if t == "products" else rec.get("vendor")
     base = PREFIX[t] + "_" + (slug(anchor) or "x")
@@ -121,15 +182,8 @@ def gen_id(t, rec, existing):
 def cmd_query(a):
     rows = load(a.type)
     def ok(r):
-        for w in (a.where or []):
-            k, _, v = w.partition("=")
-            if str(getp(r, k)) != v:
-                return False
-        for c in (a.contains or []):
-            k, _, sub = c.partition("=")
-            val = getp(r, k)
-            if val is None or sub.lower() not in str(val).lower():
-                return False
+        if not _match(r, a.where, a.contains):
+            return False
         for w in (a.after or []):
             k, _, d = w.partition("=")
             val = getp(r, k)
@@ -211,6 +265,105 @@ def cmd_stats(a):
         out({"type": a.type, "total": len(rows)})
 
 
+# ── Tracking-state verbs ──────────────────────────────────────────────────────
+def cmd_set_status(a):
+    status = a.status.upper()
+    if status not in STATUSES:
+        out({"error": "invalid status", "given": a.status, "allowed": STATUSES}); sys.exit(1)
+    rows = load(a.type)
+    if a.id:
+        r = find(rows, a.id)
+        targets = [r] if r else []
+    elif a.where or a.contains:
+        targets = [r for r in rows if _match(r, a.where, a.contains)]
+    else:
+        out({"error": "give <id> or --where/--contains"}); sys.exit(1)
+    if not targets:
+        out({"error": "no targets matched"}); sys.exit(1)
+    for r in targets:
+        r["status"] = status; r["updated"] = today()
+    save(a.type, rows)
+    out({"status": status, "count": len(targets), "ids": [r["id"] for r in targets]})
+
+
+def cmd_action_add(a):
+    rows = load(a.type); r = find(rows, a.id)
+    if not r:
+        out({"error": "not found", "id": a.id}); sys.exit(1)
+    known = ACTION_SETS.get(a.type, [])
+    if known and a.action not in known:
+        sys.stderr.write(f"warn: '{a.action}' not in {a.type} action set {known}\n")
+    act = {"action": a.action, "status": "OPEN", "opened": today()}
+    if a.detail: act["detail"] = a.detail
+    if a.owner:  act["owner"] = a.owner
+    if a.due:    act["due"] = a.due
+    r.setdefault("actions", []).append(act)
+    r["updated"] = today(); save(a.type, rows)
+    out({"id": a.id, "action": a.action, "status": "OPEN"})
+
+
+def cmd_action_resolve(a):
+    rows = load(a.type); r = find(rows, a.id)
+    if not r:
+        out({"error": "not found", "id": a.id}); sys.exit(1)
+    hit = None
+    for act in r.get("actions", []):
+        if act.get("action") == a.action and act.get("status") == "OPEN":
+            act["status"] = "RESOLVED"; act["resolved"] = today(); hit = act; break
+    if not hit:
+        out({"error": "no OPEN action", "id": a.id, "action": a.action}); sys.exit(1)
+    r["updated"] = today(); save(a.type, rows)
+    out({"id": a.id, "action": a.action, "status": "RESOLVED"})
+
+
+def cmd_doc_add(a):
+    rows = load(a.type); r = find(rows, a.id)
+    if not r:
+        out({"error": "not found", "id": a.id}); sys.exit(1)
+    known = DOC_ASSETS.get(a.type, [])
+    if known and a.asset_type not in known:
+        sys.stderr.write(f"warn: '{a.asset_type}' not in {a.type} document-asset set {known}\n")
+    doc = {"type": a.asset_type, "path": a.path}
+    if a.number: doc["number"] = a.number
+    if a.date:   doc["date"] = a.date
+    r.setdefault("documents", []).append(doc)
+    r["updated"] = today(); save(a.type, rows)
+    out({"id": a.id, "document": doc})
+
+
+def cmd_attention(a):
+    types = [a.type] if a.type else list(STORES.keys())
+    res = []
+    for t in types:
+        for r in load(t):
+            status = r.get("status")   # absent status = not enrolled in tracking -> not flagged
+            opens = _open_actions(r)
+            if opens or status in ATTENTION_STATUSES:
+                res.append({"type": t, "id": r.get("id"),
+                            "name": r.get("vendor") or r.get("product") or r.get("provider"),
+                            "status": status or "UNKNOWN", "open_actions": opens})
+    out(res)
+
+
+def cmd_warranty_sweep(a):
+    """Recompute ACTIVE->EXPIRED from `expiry`; on EXPIRED, open a renew-or-extend action."""
+    rows = load("warranties"); now = today(); changed = []
+    for r in rows:
+        exp = r.get("expiry")
+        if not exp:
+            continue
+        if str(exp)[:10] < now and r.get("status") != "EXPIRED":
+            r["status"] = "EXPIRED"; r["updated"] = now
+            if "renew-or-extend" not in _open_actions(r):
+                r.setdefault("actions", []).append(
+                    {"action": "renew-or-extend", "status": "OPEN", "opened": now,
+                     "detail": f"warranty expired {exp} - renew or extend/AMC?"})
+            changed.append(r["id"])
+    if changed and not a.dry_run:
+        save("warranties", rows)
+    out({"expired": changed, "count": len(changed), "dry_run": bool(a.dry_run)})
+
+
 def main():
     p = argparse.ArgumentParser(description="Office-assistant JSONL store")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -232,6 +385,24 @@ def main():
     up.add_argument("--json"); up.add_argument("--append-log", dest="append_log"); up.set_defaults(func=cmd_update)
     rm = sub.add_parser("rm"); with_type(rm); rm.add_argument("id"); rm.set_defaults(func=cmd_rm)
     st = sub.add_parser("stats"); with_type(st); st.add_argument("--by"); st.set_defaults(func=cmd_stats)
+
+    # tracking-state framework
+    ss = sub.add_parser("set-status"); with_type(ss)
+    ss.add_argument("status", help="one of: " + " ".join(STATUSES))
+    ss.add_argument("--id"); ss.add_argument("--where", action="append"); ss.add_argument("--contains", action="append")
+    ss.set_defaults(func=cmd_set_status)
+    aa = sub.add_parser("action-add"); with_type(aa); aa.add_argument("id"); aa.add_argument("action")
+    aa.add_argument("--detail"); aa.add_argument("--owner", choices=["user", "agent"]); aa.add_argument("--due")
+    aa.set_defaults(func=cmd_action_add)
+    arv = sub.add_parser("action-resolve"); with_type(arv); arv.add_argument("id"); arv.add_argument("action")
+    arv.set_defaults(func=cmd_action_resolve)
+    da = sub.add_parser("doc-add"); with_type(da); da.add_argument("id"); da.add_argument("asset_type"); da.add_argument("path")
+    da.add_argument("--number"); da.add_argument("--date"); da.set_defaults(func=cmd_doc_add)
+    at = sub.add_parser("attention"); at.add_argument("type", nargs="?", choices=STORES.keys())
+    at.set_defaults(func=cmd_attention)
+    ws = sub.add_parser("warranty-sweep"); ws.add_argument("--dry-run", action="store_true", dest="dry_run")
+    ws.set_defaults(func=cmd_warranty_sweep)
+
     a = p.parse_args(); a.func(a)
 
 

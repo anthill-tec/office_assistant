@@ -1,0 +1,377 @@
+<title>Domain Model — Asset & Subscription Lifecycle</title>
+<style>
+  :root{
+    --ground:#F4F7F6; --surface:#FFFFFF; --surface-2:#EDF2F1; --surface-3:#E4EBE9;
+    --ink:#15201E; --muted:#586A67; --faint:#7C8C89; --line:#D9E2E0;
+    --accent:#0E8778; --accent-2:#0B6B5F; --accent-soft:#DCEDEA;
+    /* semantic lifecycle states — separate from the accent */
+    --s-new:#5B6B77;   --s-new-bg:#E7EBEE;
+    --s-prog:#2C6FA6;  --s-prog-bg:#DCE9F4;
+    --s-due:#B4791F;   --s-due-bg:#F6E9CF;
+    --s-done:#2F8A5B;  --s-done-bg:#D9EEE1;
+    --s-exp:#B24C34;   --s-exp-bg:#F4DDD5;
+    --shadow:0 1px 2px rgba(20,40,38,.05), 0 8px 24px -12px rgba(20,40,38,.14);
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --ground:#0C1312; --surface:#131C1B; --surface-2:#1A2523; --surface-3:#22302D;
+      --ink:#E7EDEB; --muted:#93A5A1; --faint:#6E807C; --line:#26332F;
+      --accent:#37B7A6; --accent-2:#2A9384; --accent-soft:#123330;
+      --s-new:#93A3AF;  --s-new-bg:#242E33;
+      --s-prog:#6FB0E4; --s-prog-bg:#152A3A;
+      --s-due:#E0AA50;  --s-due-bg:#33280F;
+      --s-done:#5DC08C; --s-done-bg:#122d20;
+      --s-exp:#E68264;  --s-exp-bg:#341c16;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px -14px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="light"]{
+    --ground:#F4F7F6; --surface:#FFFFFF; --surface-2:#EDF2F1; --surface-3:#E4EBE9;
+    --ink:#15201E; --muted:#586A67; --faint:#7C8C89; --line:#D9E2E0;
+    --accent:#0E8778; --accent-2:#0B6B5F; --accent-soft:#DCEDEA;
+    --s-new:#5B6B77; --s-new-bg:#E7EBEE; --s-prog:#2C6FA6; --s-prog-bg:#DCE9F4;
+    --s-due:#B4791F; --s-due-bg:#F6E9CF; --s-done:#2F8A5B; --s-done-bg:#D9EEE1;
+    --s-exp:#B24C34; --s-exp-bg:#F4DDD5;
+    --shadow:0 1px 2px rgba(20,40,38,.05), 0 8px 24px -12px rgba(20,40,38,.14);
+  }
+  :root[data-theme="dark"]{
+    --ground:#0C1312; --surface:#131C1B; --surface-2:#1A2523; --surface-3:#22302D;
+    --ink:#E7EDEB; --muted:#93A5A1; --faint:#6E807C; --line:#26332F;
+    --accent:#37B7A6; --accent-2:#2A9384; --accent-soft:#123330;
+    --s-new:#93A3AF; --s-new-bg:#242E33; --s-prog:#6FB0E4; --s-prog-bg:#152A3A;
+    --s-due:#E0AA50; --s-due-bg:#33280F; --s-done:#5DC08C; --s-done-bg:#122d20;
+    --s-exp:#E68264; --s-exp-bg:#341c16;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px -14px rgba(0,0,0,.6);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+    line-height:1.55;-webkit-font-smoothing:antialiased;font-size:16px}
+  .wrap{max-width:1080px;margin:0 auto;padding:clamp(28px,5vw,72px) clamp(18px,4vw,40px) 80px}
+  h1,h2,h3{text-wrap:balance;margin:0}
+  a{color:var(--accent-2)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--accent-2);font-weight:600}
+  /* header */
+  header{border-bottom:1px solid var(--line);padding-bottom:34px;margin-bottom:44px}
+  h1{font-size:clamp(30px,5.2vw,50px);line-height:1.04;letter-spacing:-.02em;font-weight:760;margin:14px 0 0}
+  .lede{color:var(--muted);font-size:clamp(16px,2vw,19px);max-width:60ch;margin:18px 0 0}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:26px}
+  .legend .chip{cursor:default}
+  /* chips */
+  .chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;
+    font-weight:600;padding:3px 9px;border-radius:999px;letter-spacing:.01em;white-space:nowrap}
+  .chip .dot{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+  .chip--new{color:var(--s-new);background:var(--s-new-bg)}
+  .chip--prog{color:var(--s-prog);background:var(--s-prog-bg)}
+  .chip--due{color:var(--s-due);background:var(--s-due-bg)}
+  .chip--done{color:var(--s-done);background:var(--s-done-bg)}
+  .chip--exp{color:var(--s-exp);background:var(--s-exp-bg)}
+  /* section scaffolding */
+  section{margin-top:56px}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px}
+  .sec-head h2{font-size:clamp(19px,2.6vw,24px);letter-spacing:-.01em;font-weight:700}
+  .sec-num{font-family:var(--mono);font-size:13px;color:var(--faint);font-weight:600}
+  .sec-note{color:var(--muted);max-width:64ch;margin:-6px 0 26px}
+  /* catalogue spine */
+  .spine{display:grid;gap:16px}
+  .root-card{background:var(--accent);color:#fff;border-radius:14px;padding:18px 22px;
+    display:flex;align-items:center;gap:16px;box-shadow:var(--shadow)}
+  .root-card .glyph{font-family:var(--mono);font-weight:700;font-size:13px;letter-spacing:.04em;
+    background:rgba(255,255,255,.16);padding:6px 10px;border-radius:8px}
+  .root-card p{margin:0;font-size:14.5px;opacity:.95}
+  .kinds{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:720px){.kinds{grid-template-columns:1fr}}
+  .kind{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px;
+    box-shadow:var(--shadow)}
+  .kind h3{font-size:16px;display:flex;align-items:center;gap:9px}
+  .kind h3 .tag{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--accent-2);
+    background:var(--accent-soft);padding:2px 7px;border-radius:6px;letter-spacing:.03em}
+  .kind .rel{margin:14px 0 0;padding:0;list-style:none;display:grid;gap:9px}
+  .kind .rel li{display:flex;gap:10px;font-size:13.5px;color:var(--muted);align-items:flex-start}
+  .kind .rel b{color:var(--ink);font-weight:640}
+  .kind .rel .k{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--faint);
+    border:1px solid var(--line);border-radius:6px;padding:1px 6px;flex:none;margin-top:1px}
+  /* domain grid */
+  .domains{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  @media(max-width:760px){.domains{grid-template-columns:1fr}}
+  .dcard{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:0;
+    overflow:hidden;box-shadow:var(--shadow);position:relative}
+  .dcard>.body{padding:18px 20px 20px}
+  .dcard .stripe{height:4px;background:var(--accent)}
+  .dcard.recurring .stripe{background:linear-gradient(90deg,var(--s-due),var(--accent))}
+  .dcard .dtop{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .dcard h3{font-size:16.5px;letter-spacing:-.01em}
+  .dcard .store{font-family:var(--mono);font-size:11.5px;color:var(--faint);font-weight:600}
+  .dcard .recur{font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--s-due);
+    background:var(--s-due-bg);padding:2px 7px;border-radius:6px;letter-spacing:.04em;text-transform:uppercase}
+  .flowline{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:14px 0 4px}
+  .flowline .arr{color:var(--faint);font-size:12px}
+  .lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--faint);font-weight:700;margin:16px 0 8px;display:block}
+  .tags{display:flex;flex-wrap:wrap;gap:6px}
+  .tag-m{font-family:var(--mono);font-size:11.5px;color:var(--muted);background:var(--surface-2);
+    border:1px solid var(--line);border-radius:6px;padding:2px 7px}
+  .tag-m.hot{color:var(--s-due);border-color:var(--s-due-bg);background:var(--s-due-bg);font-weight:600}
+  .tag-d{font-family:var(--mono);font-size:11.5px;color:var(--accent-2);background:var(--accent-soft);
+    border-radius:6px;padding:2px 7px;font-weight:600}
+  /* lifecycle machine */
+  .machine{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:26px 24px;
+    box-shadow:var(--shadow)}
+  .track{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
+  .node{font-family:var(--mono);font-size:12.5px;font-weight:700;padding:9px 14px;border-radius:10px;
+    border:1.5px solid var(--line);background:var(--surface-2);white-space:nowrap}
+  .node.n-new{color:var(--s-new)} .node.n-prog{color:var(--s-prog);border-color:var(--s-prog)}
+  .node.n-done{color:var(--s-done);border-color:var(--s-done);background:var(--s-done-bg)}
+  .node.n-due{color:var(--s-due);border-color:var(--s-due)}
+  .node.n-exp{color:var(--s-exp);border-color:var(--s-exp)}
+  .edge{display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--faint);min-width:52px}
+  .edge .who{font-family:var(--mono);font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:700}
+  .edge .who.user{color:var(--s-due)} .edge .who.agent{color:var(--accent-2)}
+  .edge svg{display:block}
+  .branch{margin-top:22px;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:640px){.branch{grid-template-columns:1fr}}
+  .branch .b{border:1px dashed var(--line);border-radius:12px;padding:14px 16px;font-size:13.5px;color:var(--muted)}
+  .branch .b b{color:var(--ink)}
+  .act-note{display:flex;gap:14px;flex-wrap:wrap;margin-top:20px;padding-top:20px;border-top:1px solid var(--line)}
+  .act-note .a{flex:1;min-width:210px;font-size:13.5px;color:var(--muted)}
+  .act-note .a .h{display:flex;align-items:center;gap:8px;color:var(--ink);font-weight:640;margin-bottom:4px}
+  .pill{font-family:var(--mono);font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .pill.open{color:var(--s-due);background:var(--s-due-bg)} .pill.res{color:var(--s-done);background:var(--s-done-bg)}
+  /* Ritz dossier */
+  .dossier{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}
+  .dossier .head{background:var(--surface-2);padding:16px 22px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .dossier .head .glyph{font-size:22px}
+  .dossier .head h3{font-size:16.5px}
+  .dossier .head .id{font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-left:auto}
+  .row{display:grid;grid-template-columns:150px 1fr auto;gap:14px;align-items:center;
+    padding:13px 22px;border-top:1px solid var(--line)}
+  .row:first-child{border-top:0}
+  @media(max-width:600px){.row{grid-template-columns:1fr auto;gap:6px 12px}.row .rdesc{grid-column:1/-1;order:3}}
+  .row .rdom{font-family:var(--mono);font-size:12px;color:var(--accent-2);font-weight:600}
+  .row .rdesc{font-size:13.5px;color:var(--muted)}
+  .row .rdesc b{color:var(--ink);font-weight:600}
+  /* footer / status */
+  .foot{margin-top:60px;border-top:1px solid var(--line);padding-top:30px;display:grid;
+    grid-template-columns:1fr 1fr;gap:26px}
+  @media(max-width:720px){.foot{grid-template-columns:1fr}}
+  .foot h3{font-size:13px;font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase;
+    color:var(--faint);margin-bottom:14px}
+  .steps{list-style:none;padding:0;margin:0;display:grid;gap:10px}
+  .steps li{display:flex;gap:11px;font-size:14px;align-items:flex-start}
+  .steps .mk{font-family:var(--mono);font-size:11px;font-weight:700;padding:2px 7px;border-radius:6px;flex:none;margin-top:1px}
+  .steps .done .mk{color:var(--s-done);background:var(--s-done-bg)}
+  .steps .todo .mk{color:var(--s-new);background:var(--s-new-bg)}
+  .verbs{display:flex;flex-wrap:wrap;gap:7px}
+  .decision{margin-top:30px;background:var(--accent-soft);border:1px solid var(--accent);border-radius:12px;
+    padding:16px 20px;font-size:14px}
+  .decision b{color:var(--accent-2)}
+  @media (prefers-reduced-motion:no-preference){
+    .reveal{opacity:0;transform:translateY(10px);animation:rise .6s cubic-bezier(.2,.7,.2,1) forwards}
+    section:nth-of-type(1){animation-delay:.02s}
+    @keyframes rise{to{opacity:1;transform:none}}
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Office Assistant · Design Contract</span>
+    <h1>A lifecycle manager for everything you own</h1>
+    <p class="lede">The <strong>catalogue</strong> is the spine. Each entry accrues <strong>domain
+      objects</strong> — purchase, warranty, insurance, service, subscription — and each is a
+      state machine over its scraped documents, advanced only by <strong>actions</strong>.</p>
+    <div class="legend">
+      <span class="chip chip--new"><span class="dot"></span>NEW / UNKNOWN</span>
+      <span class="chip chip--prog"><span class="dot"></span>IN_PROGRESS / ACTIVE</span>
+      <span class="chip chip--due"><span class="dot"></span>DUE / OPEN action</span>
+      <span class="chip chip--done"><span class="dot"></span>COMPLETED / RESOLVED</span>
+      <span class="chip chip--exp"><span class="dot"></span>EXPIRED / LAPSED</span>
+    </div>
+  </header>
+
+  <section class="reveal">
+    <div class="sec-head"><span class="sec-num">01</span><h2>The catalogue — one registry, two kinds</h2></div>
+    <div class="spine">
+      <div class="root-card">
+        <span class="glyph">products</span>
+        <p>The single registry of everything owned or subscribed to. Every domain object hangs off a
+          catalogue entry by <code>product_id</code> — one query assembles the whole dossier.</p>
+      </div>
+      <div class="kinds">
+        <div class="kind">
+          <h3><span class="tag">physical</span> tangible asset</h3>
+          <ul class="rel">
+            <li><span class="k">accessory</span><span><b>Accessories</b> — durable add-ons that extend value (a car stereo, the AMS Lite). Usually one-time.</span></li>
+            <li><span class="k">consumable</span><span><b>Consumables</b> — replenished items (detergent, engine oil, filament), frequently on a <b>subscription</b>.</span></li>
+          </ul>
+        </div>
+        <div class="kind">
+          <h3><span class="tag">virtual</span> digital / service</h3>
+          <ul class="rel">
+            <li><span class="k">bundle</span><span><b>Bundles</b> — grouped virtual items (an Adobe CC suite).</span></li>
+            <li><span class="k">billing</span><span><b>One-time</b> (Plex Lifetime, a Steam game) or <b>subscription</b> (Ollama, Fastmail) — decides whether it carries a recurring billing domain.</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-head"><span class="sec-num">02</span><h2>Domains — state machine × action set × required docs</h2></div>
+    <p class="sec-note">Every domain shares one status vocabulary; what differs is its action set and the
+      minimum documents it must archive. The store row is the AI-scraped metadata index over those files.</p>
+    <div class="domains">
+
+      <div class="dcard"><div class="stripe"></div><div class="body">
+        <div class="dtop"><h3>Purchase / fulfilment</h3><span class="store">invoices</span></div>
+        <div class="flowline">
+          <span class="chip chip--new"><span class="dot"></span>NEW</span><span class="arr">→</span>
+          <span class="chip chip--prog"><span class="dot"></span>IN_PROGRESS</span><span class="arr">→</span>
+          <span class="chip chip--done"><span class="dot"></span>COMPLETED</span>
+        </div>
+        <span class="lbl">Actions</span>
+        <div class="tags"><span class="tag-m">payment</span><span class="tag-m">shipment</span><span class="tag-m">out-for-delivery</span><span class="tag-m">delivery</span><span class="tag-m">customs</span><span class="tag-m">duty</span><span class="tag-m">return</span><span class="tag-m">refund</span></div>
+        <span class="lbl">Min. documents</span>
+        <div class="tags"><span class="tag-d">purchase-order</span><span class="tag-d">invoice / receipt</span></div>
+      </div></div>
+
+      <div class="dcard"><div class="stripe"></div><div class="body">
+        <div class="dtop"><h3>Warranty</h3><span class="store">warranties</span></div>
+        <div class="flowline">
+          <span class="chip chip--prog"><span class="dot"></span>ACTIVE</span><span class="arr">→</span>
+          <span class="chip chip--exp"><span class="dot"></span>EXPIRED</span><span class="arr">→</span>
+          <span class="chip chip--done"><span class="dot"></span>renew / close</span>
+        </div>
+        <span class="lbl">Actions</span>
+        <div class="tags"><span class="tag-m">register-product</span><span class="tag-m">capture-serial</span><span class="tag-m">confirm-term</span><span class="tag-m hot">renew-or-extend</span><span class="tag-m">warranty-query</span></div>
+        <span class="lbl">Min. documents</span>
+        <div class="tags"><span class="tag-d">warranty-card</span><span class="tag-d">registration</span></div>
+      </div></div>
+
+      <div class="dcard recurring"><div class="stripe"></div><div class="body">
+        <div class="dtop"><h3>Insurance</h3><span class="recur">recurring · new</span></div>
+        <div class="flowline">
+          <span class="chip chip--prog"><span class="dot"></span>ACTIVE</span><span class="arr">→</span>
+          <span class="chip chip--due"><span class="dot"></span>DUE</span><span class="arr">→</span>
+          <span class="chip chip--done"><span class="dot"></span>RENEWED</span><span class="arr">/</span>
+          <span class="chip chip--exp"><span class="dot"></span>LAPSED</span>
+        </div>
+        <span class="lbl">Actions</span>
+        <div class="tags"><span class="tag-m hot">renew-policy</span><span class="tag-m">pay-premium</span><span class="tag-m">kyc</span><span class="tag-m">claim</span><span class="tag-m">price-compare</span></div>
+        <span class="lbl">Min. documents</span>
+        <div class="tags"><span class="tag-d">policy-schedule</span><span class="tag-d">renewal-notice</span><span class="tag-d">premium-receipt</span></div>
+      </div></div>
+
+      <div class="dcard recurring"><div class="stripe"></div><div class="body">
+        <div class="dtop"><h3>Registration / regulatory</h3><span class="recur">recurring · new</span></div>
+        <div class="flowline">
+          <span class="chip chip--prog"><span class="dot"></span>VALID</span><span class="arr">→</span>
+          <span class="chip chip--due"><span class="dot"></span>DUE</span><span class="arr">→</span>
+          <span class="chip chip--done"><span class="dot"></span>RENEWED</span>
+        </div>
+        <span class="lbl">Actions</span>
+        <div class="tags"><span class="tag-m hot">renew-registration</span><span class="tag-m">fitness-test</span><span class="tag-m">submit-form</span><span class="tag-m">pay-fee</span></div>
+        <span class="lbl">Min. documents</span>
+        <div class="tags"><span class="tag-d">RC / certificate</span><span class="tag-d">fitness-cert</span><span class="tag-d">fee-receipt</span></div>
+      </div></div>
+
+      <div class="dcard"><div class="stripe"></div><div class="body">
+        <div class="dtop"><h3>Service / claim</h3><span class="store">cases</span></div>
+        <div class="flowline">
+          <span class="chip chip--due"><span class="dot"></span>OPEN</span><span class="arr">→</span>
+          <span class="chip chip--prog"><span class="dot"></span>IN_PROGRESS</span><span class="arr">→</span>
+          <span class="chip chip--done"><span class="dot"></span>RESOLVED</span>
+        </div>
+        <span class="lbl">Actions</span>
+        <div class="tags"><span class="tag-m">raise-ticket</span><span class="tag-m">rma-issue</span><span class="tag-m">ship-back</span><span class="tag-m">repair</span><span class="tag-m">replace</span></div>
+        <span class="lbl">Min. documents</span>
+        <div class="tags"><span class="tag-d">ticket</span><span class="tag-d">rma-authorization</span><span class="tag-d">service-report</span></div>
+      </div></div>
+
+      <div class="dcard recurring"><div class="stripe"></div><div class="body">
+        <div class="dtop"><h3>Subscription</h3><span class="recur">recurring · new store</span></div>
+        <div class="flowline">
+          <span class="chip chip--prog"><span class="dot"></span>ACTIVE</span><span class="arr">→</span>
+          <span class="chip chip--due"><span class="dot"></span>DUE</span><span class="arr">→</span>
+          <span class="chip chip--done"><span class="dot"></span>cancelled / lapsed</span>
+        </div>
+        <span class="lbl">Actions</span>
+        <div class="tags"><span class="tag-m hot">cancel-before-charge</span><span class="tag-m">renewal-confirm</span><span class="tag-m">keep/tombstone</span><span class="tag-m">de-register-mandate</span><span class="tag-m">price-change</span></div>
+        <span class="lbl">Min. documents</span>
+        <div class="tags"><span class="tag-d">receipt</span><span class="tag-d">mandate / SI</span><span class="tag-d">cancellation</span></div>
+      </div></div>
+
+    </div>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-head"><span class="sec-num">03</span><h2>Lifecycle &amp; actions</h2></div>
+    <p class="sec-note">One shared status vocabulary. Every edge is an <b>action</b> — automatic (agent) or
+      user-assisted. An <b>OPEN</b> action means the item needs attention whatever its status; the tracker
+      advances anything live and skips <span class="chip chip--done" style="padding:1px 7px"><span class="dot"></span>COMPLETED</span>.</p>
+    <div class="machine">
+      <div class="track">
+        <span class="node n-new">NEW</span>
+        <span class="edge"><span class="who agent">scrape</span>
+          <svg width="34" height="10" viewBox="0 0 34 10"><path d="M0 5h28m0 0-5-4m5 4-5 4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>
+        <span class="node n-prog">IN_PROGRESS</span>
+        <span class="edge"><span class="who agent">paid·shipped</span>
+          <svg width="34" height="10" viewBox="0 0 34 10"><path d="M0 5h28m0 0-5-4m5 4-5 4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>
+        <span class="node n-done">COMPLETED</span>
+      </div>
+      <div class="branch">
+        <div class="b"><b>Warranty refinement:</b> <span class="chip chip--prog" style="padding:1px 7px"><span class="dot"></span>ACTIVE</span> → <span class="chip chip--exp" style="padding:1px 7px"><span class="dot"></span>EXPIRED</span> is computed from <code>expiry</code> by <code>warranty-sweep</code> (agent), which auto-opens a <b>renew-or-extend</b> action for you.</div>
+        <div class="b"><b>Recurring refinement:</b> insurance · registration · subscription cycle <span class="chip chip--prog" style="padding:1px 7px"><span class="dot"></span>ACTIVE</span> → <span class="chip chip--due" style="padding:1px 7px"><span class="dot"></span>DUE</span> in the renewal window → RENEWED, or LAPSED if missed.</div>
+      </div>
+      <div class="act-note">
+        <div class="a"><div class="h"><span class="pill open">OPEN</span> needs attention</div>
+          Surfaced by <code>store.py attention</code> regardless of lifecycle status — this is the agent's worklist.</div>
+        <div class="a"><div class="h"><span class="pill res">RESOLVED</span> action closed</div>
+          Resolving an action can fire the state transition it guards (e.g. renew-policy → back to ACTIVE).</div>
+        <div class="a"><div class="h"><span class="edge" style="min-width:auto"><span class="who user">USER</span></span> vs <span class="edge" style="min-width:auto"><span class="who agent">AGENT</span></span> owner</div>
+          Each action is tagged automatic or needs-you, so nothing waits silently on the wrong party.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-head"><span class="sec-num">04</span><h2>Worked example — the Maruti Ritz</h2></div>
+    <p class="sec-note">One physical catalogue entry, four domain objects, each with its own state and actions.
+      This is the shape a real asset takes in the store.</p>
+    <div class="dossier">
+      <div class="head"><span class="glyph">🚗</span><h3>Maruti Suzuki Ritz LXi</h3>
+        <span class="chip chip--prog"><span class="dot"></span>owned</span>
+        <span class="id">products / prod_maruti-suzuki_ritz-lxi</span></div>
+      <div class="row"><span class="rdom">purchase</span><span class="rdesc">original purchase document</span><span class="chip chip--done"><span class="dot"></span>COMPLETED</span></div>
+      <div class="row"><span class="rdom">insurance</span><span class="rdesc"><b>HDFC Ergo</b> motor policy — renews 2027-05-05</span><span class="chip chip--prog"><span class="dot"></span>ACTIVE</span></div>
+      <div class="row"><span class="rdom">registration</span><span class="rdesc">RC re-registration — <b>expired 2026-05-05</b>, OPEN action <code>renew-registration</code> (you)</span><span class="chip chip--due"><span class="dot"></span>DUE</span></div>
+      <div class="row"><span class="rdom">service</span><span class="rdesc">DAKSHINA out-of-warranty service history</span><span class="chip chip--done"><span class="dot"></span>COMPLETED</span></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <div>
+      <h3>Build status</h3>
+      <ul class="steps">
+        <li class="done"><span class="mk">DONE</span><span><b>Framework verbs</b> in <code>store.py</code> — set-status · action-add/resolve · doc-add · attention · warranty-sweep</span></li>
+        <li class="done"><span class="mk">DONE</span><span><b>Backfill applied</b> — 48 invoices COMPLETED · 19 warranties ACTIVE · FNIRSI warranty actions OPEN</span></li>
+        <li class="todo"><span class="mk">NEXT</span><span><b>Schema write-up</b> + new <code>subscriptions</code> / <code>insurance</code> stores + memory→store migration</span></li>
+        <li class="todo"><span class="mk">NEXT</span><span><b>MCP interface</b> wrapping the verbs as parameterized tools</span></li>
+      </ul>
+    </div>
+    <div>
+      <h3>The verbs</h3>
+      <div class="verbs">
+        <span class="tag-m">set-status</span><span class="tag-m">action-add</span><span class="tag-m">action-resolve</span>
+        <span class="tag-m">doc-add</span><span class="tag-m">attention</span><span class="tag-m">warranty-sweep</span>
+      </div>
+      <div class="decision">
+        <b>Open decision — persistence.</b> Stay on <b>JSONL + stdlib</b> (zero-dependency, git/chezmoi-versioned)
+        or move to <b>MongoDB</b> (richer queries, native document collections — you have it installed)?
+        The domain model above is identical either way; only the store layer changes.
+      </div>
+    </div>
+  </div>
+</div>
