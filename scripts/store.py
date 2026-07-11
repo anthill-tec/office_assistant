@@ -364,13 +364,45 @@ def cmd_warranty_sweep(a):
     out({"expired": changed, "count": len(changed), "dry_run": bool(a.dry_run)})
 
 
+SCHEMA_DIR = os.path.normpath(os.path.join(HERE, "..", "data", "schema"))
+
+
+def _load_schema(t):
+    """Load the JSON Schema for store type `t` from data/schema/<t>.schema.json."""
+    with open(os.path.join(SCHEMA_DIR, f"{t}.schema.json"), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _apply_validators():
+    """Attach each store's `$jsonSchema` validator to its collection (idempotent)."""
+    import oa_mongo
+    db = oa_mongo.db()
+    existing = set(db.list_collection_names())
+    for t in STORES:
+        if t not in existing:
+            db.create_collection(t)
+            existing.add(t)
+        db.command("collMod", t, validator={"$jsonSchema": _load_schema(t)},
+                   validationLevel="moderate", validationAction="error")
+    return list(STORES)
+
+
+def cmd_apply_validators(a):
+    """Attach each store's `$jsonSchema` validator to its MongoDB collection (idempotent)."""
+    import oa_mongo
+    done = _apply_validators()
+    out({"validated": done, "db": oa_mongo.db().name})
+
+
 def cmd_init(a):
-    """Create each store's MongoDB collection + a unique index on `id` (idempotent)."""
+    """Create each store's MongoDB collection + a unique index on `id`, then attach
+    the `$jsonSchema` validators (idempotent)."""
     import oa_mongo
     done = []
     for t in STORES:
         oa_mongo.coll(t).create_index("id", unique=True)
         done.append(t)
+    _apply_validators()
     out({"initialized": done, "db": oa_mongo.db().name})
 
 
@@ -413,6 +445,7 @@ def main():
     ws = sub.add_parser("warranty-sweep"); ws.add_argument("--dry-run", action="store_true", dest="dry_run")
     ws.set_defaults(func=cmd_warranty_sweep)
     it = sub.add_parser("init"); it.set_defaults(func=cmd_init)
+    av = sub.add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
 
     a = p.parse_args(); a.func(a)
 
