@@ -380,6 +380,46 @@ def cmd_warranty_sweep(a):
     out({"expired": changed, "count": len(changed), "dry_run": bool(a.dry_run)})
 
 
+def cmd_event(a):
+    """Drive a doc through the declarative transition table: look up (status, event),
+    apply the matching transition (set status + fire effects), reject an unmatched
+    (from, event) pair leaving the Mongo doc untouched."""
+    import oa_mongo, transitions
+    coll = oa_mongo.coll(a.type)
+    doc = coll.find_one({"id": a.id}, {"_id": 0})
+    if doc is None:
+        out({"error": "not found", "id": a.id}); sys.exit(1)
+    tr = transitions.find_transition(a.type, doc.get("status"), a.event)
+    if tr is None:
+        out({"error": "illegal transition", "id": a.id,
+             "from": doc.get("status"), "event": a.event}); sys.exit(1)
+    now = today()
+    set_fields = {"status": tr["to"], "updated": now}
+    pushes = []
+    resolves = []
+    for effect in tr.get("effects", []):
+        op = effect.get("op")
+        if op == "open-action":
+            act = {"action": effect.get("action"), "status": "OPEN", "opened": now}
+            if effect.get("owner"):  act["owner"] = effect["owner"]
+            if effect.get("detail"): act["detail"] = effect["detail"]
+            pushes.append(act)
+        elif op == "require-doc":
+            pushes.append({"action": "archive-doc", "status": "OPEN", "opened": now,
+                           "detail": f"archive {effect.get('type')} document"})
+        elif op == "resolve-action":
+            resolves.append(effect.get("action"))
+    update = {"$set": set_fields}
+    if pushes:
+        update["$push"] = {"actions": {"$each": pushes}}
+    coll.update_one({"id": a.id}, update)
+    for slug_name in resolves:
+        coll.update_one(
+            {"id": a.id, "actions": {"$elemMatch": {"action": slug_name, "status": "OPEN"}}},
+            {"$set": {"actions.$.status": "RESOLVED", "actions.$.resolved": now}})
+    out({"id": a.id, "event": a.event, "from": tr["from"], "to": tr["to"]})
+
+
 SCHEMA_DIR = os.path.normpath(os.path.join(HERE, "..", "data", "schema"))
 
 
@@ -514,6 +554,8 @@ def main():
     at.set_defaults(func=cmd_attention)
     ws = sub.add_parser("warranty-sweep"); ws.add_argument("--dry-run", action="store_true", dest="dry_run")
     ws.set_defaults(func=cmd_warranty_sweep)
+    ev = sub.add_parser("event"); with_type(ev); ev.add_argument("id"); ev.add_argument("event")
+    ev.set_defaults(func=cmd_event)
     va = sub.add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys())
     va.set_defaults(func=cmd_validate)
     im = sub.add_parser("import"); im.add_argument("type", nargs="?", choices=STORES.keys())
