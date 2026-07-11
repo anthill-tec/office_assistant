@@ -364,6 +364,16 @@ def cmd_warranty_sweep(a):
     out({"expired": changed, "count": len(changed), "dry_run": bool(a.dry_run)})
 
 
+def cmd_init(a):
+    """Create each store's MongoDB collection + a unique index on `id` (idempotent)."""
+    import oa_mongo
+    done = []
+    for t in STORES:
+        oa_mongo.coll(t).create_index("id", unique=True)
+        done.append(t)
+    out({"initialized": done, "db": oa_mongo.db().name})
+
+
 def main():
     p = argparse.ArgumentParser(description="Office-assistant JSONL store")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -402,6 +412,7 @@ def main():
     at.set_defaults(func=cmd_attention)
     ws = sub.add_parser("warranty-sweep"); ws.add_argument("--dry-run", action="store_true", dest="dry_run")
     ws.set_defaults(func=cmd_warranty_sweep)
+    it = sub.add_parser("init"); it.set_defaults(func=cmd_init)
 
     a = p.parse_args(); a.func(a)
 

@@ -1,6 +1,6 @@
 # CR-OA-001 — MongoDB connection & collection bootstrap
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-11 on feature/CR-OA-001-mongo-connection)
 **Type:** feature
 **Priority:** High
 **Depends on:** —
@@ -32,10 +32,10 @@ A verb that creates the 5 collections if absent and ensures a **unique index on 
 Idempotent (safe to re-run).
 
 ## Acceptance criteria
-- [ ] §S1 `oa_mongo.db().name == "office_assistant"` and `oa_mongo.client().address == ("127.0.0.1", 27017)` with no env override; setting `OA_MONGO_DB=foo` makes `db().name == "foo"`.
-- [ ] §S2 `store.STORES` keys are exactly `{contacts, invoices, warranties, cases, products}`; `oa_mongo.coll("invoices").name == "invoices"` and `.database.name == "office_assistant"`.
-- [ ] §S3 After `python3 scripts/store.py init`, for each store `coll(t).index_information()` contains an index over key `id` with `unique == True`; a second `init` exits 0 and adds nothing.
-- [ ] §S3 (caller) `init` is a real subparser (`store.py init` in `--help`); it is the entry point CR-OA-006 `import` depends on.
+- [x] §S1 `oa_mongo.db().name == "office_assistant"` and `oa_mongo.client().address == ("127.0.0.1", 27017)` with no env override; setting `OA_MONGO_DB=foo` makes `db().name == "foo"`.
+- [x] §S2 `store.STORES` keys are exactly `{contacts, invoices, warranties, cases, products}`; `oa_mongo.coll("invoices").name == "invoices"` and `.database.name == "office_assistant"`.
+- [x] §S3 After `python3 scripts/store.py init`, for each store `coll(t).index_information()` contains an index over key `id` with `unique == True`; a second `init` exits 0 and adds nothing.
+- [x] §S3 (caller) `init` is a real subparser (`store.py init` in `--help`); it is the entry point CR-OA-006 `import` depends on.
 
 ## Estimated size
 S — one new module + ~30 lines in `store.py`.
