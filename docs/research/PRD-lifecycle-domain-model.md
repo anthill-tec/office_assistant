@@ -109,16 +109,25 @@ products/prod_maruti-suzuki_ritz-lxi   (the car — the physical asset)
 A SaaS example (digital anchor): `subscriptions/sub_ollama` → its billing receipts (`invoices`)
 and mandate doc hang off `subscription_id`; lifecycle IN_PROGRESS→COMPLETED (cancelled 2026-08-09).
 
-## 8. Tooling
+## 8. Tooling & agent interface
 
-**CLI (`scripts/store.py`) — parameterized verbs (built in this branch):**
-`set-status` · `action-add` · `action-resolve` · `doc-add` · `attention` · `warranty-sweep`.
+**CLI (`scripts/store.py`) — parameterized verbs:**
+`query`/`get`/`add`/`update`/`rm`/`stats` (data) · `set-status`/`action-add`/`action-resolve`/`doc-add`/`attention`
+(lifecycle) · `event`/`warranty-sweep`/`due-sweep` (state machine) · `init`/`validate`/`import`/`snapshot` (admin).
 Domain-agnostic — any new store (insurance, subscriptions) gets them for free once registered.
 
-**MCP interface (planned):** a thin MCP server wrapping these verbs so the agent calls them as
-parameterized tools (no CLI/token overhead per call). Same operations, exposed as
-`store.query`, `store.set_status`, `store.action_add/resolve`, `store.attention`, `store.warranty_sweep`.
-Requires a one-line entry in the user's MCP config to activate.
+**Agent-facing output is token-efficient by default.** The interface goal is that the agent drives the
+store with minimal per-call token overhead. Rather than a schema-heavy tool-protocol layer, the reads
+emit **TOON** (Token-Oriented Object Notation — a lossless, indentation- and table-based encoding of the
+JSON data model that declares an array's shape once and lists rows as bare delimited values, cutting the
+~30–60% of tokens JSON spends on repeated keys, braces, and quotes). TOON is the **default** read format;
+**`--json` is a permanent fallback** for any consumer that needs strict JSON. This is the AXI stance —
+an agent-ergonomic CLI, not a protocol server.
+
+> **Direction change (2026-07-12):** an MCP server was the original §8 plan; it was dropped in favour of
+> the TOON-output approach — lower per-task token cost, no HTTP/SDK dependency tree, and nothing for the
+> user to enable or reload. The full rationale, the build-vs-buy call, and the library selection live in
+> [`DN-agent-interface-toon.md`](DN-agent-interface-toon.md).
 
 ## 9. Decomposition
 

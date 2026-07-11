@@ -31,7 +31,7 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-005](CR-OA-005-state-machine-engine.md) | Transition-map state-machine engine + `event` | feature | COMPLETED (2026-07-12) | 003, 004 | 3 |
 | [CR-OA-007](CR-OA-007-subscriptions-insurance-stores.md) | `subscriptions` + `insurance` stores + memory migration | feature | COMPLETED (2026-07-12) | 002, 005, 006 | 3 |
 | [CR-OA-008](CR-OA-008-docs-and-rules.md) | Docs & rules refresh | docs | COMPLETED (2026-07-12) | 001–007 | 4 |
-| [CR-OA-009](CR-OA-009-mcp-interface.md) | MCP interface | feature | PENDING | 003, 004, 005 | 4 |
+| [CR-OA-009](CR-OA-009-toon-output.md) | TOON output for the store CLI (AXI interface) | feature | PENDING | 003, 004, 005, 007 | 4 |
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
@@ -39,6 +39,12 @@ tracking verbs still read JSONL; importing next repopulates Mongo so the store i
 end-to-end. Both 006 and 004 depend only on the now-shipped 003.)
 
 ### Notes
+- **CR-OA-009 pivoted (2026-07-12):** the MCP-server scope was **dropped** for **TOON output over the
+  CLI** (the AXI stance) — lower per-task tokens, one pinned dependency instead of ~28, nothing to
+  enable/reload. Rationale + the library-verification finding are in
+  [`../research/DN-agent-interface-toon.md`](../research/DN-agent-interface-toon.md); the spec was renamed
+  `CR-OA-009-mcp-interface.md → CR-OA-009-toon-output.md` and now depends on 007 (its ACs read the
+  `subscriptions` store).
 - The already-built `store.py` v1 tracking verbs + the applied JSONL backfill (48 invoices
   COMPLETED, 19 warranties IN_PROGRESS, FNIRSI actions OPEN) are the **starting point** CR-OA-003
   / 004 port onto pymongo — not to be redone.

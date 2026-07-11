@@ -18,6 +18,9 @@
 # Local Claude Code settings (machine-specific)
 /.claude/settings.local.json
 
+# Lavish Editor review artifacts (local review surfaces, not versioned)
+/.lavish/
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
