@@ -32,7 +32,7 @@ Fields support dotted paths (e.g. source.email_id). Output is compact JSON on st
 import argparse, json, os, sys, datetime, re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DATA = os.path.normpath(os.path.join(HERE, "..", "data"))
+DATA = os.environ.get("OA_DATA_DIR") or os.path.normpath(os.path.join(HERE, "..", "data"))
 STORES = {"contacts": "vendor_contacts.jsonl", "invoices": "invoices.jsonl",
           "warranties": "warranties.jsonl", "cases": "support_cases.jsonl",
           "products": "product_catalogue.jsonl"}
@@ -442,6 +442,22 @@ def cmd_validate(a):
         out({t: _nonconforming_ids(t) for t in STORES})
 
 
+def cmd_import(a):
+    """Read each store's JSONL from DATA (honouring OA_DATA_DIR) and upsert every
+    record into Mongo by `id` (idempotent — re-running creates no duplicates)."""
+    import oa_mongo
+    types = [a.type] if a.type else list(STORES)
+    imported = {}
+    for t in types:
+        coll = oa_mongo.coll(t)
+        n = 0
+        for rec in load(t):
+            coll.replace_one({"id": rec["id"]}, rec, upsert=True)
+            n += 1
+        imported[t] = n
+    out({"imported": imported})
+
+
 def cmd_init(a):
     """Create each store's MongoDB collection + a unique index on `id`, then attach
     the `$jsonSchema` validators (idempotent)."""
@@ -452,6 +468,27 @@ def cmd_init(a):
         done.append(t)
     _apply_validators()
     out({"initialized": done, "db": oa_mongo.db().name})
+
+
+def cmd_snapshot(a):
+    """Export each store's Mongo collection back to its JSONL file under DATA
+    (honouring OA_DATA_DIR). One JSON object per line, `_id` stripped, keys ordered
+    `id` first then the rest sorted -> byte-identical output across repeated runs.
+    Writes atomically (tmp file + os.replace)."""
+    import oa_mongo
+    types = [a.type] if a.type else list(STORES)
+    counts = {}
+    for t in types:
+        docs = list(oa_mongo.coll(t).find({}, {"_id": 0}))
+        target = path(t)
+        tmp = target + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            for d in docs:
+                ordered = {"id": d.get("id"), **{k: d[k] for k in sorted(d) if k != "id"}}
+                f.write(json.dumps(ordered, ensure_ascii=False) + "\n")
+        os.replace(tmp, target)
+        counts[t] = len(docs)
+    out({"snapshot": counts})
 
 
 def main():
@@ -495,6 +532,10 @@ def main():
     ws.set_defaults(func=cmd_warranty_sweep)
     va = sub.add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys())
     va.set_defaults(func=cmd_validate)
+    im = sub.add_parser("import"); im.add_argument("type", nargs="?", choices=STORES.keys())
+    im.set_defaults(func=cmd_import)
+    sn = sub.add_parser("snapshot"); sn.add_argument("type", nargs="?", choices=STORES.keys())
+    sn.set_defaults(func=cmd_snapshot)
     it = sub.add_parser("init"); it.set_defaults(func=cmd_init)
     av = sub.add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
 
