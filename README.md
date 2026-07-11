@@ -40,10 +40,10 @@ The only program here is a small JSON data CLI — the behaviour lives in the ro
 
 ## The data store
 
-Everything the roles learn is kept as **JSONL** (one record per line) under `data/`, and accessed
-through **`scripts/store.py`** — never by editing the files directly.
+Everything the roles learn is kept in **MongoDB** (db `office_assistant`) and accessed through
+**`scripts/store.py`** — never directly. `store.py snapshot` mirrors it to `data/*.jsonl` for versioning.
 
-Five stores form a small **relational model**, joined by foreign keys:
+Seven stores form a small **relational model**, joined by foreign keys:
 
 ```
 invoice (proof of purchase) → warranty (coverage/expiry) → product (manual/specs)
@@ -56,6 +56,8 @@ invoice (proof of purchase) → warranty (coverage/expiry) → product (manual/s
 - **warranties** — coverage, term, expiry, registration
 - **products** — owned products keyed on the **manufacturer**, with official reference links + specs
 - **cases** — support / claim / RMA / service cases
+- **subscriptions** — recurring bills / SaaS / memberships, with your keep-vs-cancel disposition
+- **insurance** — policies + regulatory renewals (e.g. a vehicle's motor policy + RC re-registration), linked to the insured product
 
 Saved document copies live in `documents/personal/` and `documents/business/` (by vendor); each
 invoice record points to its PDF. Renewal/warranty/customs reminders go to the calendar.
@@ -77,7 +79,7 @@ Full field reference: `data/schema.md`. CLI details: `scripts/README.md`.
 
 ## Layout
 ```
-data/        JSONL stores + schema.md          scripts/   store.py (the CLI) + README
+data/        JSONL snapshots + schema.md       scripts/   store.py (the CLI) + README
 documents/   saved PDFs (personal | business)  CLAUDE.md  guidance for Claude Code
 ```
 
