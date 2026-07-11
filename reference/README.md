@@ -1,7 +1,8 @@
 # Office Assistant — Reference (moved to the data store)
 
-Reference/lookup data is now stored as **JSONL with a schema** under `../data/` and accessed via
-`../scripts/store.py` (token-frugal queries) rather than markdown lists here.
+Reference/lookup data now lives in **MongoDB** (accessed via `../scripts/store.py`, token-frugal
+queries; snapshotted to `../data/*.jsonl` with the schema in `../data/schema.md`) rather than markdown
+lists here.
 
 - **Vendor support contacts** → `../data/vendor_contacts.jsonl` (`store.py ... contacts`)
 - **Schema** → `../data/schema.md` · **Script usage** → `../scripts/README.md`

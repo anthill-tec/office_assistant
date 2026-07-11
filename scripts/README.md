@@ -1,11 +1,13 @@
 # Office Assistant — Scripts
 
-Token-frugal helpers over the `data/*.jsonl` stores. **Skills and agents MUST go through these
-instead of reading whole JSONL files into context** — query for exactly the rows/fields needed.
+Token-frugal helpers over the **MongoDB** stores (mirrored to `data/*.jsonl` by `snapshot`). **Skills
+and agents MUST go through these instead of reading whole files into context** — query for exactly the
+rows/fields needed.
 
-## `store.py` — JSONL data store CLI (stdlib only, `python3`)
+## `store.py` — data store CLI (`python3` + `pymongo`, MongoDB-backed)
 
-Types: `contacts` · `invoices` · `warranties` · `cases` (schema in `../data/schema.md`).
+Types: `contacts` · `invoices` · `warranties` · `cases` · `products` · `subscriptions` · `insurance`
+(schema in `../data/schema.md`).
 
 ```bash
 # look up a vendor's verified support contact (only the fields you need)
@@ -28,10 +30,17 @@ Filters: `--where field=value` (exact), `--contains field=substr` (case-insensit
 `--after field=YYYY-MM-DD` / `--before field=YYYY-MM-DD` (ISO date, **inclusive** on both ends; null/missing
 dates are excluded). All are repeatable and AND-combined, and accept **dotted paths** (`source.email_id`,
 `registration.done`, `last_contact.date`). `--fields a,b,c` projects; `--sort`, `--limit`.
-Output is compact JSON on stdout; warnings go to stderr; writes are atomic (temp + replace).
+Output is compact JSON on stdout; warnings go to stderr.
+
+**Lifecycle + admin verbs:** `set-status` / `action-add` / `action-resolve` / `doc-add` drive the shared
+`status` + `actions[]`; `event <type> <id> <event>` fires a mapped `transitions.py` transition; `attention`
+lists rows needing action; `warranty-sweep` / `due-sweep` expire/renew in bulk. `init` bootstraps the Mongo
+collections (unique `id` index + `$jsonSchema` validators), `validate` reports violations, and `import` /
+`snapshot` move data between `data/*.jsonl` and Mongo. Connection: `127.0.0.1:27017` db `office_assistant`,
+overridable via `OA_MONGO_URI` / `OA_MONGO_DB` (`OA_DATA_DIR` relocates the snapshot/import dir).
 
 ## Conventions
 - One concern per call; let the script do the filtering — don't pull the whole store back.
 - `acct` is `personal` or `business` (business = bought on `antojk@anthilllabs.in`, usually GST).
 - Saved document copies live under `../documents/<acct>/<vendor>/`; the JSONL row's `file` points to them.
-- Extend with more scripts here (e.g. an expense/tax summarizer) as needs grow — keep them stdlib + JSON-out.
+- Extend with more scripts here (e.g. an expense/tax summarizer) as needs grow — keep them JSON-out.
