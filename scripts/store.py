@@ -200,13 +200,13 @@ def _mongo_filter(a):
     for c in (a.contains or []):
         k, _, sub = c.partition("=")
         f[k] = {"$regex": re.escape(sub), "$options": "i"}  # matches strings + array-of-string elements
-    for w in (a.after or []):
+    for w in (getattr(a, "after", None) or []):
         k, _, d = w.partition("=")
         cur = f.get(k)
         if not isinstance(cur, dict):
             cur = f[k] = {}
         cur["$gte"] = d                     # ISO date >= bound (inclusive)
-    for w in (a.before or []):
+    for w in (getattr(a, "before", None) or []):
         k, _, d = w.partition("=")
         cur = f.get(k)
         if not isinstance(cur, dict):
@@ -299,29 +299,27 @@ def cmd_stats(a):
 
 # ── Tracking-state verbs ──────────────────────────────────────────────────────
 def cmd_set_status(a):
+    import oa_mongo
     status = a.status.upper()
     if status not in STATUSES:
         out({"error": "invalid status", "given": a.status, "allowed": STATUSES}); sys.exit(1)
-    rows = load(a.type)
+    coll = oa_mongo.coll(a.type)
     if a.id:
-        r = find(rows, a.id)
-        targets = [r] if r else []
+        f = {"id": a.id}
     elif a.where or a.contains:
-        targets = [r for r in rows if _match(r, a.where, a.contains)]
+        f = _mongo_filter(a)
     else:
         out({"error": "give <id> or --where/--contains"}); sys.exit(1)
-    if not targets:
+    ids = [d["id"] for d in coll.find(f, {"id": 1, "_id": 0})]
+    if not ids:
         out({"error": "no targets matched"}); sys.exit(1)
-    for r in targets:
-        r["status"] = status; r["updated"] = today()
-    save(a.type, rows)
-    out({"status": status, "count": len(targets), "ids": [r["id"] for r in targets]})
+    coll.update_many(f, {"$set": {"status": status, "updated": today()}})
+    out({"status": status, "count": len(ids), "ids": ids})
 
 
 def cmd_action_add(a):
-    rows = load(a.type); r = find(rows, a.id)
-    if not r:
-        out({"error": "not found", "id": a.id}); sys.exit(1)
+    import oa_mongo
+    coll = oa_mongo.coll(a.type)
     known = ACTION_SETS.get(a.type, [])
     if known and a.action not in known:
         sys.stderr.write(f"warn: '{a.action}' not in {a.type} action set {known}\n")
@@ -329,37 +327,36 @@ def cmd_action_add(a):
     if a.detail: act["detail"] = a.detail
     if a.owner:  act["owner"] = a.owner
     if a.due:    act["due"] = a.due
-    r.setdefault("actions", []).append(act)
-    r["updated"] = today(); save(a.type, rows)
+    res = coll.update_one({"id": a.id}, {"$push": {"actions": act}, "$set": {"updated": today()}})
+    if res.matched_count == 0:
+        out({"error": "not found", "id": a.id}); sys.exit(1)
     out({"id": a.id, "action": a.action, "status": "OPEN"})
 
 
 def cmd_action_resolve(a):
-    rows = load(a.type); r = find(rows, a.id)
-    if not r:
-        out({"error": "not found", "id": a.id}); sys.exit(1)
-    hit = None
-    for act in r.get("actions", []):
-        if act.get("action") == a.action and act.get("status") == "OPEN":
-            act["status"] = "RESOLVED"; act["resolved"] = today(); hit = act; break
-    if not hit:
+    import oa_mongo
+    coll = oa_mongo.coll(a.type)
+    res = coll.update_one(
+        {"id": a.id, "actions": {"$elemMatch": {"action": a.action, "status": "OPEN"}}},
+        {"$set": {"actions.$.status": "RESOLVED", "actions.$.resolved": today(), "updated": today()}},
+    )
+    if res.matched_count == 0:
         out({"error": "no OPEN action", "id": a.id, "action": a.action}); sys.exit(1)
-    r["updated"] = today(); save(a.type, rows)
     out({"id": a.id, "action": a.action, "status": "RESOLVED"})
 
 
 def cmd_doc_add(a):
-    rows = load(a.type); r = find(rows, a.id)
-    if not r:
-        out({"error": "not found", "id": a.id}); sys.exit(1)
+    import oa_mongo
+    coll = oa_mongo.coll(a.type)
     known = DOC_ASSETS.get(a.type, [])
     if known and a.asset_type not in known:
         sys.stderr.write(f"warn: '{a.asset_type}' not in {a.type} document-asset set {known}\n")
     doc = {"type": a.asset_type, "path": a.path}
     if a.number: doc["number"] = a.number
     if a.date:   doc["date"] = a.date
-    r.setdefault("documents", []).append(doc)
-    r["updated"] = today(); save(a.type, rows)
+    res = coll.update_one({"id": a.id}, {"$push": {"documents": doc}, "$set": {"updated": today()}})
+    if res.matched_count == 0:
+        out({"error": "not found", "id": a.id}); sys.exit(1)
     out({"id": a.id, "document": doc})
 
 
