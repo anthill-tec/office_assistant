@@ -388,11 +388,13 @@ def cmd_warranty_sweep(a):
 
 def cmd_due_sweep(a):
     """Mark recurring-store docs (subscriptions, insurance, ...) DUE when their
-    `renews` date falls within the 30-day lookahead, via the transition engine on
-    Mongo; each `renewal-window` transition opens the domain action (e.g.
-    cancel-before-charge). Recurring stores are discovered dynamically as those
-    that declare a `renewal-window` transition. The `status != DUE` filter makes a
-    repeat sweep idempotent (already-due docs are skipped)."""
+    renewal trigger — EITHER `renews` OR `expiry` — falls within the 30-day
+    lookahead, via the transition engine on Mongo; each `renewal-window`
+    transition opens the domain action (e.g. cancel-before-charge for
+    subscriptions, renew-policy for insurance, which carries `expiry` not
+    `renews`). Recurring stores are discovered dynamically as those that declare a
+    `renewal-window` transition. The `status != DUE` filter makes a repeat sweep
+    idempotent (already-due docs are skipped)."""
     import oa_mongo, transitions
     cutoff = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
     recurring = [t for t in STORES if transitions.find_transition(t, "IN_PROGRESS", "renewal-window")]
@@ -401,7 +403,7 @@ def cmd_due_sweep(a):
     for t in recurring:
         coll = oa_mongo.coll(t)
         ids = []
-        for doc in coll.find({"renews": {"$lte": cutoff}, "status": {"$ne": "DUE"}}, {"_id": 0}):
+        for doc in coll.find({"$or": [{"renews": {"$lte": cutoff}}, {"expiry": {"$lte": cutoff}}], "status": {"$ne": "DUE"}}, {"_id": 0}):
             tr = transitions.find_transition(t, doc.get("status"), "renewal-window")
             if tr is None:
                 continue
