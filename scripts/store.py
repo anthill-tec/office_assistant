@@ -470,6 +470,27 @@ def cmd_init(a):
     out({"initialized": done, "db": oa_mongo.db().name})
 
 
+def cmd_snapshot(a):
+    """Export each store's Mongo collection back to its JSONL file under DATA
+    (honouring OA_DATA_DIR). One JSON object per line, `_id` stripped, keys ordered
+    `id` first then the rest sorted -> byte-identical output across repeated runs.
+    Writes atomically (tmp file + os.replace)."""
+    import oa_mongo
+    types = [a.type] if a.type else list(STORES)
+    counts = {}
+    for t in types:
+        docs = list(oa_mongo.coll(t).find({}, {"_id": 0}))
+        target = path(t)
+        tmp = target + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            for d in docs:
+                ordered = {"id": d.get("id"), **{k: d[k] for k in sorted(d) if k != "id"}}
+                f.write(json.dumps(ordered, ensure_ascii=False) + "\n")
+        os.replace(tmp, target)
+        counts[t] = len(docs)
+    out({"snapshot": counts})
+
+
 def main():
     p = argparse.ArgumentParser(description="Office-assistant JSONL store")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -513,6 +534,8 @@ def main():
     va.set_defaults(func=cmd_validate)
     im = sub.add_parser("import"); im.add_argument("type", nargs="?", choices=STORES.keys())
     im.set_defaults(func=cmd_import)
+    sn = sub.add_parser("snapshot"); sn.add_argument("type", nargs="?", choices=STORES.keys())
+    sn.set_defaults(func=cmd_snapshot)
     it = sub.add_parser("init"); it.set_defaults(func=cmd_init)
     av = sub.add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
 
