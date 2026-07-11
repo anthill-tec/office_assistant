@@ -68,9 +68,6 @@ DOC_ASSETS = {
     "products":   ["manual", "datasheet", "spec-sheet"],
     "contacts":   [],
 }
-_CACHE = {}
-
-
 def path(t):
     return os.path.join(DATA, STORES[t])
 
@@ -122,18 +119,13 @@ def project(rec, fields):
     return rec if not fields else {f: getp(rec, f) for f in fields}
 
 
-def _index(t):
-    if t not in _CACHE:
-        _CACHE[t] = {r.get("id"): r for r in load(t)}
-    return _CACHE[t]
-
-
 def expand(rec, fields):
+    import oa_mongo
     for f in fields:
         store = FK_MAP.get(f)
         ref = getp(rec, f)
         if store and ref:
-            rec[f + "_obj"] = _index(store).get(ref)
+            rec[f + "_obj"] = oa_mongo.coll(store).find_one({"id": ref}, {"_id": 0})
     return rec
 
 
@@ -179,43 +171,76 @@ def gen_id(t, rec, existing):
     return cand
 
 
-def cmd_query(a):
-    rows = load(a.type)
-    def ok(r):
-        if not _match(r, a.where, a.contains):
-            return False
-        for w in (a.after or []):
-            k, _, d = w.partition("=")
-            val = getp(r, k)
-            if val is None or str(val)[:10] < d:  # ISO date >= bound (inclusive); datetime -> date portion
-                return False
-        for w in (a.before or []):
-            k, _, d = w.partition("=")
-            val = getp(r, k)
-            if val is None or str(val)[:10] > d:  # ISO date <= bound (inclusive)
-                return False
+def _coerce_scalar(v):
+    """Coerce a `--where` string value to its Mongo-comparable type."""
+    if v == "true":
         return True
-    res = [r for r in rows if ok(r)]
+    if v == "false":
+        return False
+    try:
+        return int(v)
+    except ValueError:
+        pass
+    try:
+        return float(v)
+    except ValueError:
+        pass
+    return v
+
+
+def _mongo_filter(a):
+    """Translate the query flags into a MongoDB filter document (all AND-ed)."""
+    f = {}
+    for w in (a.where or []):
+        k, _, v = w.partition("=")
+        if v in ("None", "null"):
+            f[k] = {"$in": [None]}          # null-or-missing
+        else:
+            f[k] = _coerce_scalar(v)
+    for c in (a.contains or []):
+        k, _, sub = c.partition("=")
+        f[k] = {"$regex": re.escape(sub), "$options": "i"}  # matches strings + array-of-string elements
+    for w in (a.after or []):
+        k, _, d = w.partition("=")
+        cur = f.get(k)
+        if not isinstance(cur, dict):
+            cur = f[k] = {}
+        cur["$gte"] = d                     # ISO date >= bound (inclusive)
+    for w in (a.before or []):
+        k, _, d = w.partition("=")
+        cur = f.get(k)
+        if not isinstance(cur, dict):
+            cur = f[k] = {}
+        cur["$lte"] = d                     # ISO date <= bound (inclusive)
+    if getattr(a, "filter", None):
+        f.update(json.loads(a.filter))      # native Mongo passthrough
+    return f
+
+
+def cmd_query(a):
+    import oa_mongo
+    docs = list(oa_mongo.coll(a.type).find(_mongo_filter(a), {"_id": 0}))
     if a.sort:
-        res.sort(key=lambda r: (getp(r, a.sort) is None, str(getp(r, a.sort))))
+        docs.sort(key=lambda r: (getp(r, a.sort) is None, str(getp(r, a.sort))))
     if a.limit:
-        res = res[:a.limit]
+        docs = docs[:a.limit]
     if a.expand:
         exp = a.expand.split(",")
-        res = [expand(r, exp) for r in res]
+        docs = [expand(r, exp) for r in docs]
     fields = a.fields.split(",") if a.fields else None
-    out([project(r, fields) for r in res])
+    out([project(r, fields) for r in docs])
 
 
 def cmd_get(a):
-    for r in load(a.type):
-        if r.get("id") == a.id:
-            if a.expand:
-                r = expand(r, a.expand.split(","))
-            if a.fields:
-                r = project(r, a.fields.split(","))
-            return out(r)
-    out(None)
+    import oa_mongo
+    r = oa_mongo.coll(a.type).find_one({"id": a.id}, {"_id": 0})
+    if r is None:
+        return out(None)
+    if a.expand:
+        r = expand(r, a.expand.split(","))
+    if a.fields:
+        r = project(r, a.fields.split(","))
+    out(r)
 
 
 def cmd_add(a):
@@ -434,6 +459,7 @@ def main():
     q.add_argument("--before", action="append",
                    help="FIELD=YYYY-MM-DD: keep rows where ISO date FIELD <= value (inclusive); repeatable")
     q.add_argument("--fields"); q.add_argument("--sort"); q.add_argument("--limit", type=int)
+    q.add_argument("--filter", help="native MongoDB filter as a JSON object, AND-merged with the other flags")
     q.add_argument("--expand", help="comma list of FK fields to resolve inline (e.g. contact_id,invoice_id)")
     q.set_defaults(func=cmd_query)
     g = sub.add_parser("get"); with_type(g); g.add_argument("id")
