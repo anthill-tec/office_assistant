@@ -386,6 +386,33 @@ def cmd_warranty_sweep(a):
     out({"expired": changed, "count": len(changed), "dry_run": bool(a.dry_run)})
 
 
+def cmd_due_sweep(a):
+    """Mark recurring-store docs (subscriptions, insurance, ...) DUE when their
+    `renews` date falls within the 30-day lookahead, via the transition engine on
+    Mongo; each `renewal-window` transition opens the domain action (e.g.
+    cancel-before-charge). Recurring stores are discovered dynamically as those
+    that declare a `renewal-window` transition. The `status != DUE` filter makes a
+    repeat sweep idempotent (already-due docs are skipped)."""
+    import oa_mongo, transitions
+    cutoff = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+    recurring = [t for t in STORES if transitions.find_transition(t, "IN_PROGRESS", "renewal-window")]
+    due = {}
+    count = 0
+    for t in recurring:
+        coll = oa_mongo.coll(t)
+        ids = []
+        for doc in coll.find({"renews": {"$lte": cutoff}, "status": {"$ne": "DUE"}}, {"_id": 0}):
+            tr = transitions.find_transition(t, doc.get("status"), "renewal-window")
+            if tr is None:
+                continue
+            if not a.dry_run:
+                _apply_transition(coll, doc, tr)
+            ids.append(doc["id"])
+        due[t] = ids
+        count += len(ids)
+    out({"due": due, "count": count, "dry_run": bool(a.dry_run)})
+
+
 def _apply_transition(coll, doc, tr):
     """Apply one declarative transition to a Mongo doc: set status->`tr["to"]`
     (+ updated), fire the transition's effects (open-action / require-doc pushes,
@@ -567,6 +594,8 @@ def main():
     at.set_defaults(func=cmd_attention)
     ws = sub.add_parser("warranty-sweep"); ws.add_argument("--dry-run", action="store_true", dest="dry_run")
     ws.set_defaults(func=cmd_warranty_sweep)
+    ds = sub.add_parser("due-sweep"); ds.add_argument("--dry-run", action="store_true", dest="dry_run")
+    ds.set_defaults(func=cmd_due_sweep)
     ev = sub.add_parser("event"); with_type(ev); ev.add_argument("id"); ev.add_argument("event")
     ev.set_defaults(func=cmd_event)
     va = sub.add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys())
