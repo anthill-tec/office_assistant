@@ -35,12 +35,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("OA_DATA_DIR") or os.path.normpath(os.path.join(HERE, "..", "data"))
 STORES = {"contacts": "vendor_contacts.jsonl", "invoices": "invoices.jsonl",
           "warranties": "warranties.jsonl", "cases": "support_cases.jsonl",
-          "products": "product_catalogue.jsonl"}
+          "products": "product_catalogue.jsonl",
+          "subscriptions": "subscriptions.jsonl", "insurance": "insurance.jsonl"}
 PREFIX = {"contacts": "ven", "invoices": "doc", "warranties": "war", "cases": "case",
-          "products": "prod"}
+          "products": "prod", "subscriptions": "sub", "insurance": "ins"}
 # Foreign keys: field name -> store it references. `--expand` resolves them inline.
 FK_MAP = {"contact_id": "contacts", "invoice_id": "invoices",
-          "warranty_id": "warranties", "product_id": "products"}
+          "warranty_id": "warranties", "product_id": "products",
+          "subscription_id": "subscriptions"}
 
 # ── Tracking-state framework ──────────────────────────────────────────────────
 # Shared lifecycle vocabulary across every domain; `warranties` adds EXPIRED
@@ -58,6 +60,9 @@ ACTION_SETS = {
     "cases":      ["raise-ticket", "rma-issue", "ship-back", "repair", "replace", "resolution-confirm"],
     "products":   [],
     "contacts":   [],
+    "subscriptions": ["renewal-confirm", "cancel-before-charge", "keep-tombstone-decision",
+                      "de-register-mandate", "card-update", "price-change", "trial-end-cancel"],
+    "insurance":  ["renew-policy", "pay-premium", "kyc", "claim", "price-compare"],
 }
 # Domain-specific DOCUMENT-ASSET vocabularies (advisory).
 DOC_ASSETS = {
@@ -67,6 +72,8 @@ DOC_ASSETS = {
     "cases":      ["ticket", "rma-authorization", "service-report", "replacement-invoice"],
     "products":   ["manual", "datasheet", "spec-sheet"],
     "contacts":   [],
+    "subscriptions": ["receipt", "mandate", "cancellation"],
+    "insurance":  ["policy-schedule", "renewal-notice", "premium-receipt"],
 }
 def path(t):
     return os.path.join(DATA, STORES[t])
@@ -137,12 +144,21 @@ def _open_actions(r):
 
 
 def gen_id(t, rec, existing):
-    anchor = rec.get("manufacturer") if t == "products" else rec.get("vendor")
+    if t == "products":
+        anchor = rec.get("manufacturer")
+    elif t == "subscriptions":
+        anchor = rec.get("provider")
+    elif t == "insurance":
+        anchor = rec.get("insurer")
+    else:
+        anchor = rec.get("vendor")
     base = PREFIX[t] + "_" + (slug(anchor) or "x")
     if t == "invoices":
         base += "_" + (slug(rec.get("number") or rec.get("date")) or "x")
     elif t == "products":
         base += "_" + (slug(rec.get("model") or rec.get("product")) or "x")
+    elif t == "insurance" and rec.get("policy_no"):
+        base += "_" + slug(rec.get("policy_no"))
     cand, i = base, 2
     while cand in existing:
         cand = f"{base}-{i}"

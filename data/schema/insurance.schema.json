@@ -1,0 +1,48 @@
+{
+  "bsonType": "object",
+  "required": ["id"],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "bsonType": "string",
+      "pattern": "^ins_"
+    },
+    "insurer": {
+      "bsonType": "string"
+    },
+    "policy_no": {
+      "bsonType": "string"
+    },
+    "product_id": {
+      "bsonType": "string",
+      "pattern": "^prod_"
+    },
+    "premium": {
+      "bsonType": ["double", "int", "long", "decimal"]
+    },
+    "period": {
+      "bsonType": "string"
+    },
+    "expiry": {
+      "bsonType": "string"
+    },
+    "status": {
+      "enum": ["NEW", "UNKNOWN", "IN_PROGRESS", "COMPLETED", "EXPIRED", "DUE"]
+    },
+    "actions": {
+      "bsonType": "array",
+      "items": {
+        "bsonType": "object",
+        "additionalProperties": true,
+        "properties": {
+          "status": {
+            "enum": ["OPEN", "RESOLVED"]
+          }
+        }
+      }
+    },
+    "documents": {
+      "bsonType": "array"
+    }
+  }
+}
