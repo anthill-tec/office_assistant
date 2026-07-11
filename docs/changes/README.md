@@ -29,7 +29,7 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-004](CR-OA-004-tracking-verbs-pymongo.md) | Tracking verbs on pymongo | feature | COMPLETED (2026-07-11) | 003 | 2 |
 | [CR-OA-006](CR-OA-006-migration-and-snapshot.md) | Migration `import` + `snapshot` versioning | feature | COMPLETED (2026-07-11) | 003 | 2 |
 | [CR-OA-005](CR-OA-005-state-machine-engine.md) | Transition-map state-machine engine + `event` | feature | COMPLETED (2026-07-12) | 003, 004 | 3 |
-| [CR-OA-007](CR-OA-007-subscriptions-insurance-stores.md) | `subscriptions` + `insurance` stores + memory migration | feature | PENDING | 002, 005, 006 | 3 |
+| [CR-OA-007](CR-OA-007-subscriptions-insurance-stores.md) | `subscriptions` + `insurance` stores + memory migration | feature | COMPLETED (2026-07-12) | 002, 005, 006 | 3 |
 | [CR-OA-008](CR-OA-008-docs-and-rules.md) | Docs & rules refresh | docs | PENDING | 001–007 | 4 |
 | [CR-OA-009](CR-OA-009-mcp-interface.md) | MCP interface | feature | PENDING | 003, 004, 005 | 4 |
 
@@ -57,3 +57,9 @@ Small items (no design surface → tasks, not CRs) surfaced during execution:
   uppercase lifecycle `status`. Reconciled in **CR-OA-008** §S2 (see its scope + AC).
 - **`store.py:70` PEP8 spacing** (filed 2026-07-11, from CR-OA-003 VERIFY) — missing blank-line pair
   before `def path(t):` after Cycle A removed `_CACHE`; cosmetic, fold into a lint pass.
+- **Disposition-aware `due-sweep` action** (filed 2026-07-12, from CR-OA-007 live dry-run) — the
+  `renewal-window` transition opens `cancel-before-charge` uniformly for every subscription, but a
+  **KEEP** sub (Fastmail, Anthropic) reaching its renewal window wants a `renewal-confirm`/protect
+  action, not a cancel prompt; only **TOMBSTONE/UNDECIDED** subs should get `cancel-before-charge`.
+  Make the opened action disposition-aware (transition effect keyed on `disposition`, or a
+  post-sweep pass). Until then, do NOT run a live `due-sweep` on the migrated KEEP subscriptions.
