@@ -30,7 +30,7 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-006](CR-OA-006-migration-and-snapshot.md) | Migration `import` + `snapshot` versioning | feature | COMPLETED (2026-07-11) | 003 | 2 |
 | [CR-OA-005](CR-OA-005-state-machine-engine.md) | Transition-map state-machine engine + `event` | feature | COMPLETED (2026-07-12) | 003, 004 | 3 |
 | [CR-OA-007](CR-OA-007-subscriptions-insurance-stores.md) | `subscriptions` + `insurance` stores + memory migration | feature | COMPLETED (2026-07-12) | 002, 005, 006 | 3 |
-| [CR-OA-008](CR-OA-008-docs-and-rules.md) | Docs & rules refresh | docs | PENDING | 001–007 | 4 |
+| [CR-OA-008](CR-OA-008-docs-and-rules.md) | Docs & rules refresh | docs | COMPLETED (2026-07-12) | 001–007 | 4 |
 | [CR-OA-009](CR-OA-009-mcp-interface.md) | MCP interface | feature | PENDING | 003, 004, 005 | 4 |
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
@@ -54,7 +54,8 @@ Small items (no design surface → tasks, not CRs) surfaced during execution:
   coverage metric is missing.
 - **`data/schema.md` `cases.status` enum** (filed 2026-07-11, from CR-OA-002) — schema.md still shows
   the old lowercase `open|awaiting_support|…|closed`; the store now enforces the shared 6-value
-  uppercase lifecycle `status`. Reconciled in **CR-OA-008** §S2 (see its scope + AC).
+  uppercase lifecycle `status`. **Resolved in CR-OA-008 §S2 (2026-07-12)** — schema.md `cases.status`
+  now documents the 6-value uppercase lifecycle; `grep -c awaiting_support data/schema.md == 0`.
 - **`store.py:70` PEP8 spacing** (filed 2026-07-11, from CR-OA-003 VERIFY) — missing blank-line pair
   before `def path(t):` after Cycle A removed `_CACHE`; cosmetic, fold into a lint pass.
 - **Disposition-aware `due-sweep` action** (filed 2026-07-12, from CR-OA-007 live dry-run) — the
