@@ -89,14 +89,6 @@ def load(t):
     return rows
 
 
-def save(t, rows):
-    tmp = path(t) + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    os.replace(tmp, path(t))
-
-
 def today():
     return datetime.date.today().isoformat()
 
@@ -362,37 +354,26 @@ def cmd_attention(a):
 
 
 def cmd_warranty_sweep(a):
-    """Recompute ACTIVE->EXPIRED from `expiry`; on EXPIRED, open a renew-or-extend action."""
-    rows = load("warranties"); now = today(); changed = []
-    for r in rows:
-        exp = r.get("expiry")
-        if not exp:
+    """Recompute past-due warranties to EXPIRED via the transition engine on Mongo;
+    each `expire` transition opens a renew-or-extend action. The `status != EXPIRED`
+    filter makes a repeat sweep idempotent (already-expired warranties are skipped)."""
+    import oa_mongo, transitions
+    coll = oa_mongo.coll("warranties")
+    now = today(); changed = []
+    for doc in coll.find({"expiry": {"$lt": now}, "status": {"$ne": "EXPIRED"}}, {"_id": 0}):
+        tr = transitions.find_transition("warranties", doc.get("status"), "expire")
+        if tr is None:
             continue
-        if str(exp)[:10] < now and r.get("status") != "EXPIRED":
-            r["status"] = "EXPIRED"; r["updated"] = now
-            if "renew-or-extend" not in _open_actions(r):
-                r.setdefault("actions", []).append(
-                    {"action": "renew-or-extend", "status": "OPEN", "opened": now,
-                     "detail": f"warranty expired {exp} - renew or extend/AMC?"})
-            changed.append(r["id"])
-    if changed and not a.dry_run:
-        save("warranties", rows)
+        if not a.dry_run:
+            _apply_transition(coll, doc, tr)
+        changed.append(doc["id"])
     out({"expired": changed, "count": len(changed), "dry_run": bool(a.dry_run)})
 
 
-def cmd_event(a):
-    """Drive a doc through the declarative transition table: look up (status, event),
-    apply the matching transition (set status + fire effects), reject an unmatched
-    (from, event) pair leaving the Mongo doc untouched."""
-    import oa_mongo, transitions
-    coll = oa_mongo.coll(a.type)
-    doc = coll.find_one({"id": a.id}, {"_id": 0})
-    if doc is None:
-        out({"error": "not found", "id": a.id}); sys.exit(1)
-    tr = transitions.find_transition(a.type, doc.get("status"), a.event)
-    if tr is None:
-        out({"error": "illegal transition", "id": a.id,
-             "from": doc.get("status"), "event": a.event}); sys.exit(1)
+def _apply_transition(coll, doc, tr):
+    """Apply one declarative transition to a Mongo doc: set status->`tr["to"]`
+    (+ updated), fire the transition's effects (open-action / require-doc pushes,
+    resolve-action flips OPEN->RESOLVED). Shared by `event` and `warranty-sweep`."""
     now = today()
     set_fields = {"status": tr["to"], "updated": now}
     pushes = []
@@ -412,11 +393,27 @@ def cmd_event(a):
     update = {"$set": set_fields}
     if pushes:
         update["$push"] = {"actions": {"$each": pushes}}
-    coll.update_one({"id": a.id}, update)
+    coll.update_one({"id": doc["id"]}, update)
     for slug_name in resolves:
         coll.update_one(
-            {"id": a.id, "actions": {"$elemMatch": {"action": slug_name, "status": "OPEN"}}},
+            {"id": doc["id"], "actions": {"$elemMatch": {"action": slug_name, "status": "OPEN"}}},
             {"$set": {"actions.$.status": "RESOLVED", "actions.$.resolved": now}})
+
+
+def cmd_event(a):
+    """Drive a doc through the declarative transition table: look up (status, event),
+    apply the matching transition (set status + fire effects), reject an unmatched
+    (from, event) pair leaving the Mongo doc untouched."""
+    import oa_mongo, transitions
+    coll = oa_mongo.coll(a.type)
+    doc = coll.find_one({"id": a.id}, {"_id": 0})
+    if doc is None:
+        out({"error": "not found", "id": a.id}); sys.exit(1)
+    tr = transitions.find_transition(a.type, doc.get("status"), a.event)
+    if tr is None:
+        out({"error": "illegal transition", "id": a.id,
+             "from": doc.get("status"), "event": a.event}); sys.exit(1)
+    _apply_transition(coll, doc, tr)
     out({"id": a.id, "event": a.event, "from": tr["from"], "to": tr["to"]})
 
 
