@@ -140,19 +140,6 @@ def find(rows, rid):
     return None
 
 
-def _match(r, where, contains):
-    for w in (where or []):
-        k, _, v = w.partition("=")
-        if str(getp(r, k)) != v:
-            return False
-    for c in (contains or []):
-        k, _, sub = c.partition("=")
-        val = getp(r, k)
-        if val is None or sub.lower() not in str(val).lower():
-            return False
-    return True
-
-
 def _open_actions(r):
     return [x.get("action") for x in (r.get("actions") or []) if x.get("status") == "OPEN"]
 
@@ -361,16 +348,16 @@ def cmd_doc_add(a):
 
 
 def cmd_attention(a):
+    import oa_mongo
     types = [a.type] if a.type else list(STORES.keys())
     res = []
+    query = {"$or": [{"actions.status": "OPEN"}, {"status": {"$in": list(ATTENTION_STATUSES)}}]}
     for t in types:
-        for r in load(t):
-            status = r.get("status")   # absent status = not enrolled in tracking -> not flagged
-            opens = _open_actions(r)
-            if opens or status in ATTENTION_STATUSES:
-                res.append({"type": t, "id": r.get("id"),
-                            "name": r.get("vendor") or r.get("product") or r.get("provider"),
-                            "status": status or "UNKNOWN", "open_actions": opens})
+        for d in oa_mongo.coll(t).find(query, {"_id": 0}):
+            opens = _open_actions(d)
+            res.append({"type": t, "id": d.get("id"),
+                        "name": d.get("vendor") or d.get("product") or d.get("provider"),
+                        "status": d.get("status") or "UNKNOWN", "open_actions": opens})
     out(res)
 
 
