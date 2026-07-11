@@ -7,7 +7,10 @@
 # two lines below — or force-add a file with:  git add -f data/invoices.jsonl
 # ──────────────────────────────────────────────────────────────────────────
 /data/*.jsonl
-/documents/**/*.pdf
+# All personal document scans/copies stay local (chezmoi-versioned) — keep only READMEs
+/documents/**
+!/documents/**/
+!/documents/**/README.md
 
 # Atomic-write temp files from store.py
 /data/*.jsonl.tmp
@@ -24,6 +27,11 @@ Thumbs.db
 # Python
 __pycache__/
 *.py[cod]
+.venv/
+
+# Local env (Crucible project key) + test artifacts
+.env
+/test-reports/
 
 # Misc temp
 *.tmp
