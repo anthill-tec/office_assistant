@@ -32,6 +32,7 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-007](CR-OA-007-subscriptions-insurance-stores.md) | `subscriptions` + `insurance` stores + memory migration | feature | COMPLETED (2026-07-12) | 002, 005, 006 | 3 |
 | [CR-OA-008](CR-OA-008-docs-and-rules.md) | Docs & rules refresh | docs | COMPLETED (2026-07-12) | 001–007 | 4 |
 | [CR-OA-009](CR-OA-009-toon-output.md) | TOON output for the store CLI (AXI interface) | feature | PENDING | 003, 004, 005, 007 | 4 |
+| [CR-OA-010](CR-OA-010-axi-ergonomics.md) | AXI ergonomics — remaining principles (#2–#5, #7–#9) | feature | PENDING | 009 | 5 |
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
@@ -45,6 +46,11 @@ end-to-end. Both 006 and 004 depend only on the now-shipped 003.)
   [`../research/DN-agent-interface-toon.md`](../research/DN-agent-interface-toon.md); the spec was renamed
   `CR-OA-009-mcp-interface.md → CR-OA-009-toon-output.md` and now depends on 007 (its ACs read the
   `subscriptions` store).
+- **CR-OA-010 scheduled (2026-07-12):** AXI is **ten** principles (axi.md); CR-OA-009 delivers only #1
+  (TOON). The store already meets #6 + #10. The remaining ergonomics — #2 minimal default fields, #3
+  `--full` truncation, #4 pre-computed aggregates, #5 definitive empty states, #7 an ambient-context hook,
+  #8 no-arg live data, #9 contextual next-command hints — are scheduled as **CR-OA-010** (user-reviewed;
+  #4/#5/#7/#8/#9 explicitly approved).
 - The already-built `store.py` v1 tracking verbs + the applied JSONL backfill (48 invoices
   COMPLETED, 19 warranties IN_PROGRESS, FNIRSI actions OPEN) are the **starting point** CR-OA-003
   / 004 port onto pymongo — not to be redone.

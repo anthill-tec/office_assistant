@@ -122,7 +122,11 @@ emit **TOON** (Token-Oriented Object Notation — a lossless, indentation- and t
 JSON data model that declares an array's shape once and lists rows as bare delimited values, cutting the
 ~30–60% of tokens JSON spends on repeated keys, braces, and quotes). TOON is the **default** read format;
 **`--json` is a permanent fallback** for any consumer that needs strict JSON. This is the AXI stance —
-an agent-ergonomic CLI, not a protocol server.
+an agent-ergonomic CLI, not a protocol server. TOON is AXI principle **#1** (of ten, per axi.md) — the
+largest token lever; the store already meets #6 (structured errors/idempotent/no-prompts/exit-codes) and
+#10 (`--help`), and the remaining ergonomics (minimal default fields, truncation, pre-computed aggregates,
+definitive empty states, an ambient-context hook, no-arg live data, contextual next-command hints) are
+scheduled as **CR-OA-010**.
 
 > **Direction change (2026-07-12):** an MCP server was the original §8 plan; it was dropped in favour of
 > the TOON-output approach — lower per-task token cost, no HTTP/SDK dependency tree, and nothing for the
