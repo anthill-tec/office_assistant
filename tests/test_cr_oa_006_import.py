@@ -8,7 +8,8 @@ Verifies the §S1 ACs for the migration-import verb:
   - `import` (no type) walks every `store.STORES` type; against the REAL repo `data/`
     tree (no `OA_DATA_DIR` override) each collection's document count must equal the
     real `data/<file>.jsonl` line count (invoices 48, contacts 18, warranties 19,
-    cases 1, products 19 = 105 total per the CR's AC).
+    cases 1, products 19 = 105, plus subscriptions 11, insurance 2 = 118 total per
+    the CR's AC).
 
 `import` is currently NOT a registered subparser and `OA_DATA_DIR` is not yet honoured
 by `store.py`'s data-dir resolution, so every test here MUST fail until Cycle A's GREEN
@@ -142,8 +143,8 @@ class ImportVerbTest(unittest.TestCase):
                 f"{t}: Mongo has {actual} docs but data/{filename} has {expected} non-blank lines",
             )
             total_expected += expected
-        # positive/bound: the CR's stated grand total across all five stores
-        self.assertEqual(total_expected, 105)
+        # positive/bound: grand total across all seven stores (105 base + 11 subscriptions + 2 insurance = 118)
+        self.assertEqual(total_expected, 118)
 
 
 if __name__ == "__main__":

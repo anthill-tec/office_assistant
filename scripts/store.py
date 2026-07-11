@@ -35,12 +35,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("OA_DATA_DIR") or os.path.normpath(os.path.join(HERE, "..", "data"))
 STORES = {"contacts": "vendor_contacts.jsonl", "invoices": "invoices.jsonl",
           "warranties": "warranties.jsonl", "cases": "support_cases.jsonl",
-          "products": "product_catalogue.jsonl"}
+          "products": "product_catalogue.jsonl",
+          "subscriptions": "subscriptions.jsonl", "insurance": "insurance.jsonl"}
 PREFIX = {"contacts": "ven", "invoices": "doc", "warranties": "war", "cases": "case",
-          "products": "prod"}
+          "products": "prod", "subscriptions": "sub", "insurance": "ins"}
 # Foreign keys: field name -> store it references. `--expand` resolves them inline.
 FK_MAP = {"contact_id": "contacts", "invoice_id": "invoices",
-          "warranty_id": "warranties", "product_id": "products"}
+          "warranty_id": "warranties", "product_id": "products",
+          "subscription_id": "subscriptions"}
 
 # ── Tracking-state framework ──────────────────────────────────────────────────
 # Shared lifecycle vocabulary across every domain; `warranties` adds EXPIRED
@@ -58,6 +60,9 @@ ACTION_SETS = {
     "cases":      ["raise-ticket", "rma-issue", "ship-back", "repair", "replace", "resolution-confirm"],
     "products":   [],
     "contacts":   [],
+    "subscriptions": ["renewal-confirm", "cancel-before-charge", "keep-tombstone-decision",
+                      "de-register-mandate", "card-update", "price-change", "trial-end-cancel"],
+    "insurance":  ["renew-policy", "pay-premium", "kyc", "claim", "price-compare"],
 }
 # Domain-specific DOCUMENT-ASSET vocabularies (advisory).
 DOC_ASSETS = {
@@ -67,6 +72,8 @@ DOC_ASSETS = {
     "cases":      ["ticket", "rma-authorization", "service-report", "replacement-invoice"],
     "products":   ["manual", "datasheet", "spec-sheet"],
     "contacts":   [],
+    "subscriptions": ["receipt", "mandate", "cancellation"],
+    "insurance":  ["policy-schedule", "renewal-notice", "premium-receipt"],
 }
 def path(t):
     return os.path.join(DATA, STORES[t])
@@ -137,12 +144,21 @@ def _open_actions(r):
 
 
 def gen_id(t, rec, existing):
-    anchor = rec.get("manufacturer") if t == "products" else rec.get("vendor")
+    if t == "products":
+        anchor = rec.get("manufacturer")
+    elif t == "subscriptions":
+        anchor = rec.get("provider")
+    elif t == "insurance":
+        anchor = rec.get("insurer")
+    else:
+        anchor = rec.get("vendor")
     base = PREFIX[t] + "_" + (slug(anchor) or "x")
     if t == "invoices":
         base += "_" + (slug(rec.get("number") or rec.get("date")) or "x")
     elif t == "products":
         base += "_" + (slug(rec.get("model") or rec.get("product")) or "x")
+    elif t == "insurance" and rec.get("policy_no"):
+        base += "_" + slug(rec.get("policy_no"))
     cand, i = base, 2
     while cand in existing:
         cand = f"{base}-{i}"
@@ -370,6 +386,35 @@ def cmd_warranty_sweep(a):
     out({"expired": changed, "count": len(changed), "dry_run": bool(a.dry_run)})
 
 
+def cmd_due_sweep(a):
+    """Mark recurring-store docs (subscriptions, insurance, ...) DUE when their
+    renewal trigger — EITHER `renews` OR `expiry` — falls within the 30-day
+    lookahead, via the transition engine on Mongo; each `renewal-window`
+    transition opens the domain action (e.g. cancel-before-charge for
+    subscriptions, renew-policy for insurance, which carries `expiry` not
+    `renews`). Recurring stores are discovered dynamically as those that declare a
+    `renewal-window` transition. The `status != DUE` filter makes a repeat sweep
+    idempotent (already-due docs are skipped)."""
+    import oa_mongo, transitions
+    cutoff = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+    recurring = [t for t in STORES if transitions.find_transition(t, "IN_PROGRESS", "renewal-window")]
+    due = {}
+    count = 0
+    for t in recurring:
+        coll = oa_mongo.coll(t)
+        ids = []
+        for doc in coll.find({"$or": [{"renews": {"$lte": cutoff}}, {"expiry": {"$lte": cutoff}}], "status": {"$ne": "DUE"}}, {"_id": 0}):
+            tr = transitions.find_transition(t, doc.get("status"), "renewal-window")
+            if tr is None:
+                continue
+            if not a.dry_run:
+                _apply_transition(coll, doc, tr)
+            ids.append(doc["id"])
+        due[t] = ids
+        count += len(ids)
+    out({"due": due, "count": count, "dry_run": bool(a.dry_run)})
+
+
 def _apply_transition(coll, doc, tr):
     """Apply one declarative transition to a Mongo doc: set status->`tr["to"]`
     (+ updated), fire the transition's effects (open-action / require-doc pushes,
@@ -551,6 +596,8 @@ def main():
     at.set_defaults(func=cmd_attention)
     ws = sub.add_parser("warranty-sweep"); ws.add_argument("--dry-run", action="store_true", dest="dry_run")
     ws.set_defaults(func=cmd_warranty_sweep)
+    ds = sub.add_parser("due-sweep"); ds.add_argument("--dry-run", action="store_true", dest="dry_run")
+    ds.set_defaults(func=cmd_due_sweep)
     ev = sub.add_parser("event"); with_type(ev); ev.add_argument("id"); ev.add_argument("event")
     ev.set_defaults(func=cmd_event)
     va = sub.add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys())

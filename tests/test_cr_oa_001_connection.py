@@ -37,7 +37,8 @@ class TestConnection(unittest.TestCase):
     def test_stores_are_the_five_types(self):
         self.assertEqual(
             set(store.STORES),
-            {"contacts", "invoices", "warranties", "cases", "products"},
+            {"contacts", "invoices", "warranties", "cases", "products",
+             "subscriptions", "insurance"},
         )
 
     def test_coll_targets_named_collection(self):
