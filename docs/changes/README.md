@@ -33,7 +33,10 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-008](CR-OA-008-docs-and-rules.md) | Docs & rules refresh | docs | PENDING | 001–007 | 4 |
 | [CR-OA-009](CR-OA-009-mcp-interface.md) | MCP interface | feature | PENDING | 003, 004, 005 | 4 |
 
-**Recommended order:** 001 → 002 → 003 → 004 → 006 → 005 → 007 → 009 → 008.
+**Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
+(2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
+tracking verbs still read JSONL; importing next repopulates Mongo so the store is functional
+end-to-end. Both 006 and 004 depend only on the now-shipped 003.)
 
 ### Notes
 - The already-built `store.py` v1 tracking verbs + the applied JSONL backfill (48 invoices
@@ -52,3 +55,5 @@ Small items (no design surface → tasks, not CRs) surfaced during execution:
 - **`data/schema.md` `cases.status` enum** (filed 2026-07-11, from CR-OA-002) — schema.md still shows
   the old lowercase `open|awaiting_support|…|closed`; the store now enforces the shared 6-value
   uppercase lifecycle `status`. Reconciled in **CR-OA-008** §S2 (see its scope + AC).
+- **`store.py:70` PEP8 spacing** (filed 2026-07-11, from CR-OA-003 VERIFY) — missing blank-line pair
+  before `def path(t):` after Cycle A removed `_CACHE`; cosmetic, fold into a lint pass.
