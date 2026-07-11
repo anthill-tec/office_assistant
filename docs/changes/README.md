@@ -41,3 +41,14 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
   / 004 port onto pymongo — not to be redone.
 - `data/*.jsonl` stay as the `snapshot` target (chezmoi-versioned); they are NOT committed to the
   project repo (gitignored). Mongo data lives on the local instance only.
+
+## Follow-up tasks
+Small items (no design surface → tasks, not CRs) surfaced during execution:
+- **Coverage source path** (filed 2026-07-11, from CR-OA-002 regression gate) — `python-crucible
+  regression --coverage` runs `coverage run --source app`, but this project's code is in `scripts/`,
+  so no coverage is collected (`No data was collected`). Point coverage at `scripts/` (a `.coveragerc`
+  `[run]\nsource = scripts`, or a `--source` override in the gate). Tests still gate green; only the
+  coverage metric is missing.
+- **`data/schema.md` `cases.status` enum** (filed 2026-07-11, from CR-OA-002) — schema.md still shows
+  the old lowercase `open|awaiting_support|…|closed`; the store now enforces the shared 6-value
+  uppercase lifecycle `status`. Reconciled in **CR-OA-008** §S2 (see its scope + AC).
