@@ -1,13 +1,9 @@
-"""TOON encode/decode shim over the python-toon library (named oa_toon to avoid
-the import-name clash with the `toon` package it wraps; cf. oa_mongo.py)."""
-import toon
+"""Compat shim (CR-OA-011) — re-exports the TOON encoder from `vidushi_oa.toon`.
 
-
-def to_toon(obj):
-    """Encode a JSON-shaped object to its TOON string representation."""
-    return toon.encode(obj)
-
-
-def from_toon(s):
-    """Decode a TOON string back to the JSON-shaped object."""
-    return toon.decode(s)
+`vidushi_oa.toon` in turn re-exports `vidushi_oa._toon`, so `to_toon`/`from_toon` here are
+the SAME callables as `vidushi_oa.toon.to_toon`/`from_toon` (identity holds). A star re-export
+(rather than a `sys.modules` alias) is used because the CR-OA-009 suite loads this file by
+path via `importlib.util.exec_module` and inspects the resulting module's own namespace.
+"""
+from vidushi_oa.toon import *  # noqa: F401,F403
+from vidushi_oa.toon import from_toon, to_toon  # noqa: F401
