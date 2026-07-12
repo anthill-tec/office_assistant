@@ -601,6 +601,37 @@ def cmd_init(a):
     out({"initialized": done, "db": oa_mongo.db().name})
 
 
+def cmd_setup(a):
+    """Verify the VIDUSHI_MONGO_URI connection (short timeout, fails fast with
+    actionable guidance if unreachable); with --check that is all. Otherwise run the
+    `init` provisioning (collections + unique `id` indexes + `$jsonSchema` validators)."""
+    from pymongo import MongoClient
+    from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+
+    uri = os.environ.get("VIDUSHI_MONGO_URI", "mongodb://127.0.0.1:27017")
+    db_name = os.environ.get("VIDUSHI_MONGO_DB", "vidushi_oa")
+    probe = MongoClient(uri, serverSelectionTimeoutMS=2000)
+    try:
+        probe.admin.command("ping")
+    except (ServerSelectionTimeoutError, ConnectionFailure) as e:
+        print(
+            f"Cannot reach MongoDB at {uri}: {e}\n"
+            f"Start a local mongod (default port 27017) — e.g. via your service manager "
+            f"(`systemctl start mongod`) or `mongod --dbpath <dir>` — then retry. "
+            f"To point elsewhere set VIDUSHI_MONGO_URI (e.g. "
+            f"VIDUSHI_MONGO_URI=mongodb://host:27017).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    finally:
+        probe.close()
+
+    print(f"Mongo reachable at {uri} — db {db_name}")
+    if getattr(a, "check", False):
+        return
+    cmd_init(a)
+
+
 def cmd_snapshot(a):
     """Export each store's Mongo collection back to its JSONL file under DATA
     (honouring VIDUSHI_DATA_DIR). One JSON object per line, `_id` stripped, keys ordered
@@ -690,6 +721,8 @@ def main():
     sn = add_parser("snapshot"); sn.add_argument("type", nargs="?", choices=STORES.keys())
     sn.set_defaults(func=cmd_snapshot)
     it = add_parser("init"); it.set_defaults(func=cmd_init)
+    su = add_parser("setup"); su.add_argument("--check", action="store_true", dest="check")
+    su.set_defaults(func=cmd_setup)
     av = add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
 
     # Content-first no-arg path (S6/AXI #8): a truly-empty argv (just the
