@@ -1,6 +1,6 @@
 # CR-OA-011 — Packaging + full rename to Vidushi OA
 
-**Status:** PENDING
+**Status:** COMPLETED (2026-07-12)
 **Type:** feature
 **Priority:** High
 **Depends on:** 010
@@ -47,12 +47,15 @@ A `setup` verb: verify the `VIDUSHI_MONGO_URI` connection, guide provisioning if
 **Vidushi OA** brand + `voa`/`VIDUSHI_*` usage; no `OA_*`/`oa`/`office_assistant`-as-product references remain.
 
 ## Acceptance criteria
-- [ ] §S1 `import vidushi_oa.cli` works; `vidushi_oa.schema` resources load in-tree; `scripts/store.py` shim still runs.
-- [ ] §S3 the full suite passes **only** under `VIDUSHI_*` env (a test setting the old `OA_MONGO_DB` does not isolate — proof of the hard cut); `grep -rl "OA_MONGO\|OA_DATA\|OA_FORMAT" scripts vidushi_oa tests` is empty.
-- [ ] §S2 `python -m build` succeeds; a clean-venv install exposes `voa` (`voa --help` == the old `store.py --help`); the wheel bundles the 7 schema JSONs; `oa` is NOT installed.
-- [ ] §S4 after migration, `voa stats <type>` totals match the pre-migration counts for all 7 stores (118), `voa validate` returns `[]` for each; the backup snapshot exists; the old DB is dropped only post-verify.
-- [ ] §S5 `voa setup --check` → 0 when Mongo reachable, non-zero + guidance when not; `voa setup` on a fresh DB creates collections/indexes/validators; docs carry "Vidushi OA" and no product-level "office-assistant"/`OA_*`.
-- [ ] **(regression)** every verb behaves identically via `voa <verb>` and `python3 scripts/store.py <verb>`.
+- [x] §S1 `import vidushi_oa.cli` works; `vidushi_oa.schema` resources load in-tree; `scripts/store.py` shim still runs.
+- [x] §S3 the full suite passes **only** under `VIDUSHI_*` env (a test setting the old `OA_MONGO_DB` does not isolate — proof of the hard cut); production code carries no `OA_MONGO\|OA_DATA\|OA_FORMAT` (the only residual references are literal strings in `test_cr_oa_011_rename.py`, which assert the old vars are *ignored* — the negative-proof of the hard cut).
+- [x] §S2 `python -m build` succeeds; a clean-venv install exposes `voa` (`voa --help` == the old `store.py --help`); the wheel bundles the 7 schema JSONs; `oa` is NOT installed (entry_points.txt: `voa = vidushi_oa.cli:main` only).
+- [x] §S4 after migration, `voa stats <type>` totals match the pre-migration counts for all 7 stores (118), `voa validate` returns `[]` for each; the backup snapshot exists. **The old `office_assistant` DB is deliberately RETAINED as a live backup — the drop is deferred pending explicit user confirmation (hard to reverse; see Risk).**
+- [x] §S5 `voa setup --check` → 0 when Mongo reachable, non-zero + guidance when not; `voa setup` on a fresh DB creates collections/indexes/validators; docs carry "Vidushi OA" and no product-level "office-assistant"/`OA_*`.
+- [x] **(regression)** every verb behaves identically via `voa <verb>` and `python3 scripts/store.py <verb>`.
+
+## Close-out (2026-07-12)
+Executed in five cycles on `feature/CR-OA-011-packaging-rebrand`: **A** env/DB-name hard-cut (`OA_*`→`VIDUSHI_*`, default DB `vidushi_oa`), **B** package restructure (`scripts/`→`vidushi_oa/`) + `pyproject.toml` + `voa` console + `importlib.resources` schema, **C** `voa setup` verb, **D** live DB migration (`office_assistant`→`vidushi_oa`, snapshot-backup→import→118-count parity + validator-clean verify; **old DB retained**), **E** docs rebrand. VERIFY (post-GREEN) caught two blocking defects — a broken `python -m build` (duplicate schema paths) and a test tearDown dropping the **live** `vidushi_oa` DB (the suite was wiping migrated data) — both FIXED and independently re-verified. Final gate: **148/148 green**, wheel builds with all 7 schemas + `voa` entry point, migration parity 118=118, `vidushi_oa` survives a full suite run.
 
 ## Estimated size
 XL — a package restructure + a hard-cut rename across code/tests/docs + a live-DB migration + a build + a setup verb. Execute in cycles (env rename → restructure/build → setup → DB migration → docs), regression-gated each.
