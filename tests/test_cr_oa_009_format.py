@@ -32,6 +32,13 @@ flag yet (argparse errors -> empty stdout -> `json.loads` raises), and the
 `--format` choice test fails because even the *valid* `--format toon` value is
 rejected today (unrecognized argument).
 
+NOTE (CR-OA-010 Cycle B, decision "B"): `query`'s default TOON output is now a
+`{count, results, next}` envelope, superseding this CR's original bare
+tabular-header contract for that verb. The two `query`-TOON assertions below
+were updated to decode the envelope (`oa_toon.from_toon(stdout)["results"]`)
+instead of matching a bare `[N,]{...}:` header line; the `--json` assertions
+are untouched (still a bare array, decision "B").
+
 DATA SAFETY: every subprocess call points `OA_DATA_DIR` at an EMPTY tempdir
 (never the real repo `data/`) and `OA_MONGO_DB` at `office_assistant_test`
 (never the real DB), which is dropped in tearDown. Requires a local mongod on
@@ -112,22 +119,22 @@ class SubscriptionsFormatQueryTest(unittest.TestCase):
         result = self._query(["--fields", "id,provider,disposition,status,renews"])
 
         self.assertEqual(result.returncode, 0, f"query failed: {result.stderr}")
-        lines = [line for line in result.stdout.splitlines() if line.strip()]
-        self.assertTrue(lines, "query produced no output")
 
-        header = lines[0]
-        self.assertRegex(
-            header,
-            r"^\[3[,]?\]\{id,provider,disposition,status,renews\}:",
-            f"default query output is not a TOON tabular header: {header!r}",
+        d = oa_toon.from_toon(result.stdout.strip())
+        self.assertIsInstance(
+            d, dict,
+            f"default query TOON output must be a {{count, results, next}} envelope, "
+            f"got {type(d).__name__}: {d!r}",
         )
-        data_lines = lines[1:]
+        self.assertEqual(d["count"], 3)
         self.assertEqual(
-            len(data_lines), 3,
-            f"expected exactly 3 TOON data rows, got {len(data_lines)}: {data_lines}",
+            len(d["results"]), 3,
+            f"expected exactly 3 results, got {len(d['results'])}: {d['results']}",
         )
-        for line in data_lines:
-            self.assertTrue(line[:1].isspace(), f"TOON data row must be indented: {line!r}")
+        for row in d["results"]:
+            self.assertEqual(set(row.keys()), {"id", "provider", "disposition", "status", "renews"})
+        # negative bound: exactly the seeded three ids, nothing extra/missing
+        self.assertEqual(sorted(r["id"] for r in d["results"]), ["sub_a", "sub_b", "sub_c"])
         # negative bound: default output must NOT be parseable as a JSON array
         with self.assertRaises(json.JSONDecodeError):
             json.loads(result.stdout)
@@ -144,19 +151,30 @@ class SubscriptionsFormatQueryTest(unittest.TestCase):
         # negative bound: exactly the seeded three ids, nothing extra/missing
         self.assertEqual(sorted(r["id"] for r in parsed), ["sub_a", "sub_b", "sub_c"])
 
-    def test_toon_default_output_losslessly_round_trips_to_json_equivalent(self):
-        toon_result = self._query(["--fields", "id,provider,disposition,status,renews"])
-        json_result = self._query(["--fields", "id,provider,disposition,status,renews", "--json"])
+    def test_toon_full_output_losslessly_matches_json_equivalent(self):
+        # NOTE (CR-OA-010 Cycle B): default `query` TOON is now an envelope
+        # AND minimal/truncated (§S1/§S2), so it is intentionally NOT
+        # byte-equal to the JSON bare array anymore. The real losslessness
+        # guarantee now lives at `--full`, where both the projection and the
+        # truncation are disabled — this test was repurposed to assert THAT.
+        toon_result = self._query(["--full"])
+        json_result = self._query(["--full", "--json"])
 
-        self.assertEqual(toon_result.returncode, 0, f"toon query failed: {toon_result.stderr}")
-        self.assertEqual(json_result.returncode, 0, f"json query failed: {json_result.stderr}")
+        self.assertEqual(toon_result.returncode, 0, f"toon query --full failed: {toon_result.stderr}")
+        self.assertEqual(json_result.returncode, 0, f"json query --full failed: {json_result.stderr}")
 
-        decoded_from_toon = oa_toon.from_toon(toon_result.stdout.strip())
+        d = oa_toon.from_toon(toon_result.stdout.strip())
+        self.assertIsInstance(
+            d, dict,
+            f"--full query TOON output must still be a {{count, results, next}} envelope, "
+            f"got {type(d).__name__}: {d!r}",
+        )
+        decoded_from_toon_results = d["results"]
         decoded_from_json = json.loads(json_result.stdout)
 
-        self.assertEqual(decoded_from_toon, decoded_from_json)
+        self.assertEqual(decoded_from_toon_results, decoded_from_json)
         # negative bound: not a truncated/partial match
-        self.assertEqual(len(decoded_from_toon), 3)
+        self.assertEqual(len(decoded_from_toon_results), 3)
 
     def test_format_json_flag_equivalent_to_bare_json_flag(self):
         result = self._query(["--fields", "id", "--format", "json"])

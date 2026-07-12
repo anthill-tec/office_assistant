@@ -274,7 +274,21 @@ def cmd_query(a):
     rows = [project(r, fields) for r in docs]
     if _FMT == "toon" and not getattr(a, "full", False) and not fields:
         rows = [_toon_shape(r, a.type) for r in rows]
-    out(rows)
+    if _FMT == "toon":
+        out({"count": len(rows), "results": rows, "next": _query_next(a.type, rows)})
+    else:
+        out(rows)
+
+
+def _query_next(type_, rows):
+    """Contextual follow-up command templates for a TOON `query` envelope
+    (CR-OA-010 Cycle B #9): a concise 1-3 entry list, always referencing the
+    queried store type."""
+    nxt = []
+    if rows and rows[0].get("id"):
+        nxt.append(f"get {type_} {rows[0]['id']}")
+    nxt.append(f"query {type_} --where <field>=<value>")
+    return nxt[:3]
 
 
 def cmd_get(a):

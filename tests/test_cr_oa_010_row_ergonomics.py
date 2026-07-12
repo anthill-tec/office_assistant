@@ -19,6 +19,12 @@ and does no default-projection or truncation, so tests 1-4 (and the
 subscriptions default-fields test) MUST fail today; the JSON contract tests
 (5) pass today and continue to guard decision "B" post-GREEN.
 
+NOTE (Cycle B): `query`'s TOON output becomes a `{count, results, next}`
+envelope (CR-OA-010 Cycle B — AXI #4/#5/#9). The row-shaping assertions below
+now decode via `_envelope_results()` (reads `d["results"]`) instead of
+treating the decoded TOON as a bare list; the `--json` contract is untouched
+and still decodes as a bare array via `json.loads`.
+
 DATA SAFETY: every subprocess call points `OA_DATA_DIR` at an EMPTY tempdir
 (never the real repo `data/`) and `OA_MONGO_DB` at `office_assistant_test`
 (never the real DB), dropped in tearDown. Requires a local mongod on
@@ -50,7 +56,7 @@ import oa_toon  # noqa: E402  (needs sys.path insert above; from_toon for lossle
 DEFAULT_FIELDS_PRODUCTS = ["id", "product", "manufacturer", "category"]
 DEFAULT_FIELDS_SUBSCRIPTIONS = ["id", "provider", "disposition", "status", "renews"]
 
-HEADER_RE = re.compile(r"^\[\d+[,]?\]\{([^}]*)\}:")
+RESULTS_HEADER_RE = re.compile(r"^results\[\d+[,]?\]\{([^}]*)\}:")
 TRUNC_RE = re.compile(r"^(.{1,80})…\(\+(\d+) chars\)$")
 
 # A DEFAULT field (category) padded well past the ~80 char cap.
@@ -98,13 +104,28 @@ SUBSCRIPTION_RICH = {
 
 
 def _header_fields(stdout):
-    """Extract the ordered field-name list from a TOON tabular-array header
-    line (`[N,]{f1,f2,...}:`), skipping any blank lines."""
-    lines = [line for line in stdout.splitlines() if line.strip()]
+    """Extract the ordered field-name list from the envelope's
+    `results[N,]{f1,f2,...}:` tabular header line (CR-OA-010 Cycle B: `query`'s
+    TOON output is now a `{count, results, next}` envelope, so the tabular
+    header for the rows lives under the `results` key — the first output
+    line is now `count: N`, not the tabular header)."""
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
     assert lines, f"no output produced: {stdout!r}"
-    m = HEADER_RE.match(lines[0])
-    assert m, f"first non-blank line is not a TOON tabular header: {lines[0]!r}"
+    results_line = next((line for line in lines if line.startswith("results[")), None)
+    assert results_line, f"no `results[N,]{{...}}:` header found in envelope output: {stdout!r}"
+    m = RESULTS_HEADER_RE.match(results_line)
+    assert m, f"results header line is not a TOON tabular header: {results_line!r}"
     return [f for f in m.group(1).split(",") if f]
+
+
+def _envelope_results(stdout):
+    """Decode a TOON `query` envelope and return its `results` list
+    (CR-OA-010 Cycle B: `query`'s TOON output is `{count, results, next}`,
+    not a bare array)."""
+    d = oa_toon.from_toon(stdout)
+    assert isinstance(d, dict), f"expected an envelope dict, got {type(d).__name__}: {d!r}"
+    assert "results" in d, f"envelope missing 'results' key: {d!r}"
+    return d["results"]
 
 
 class _BaseSubprocessCase(unittest.TestCase):
@@ -151,7 +172,7 @@ class ProductsDefaultFieldsTest(_BaseSubprocessCase):
         for leaked in ("links", "notes", "source", "key_specs", "acct", "kind"):
             self.assertNotIn(leaked, fields, f"{leaked!r} must not appear in the default TOON projection")
 
-        decoded = oa_toon.from_toon(result.stdout.strip())
+        decoded = _envelope_results(result.stdout.strip())
         self.assertEqual(len(decoded), 2)
         for row in decoded:
             self.assertEqual(set(row.keys()), set(DEFAULT_FIELDS_PRODUCTS))
@@ -164,10 +185,12 @@ class ProductsDefaultFieldsTest(_BaseSubprocessCase):
 
         # NOTE: --full shows raw docs with nested-dict values (links/source),
         # so the `toon` encoder legitimately falls back to non-tabular list
-        # form ([N]: rather than [N,]{f1,f2,...}:) — decode structurally
-        # instead of asserting a tabular header (which only applies to
-        # uniform-primitive rows, e.g. the projected/truncated default view).
-        decoded = oa_toon.from_toon(result.stdout.strip())
+        # form (results[N]: rather than results[N,]{f1,f2,...}:) — decode
+        # structurally instead of asserting a tabular header (which only
+        # applies to uniform-primitive rows, e.g. the projected/truncated
+        # default view). The envelope wrapper (count/results/next) still
+        # applies regardless of --full.
+        decoded = _envelope_results(result.stdout.strip())
         self.assertEqual(len(decoded), 2)
 
         all_fields = set().union(*(r.keys() for r in decoded))
@@ -193,7 +216,7 @@ class ProductsDefaultFieldsTest(_BaseSubprocessCase):
         self.assertEqual(set(fields), {"id", "category"})
         self.assertEqual(len(fields), 2)
 
-        decoded = oa_toon.from_toon(result.stdout.strip())
+        decoded = _envelope_results(result.stdout.strip())
         for row in decoded:
             self.assertEqual(set(row.keys()), {"id", "category"})
 
@@ -216,7 +239,7 @@ class SubscriptionsDefaultFieldsTest(_BaseSubprocessCase):
         for leaked in ("plan", "cadence", "amount", "currency", "alias", "category"):
             self.assertNotIn(leaked, fields, f"{leaked!r} must not appear in the default TOON projection")
 
-        decoded = oa_toon.from_toon(result.stdout.strip())
+        decoded = _envelope_results(result.stdout.strip())
         self.assertEqual(len(decoded), 1)
         self.assertEqual(set(decoded[0].keys()), set(DEFAULT_FIELDS_SUBSCRIPTIONS))
         self.assertEqual(decoded[0]["id"], "sub_streamly")
@@ -234,7 +257,7 @@ class ProductsTruncationTest(_BaseSubprocessCase):
         result = self._run(["query", "products"])
         self.assertEqual(result.returncode, 0, f"query failed: {result.stderr}")
 
-        decoded = oa_toon.from_toon(result.stdout.strip())
+        decoded = _envelope_results(result.stdout.strip())
         row = next(r for r in decoded if r["id"] == "prod_longco_gizmo")
         cat = row["category"]
 
@@ -254,7 +277,7 @@ class ProductsTruncationTest(_BaseSubprocessCase):
         result = self._run(["query", "products", "--full"])
         self.assertEqual(result.returncode, 0, f"query --full failed: {result.stderr}")
 
-        decoded = oa_toon.from_toon(result.stdout.strip())
+        decoded = _envelope_results(result.stdout.strip())
         row = next(r for r in decoded if r["id"] == "prod_longco_gizmo")
         self.assertEqual(row["category"], LONG_CATEGORY)
         self.assertNotIn("…(+", row["category"])
