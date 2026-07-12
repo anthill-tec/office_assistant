@@ -1,7 +1,7 @@
 """CR-OA-006 Cycle B — `store.py snapshot [<type>]`.
 
 Verifies the §S2 ACs for the versioning-export verb:
-  - `snapshot <type>` exports each Mongo collection -> `<OA_DATA_DIR>/<file>.jsonl`
+  - `snapshot <type>` exports each Mongo collection -> `<VIDUSHI_DATA_DIR>/<file>.jsonl`
     (per `store.STORES`), one JSON object per line, with the Mongo `_id` stripped.
   - Keys are emitted in a STABLE order: `id` first, then the rest sorted
     (per the CR's "id first then sorted" wording) -> byte-identical output across
@@ -12,9 +12,9 @@ Verifies the §S2 ACs for the versioning-export verb:
 `snapshot` is currently NOT a registered subparser, so every test here MUST fail
 (non-zero exit / "invalid choice") until Cycle B's GREEN phase lands it.
 
-DATA SAFETY: every `store.py` subprocess call in this file sets `OA_DATA_DIR` to a
-throwaway `tempfile.mkdtemp()` directory (removed in tearDown) and `OA_MONGO_DB` to
-the `office_assistant_test` database (dropped in tearDown) — `snapshot` never
+DATA SAFETY: every `store.py` subprocess call in this file sets `VIDUSHI_DATA_DIR` to a
+throwaway `tempfile.mkdtemp()` directory (removed in tearDown) and `VIDUSHI_MONGO_DB` to
+the `vidushi_oa_test` database (dropped in tearDown) — `snapshot` never
 writes to the real repo `data/` tree or the real Mongo database.
 Requires a local mongod on 127.0.0.1:27017 (the office_assistant instance).
 """
@@ -38,18 +38,18 @@ import store  # noqa: E402  (for store.STORES — the type -> filename map)
 
 
 class SnapshotVerbTest(unittest.TestCase):
-    """§S2 — `store.py snapshot [<type>]` exports Mongo -> `<OA_DATA_DIR>/<file>.jsonl`."""
+    """§S2 — `store.py snapshot [<type>]` exports Mongo -> `<VIDUSHI_DATA_DIR>/<file>.jsonl`."""
 
-    TEST_DB = "office_assistant_test"
+    TEST_DB = "vidushi_oa_test"
 
     def setUp(self):
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[self.TEST_DB]
         self.tmpdir = tempfile.mkdtemp(prefix="oa-snapshot-")
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = self.TEST_DB
-        self.env["OA_DATA_DIR"] = self.tmpdir
-        self.env["OA_FORMAT"] = "json"
+        self.env["VIDUSHI_MONGO_DB"] = self.TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.tmpdir
+        self.env["VIDUSHI_FORMAT"] = "json"
 
     def tearDown(self):
         self.client.drop_database(self.TEST_DB)

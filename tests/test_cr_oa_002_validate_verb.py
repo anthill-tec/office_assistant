@@ -8,7 +8,7 @@ Verifies §S3: `validate` lists the non-conforming documents in a collection via
     `id` appears in the output list.
   - §S3 (caller) `validate` is a real subparser (not yet wired — this is the RED).
 
-Runs entirely against a throwaway `office_assistant_test` database (OA_MONGO_DB env
+Runs entirely against a throwaway `vidushi_oa_test` database (VIDUSHI_MONGO_DB env
 override) so it never touches real data, and drops that database in tearDown.
 Requires a local mongod on 127.0.0.1:27017 (same instance CR-OA-001/Cycle A pinned to).
 """
@@ -25,7 +25,7 @@ ROOT = os.path.dirname(HERE)
 SCRIPTS = os.path.join(ROOT, "scripts")
 STORE = os.path.join(SCRIPTS, "store.py")
 
-TEST_DB = "office_assistant_test"
+TEST_DB = "vidushi_oa_test"
 
 
 class ValidateVerbTest(unittest.TestCase):
@@ -33,8 +33,8 @@ class ValidateVerbTest(unittest.TestCase):
 
     def setUp(self):
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = TEST_DB
-        self.env["OA_FORMAT"] = "json"
+        self.env["VIDUSHI_MONGO_DB"] = TEST_DB
+        self.env["VIDUSHI_FORMAT"] = "json"
 
         init_result = subprocess.run(
             [sys.executable, STORE, "init"],

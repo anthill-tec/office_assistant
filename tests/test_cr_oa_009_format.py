@@ -39,8 +39,8 @@ were updated to decode the envelope (`oa_toon.from_toon(stdout)["results"]`)
 instead of matching a bare `[N,]{...}:` header line; the `--json` assertions
 are untouched (still a bare array, decision "B").
 
-DATA SAFETY: every subprocess call points `OA_DATA_DIR` at an EMPTY tempdir
-(never the real repo `data/`) and `OA_MONGO_DB` at `office_assistant_test`
+DATA SAFETY: every subprocess call points `VIDUSHI_DATA_DIR` at an EMPTY tempdir
+(never the real repo `data/`) and `VIDUSHI_MONGO_DB` at `vidushi_oa_test`
 (never the real DB), which is dropped in tearDown. Requires a local mongod on
 127.0.0.1:27017 (the office_assistant instance; CR-OA-001).
 """
@@ -59,7 +59,7 @@ ROOT = os.path.dirname(HERE)
 SCRIPTS = os.path.join(ROOT, "scripts")
 STORE = os.path.join(SCRIPTS, "store.py")
 
-TEST_DB = "office_assistant_test"
+TEST_DB = "vidushi_oa_test"
 
 sys.path.insert(0, SCRIPTS)
 import oa_toon  # noqa: E402  (needs sys.path insert above; from_toon for lossless checks)
@@ -97,8 +97,8 @@ class SubscriptionsFormatQueryTest(unittest.TestCase):
     def setUp(self):
         self.data_dir = tempfile.mkdtemp(prefix="oa-cr009b-query-")
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_MONGO_DB"] = TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[TEST_DB]
@@ -209,8 +209,8 @@ class SubscriptionsFormatWriteTest(unittest.TestCase):
     def setUp(self):
         self.data_dir = tempfile.mkdtemp(prefix="oa-cr009b-write-")
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_MONGO_DB"] = TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[TEST_DB]

@@ -10,12 +10,12 @@ Cycle A's `store.py event` already drives Mongo docs through the transition tabl
 but `cmd_warranty_sweep` (scripts/store.py) still reads/writes the JSONL store via
 `load()`/`save()` and never touches Mongo at all. So EVERY test here MUST fail
 against the current implementation: warranties seeded directly into
-`office_assistant_test.warranties` are never read by `warranty-sweep` (it reads the
+`vidushi_oa_test.warranties` are never read by `warranty-sweep` (it reads the
 real on-disk `data/warranties.jsonl` instead), so the seeded Mongo docs stay
 untouched and every assertion below on their post-sweep state fails.
 
-DATA SAFETY: every subprocess call points `OA_DATA_DIR` at a fresh EMPTY tempdir
-(never the real repo `data/`) and `OA_MONGO_DB` at `office_assistant_test` (never
+DATA SAFETY: every subprocess call points `VIDUSHI_DATA_DIR` at a fresh EMPTY tempdir
+(never the real repo `data/`) and `VIDUSHI_MONGO_DB` at `vidushi_oa_test` (never
 the real DB). Requires a local mongod on 127.0.0.1:27017 (CR-OA-001).
 """
 import os
@@ -36,7 +36,7 @@ STORE = os.path.join(SCRIPTS, "store.py")
 class WarrantySweepEngineTest(unittest.TestCase):
     """§S3 — `warranty-sweep` re-expressed through the transition engine, on Mongo."""
 
-    TEST_DB = "office_assistant_test"
+    TEST_DB = "vidushi_oa_test"
 
     def setUp(self):
         # An EMPTY data dir: proves warranty-sweep is not silently reading/writing
@@ -44,8 +44,8 @@ class WarrantySweepEngineTest(unittest.TestCase):
         self.data_dir = tempfile.mkdtemp(prefix="oa-empty-data-")
 
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = self.TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_MONGO_DB"] = self.TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[self.TEST_DB]

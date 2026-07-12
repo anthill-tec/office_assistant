@@ -1,12 +1,13 @@
-# Office Assistant
+# Vidushi OA
 
-A personal **office assistant** that reads your mail (Fastmail + Gmail) and runs the everyday
-admin lifecycle around the things you buy and pay for — subscriptions, purchases & deliveries,
+**Vidushi OA** is a personal office assistant that reads your mail (Fastmail + Gmail) and runs the
+everyday admin lifecycle around the things you buy and pay for — subscriptions, purchases & deliveries,
 invoices, warranties, support cases, and product references.
 
 It is **a set of defined roles, not just code.** Each role is a Claude *skill* (or *agent*) with a
 clear job; they all read and write one shared **data + document store** that lives in this folder.
-The only program here is a small JSON data CLI — the behaviour lives in the roles.
+The only program here is the **`voa`** CLI (the installable `vidushi-oa` package) — the behaviour lives
+in the roles. Get started: `pip install vidushi-oa` (or `pip install -e .` in-repo), then `voa setup`.
 
 ---
 
@@ -40,8 +41,8 @@ The only program here is a small JSON data CLI — the behaviour lives in the ro
 
 ## The data store
 
-Everything the roles learn is kept in **MongoDB** (db `office_assistant`) and accessed through
-**`scripts/store.py`** — never directly. `store.py snapshot` mirrors it to `data/*.jsonl` for versioning.
+Everything the roles learn is kept in **MongoDB** (db `vidushi_oa`) and accessed through the
+**`voa`** CLI — never directly. `voa snapshot` mirrors it to `data/*.jsonl` for versioning.
 
 Seven stores form a small **relational model**, joined by foreign keys:
 
@@ -65,22 +66,24 @@ invoice record points to its PDF. Renewal/warranty/customs reminders go to the c
 ### Using the CLI
 ```bash
 # the vendor's verified support email + returns process
-python3 scripts/store.py query contacts --where vendor=FNIRSI --fields support_email,rma_process
+voa query contacts --where vendor=FNIRSI --fields support_email,rma_process
 
 # a product with its warranty, invoice PDF, and support contact in one call (FK join)
-python3 scripts/store.py get products prod_fnirsi_2c53t --expand warranty_id,invoice_id,contact_id
+voa get products prod_fnirsi_2c53t --expand warranty_id,invoice_id,contact_id
 
 # what's covered, soonest expiry first
-python3 scripts/store.py query warranties --fields product,expiry --sort expiry
+voa query warranties --fields product,expiry --sort expiry
 ```
+The in-repo `scripts/store.py` remains a path-compat shim (`python3 scripts/store.py <verb>`).
 Full field reference: `data/schema.md`. CLI details: `scripts/README.md`.
 
 ---
 
 ## Layout
 ```
-data/        JSONL snapshots + schema.md       scripts/   store.py (the CLI) + README
-documents/   saved PDFs (personal | business)  CLAUDE.md  guidance for Claude Code
+vidushi_oa/  the voa CLI package (+ schema)    data/      JSONL snapshots + schema.md
+scripts/     store.py path-compat shim + README   documents/ saved PDFs (personal | business)
+pyproject.toml  packaging (vidushi-oa)          CLAUDE.md  guidance for Claude Code
 ```
 
 This is a **living system** — roles and stores are added as needs grow (the rule of thumb: a new role

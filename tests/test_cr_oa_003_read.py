@@ -12,7 +12,7 @@ translation):
   - `get ... --expand` resolves FKs inline as `<fk>_obj`, no `_id` anywhere
   - `--filter '{json}'` native Mongo passthrough
 
-Runs entirely against a throwaway `office_assistant_test` database (OA_MONGO_DB env
+Runs entirely against a throwaway `vidushi_oa_test` database (VIDUSHI_MONGO_DB env
 override), seeded directly via pymongo (bypassing store.py) in setUp and dropped in
 tearDown, so it never touches real data. Requires a local mongod on 127.0.0.1:27017
 (same instance CR-OA-001/002 pin to).
@@ -33,9 +33,9 @@ sys.path.insert(0, SCRIPTS)
 
 
 class ReadPathMongoTest(unittest.TestCase):
-    """§S1/§S2 — query/get read from Mongo (office_assistant_test), preserving CLI semantics."""
+    """§S1/§S2 — query/get read from Mongo (vidushi_oa_test), preserving CLI semantics."""
 
-    TEST_DB = "office_assistant_test"
+    TEST_DB = "vidushi_oa_test"
 
     INVOICE_A = {
         "id": "doc_a", "vendor": "FNIRSI", "number": "75752", "file": None,
@@ -51,8 +51,8 @@ class ReadPathMongoTest(unittest.TestCase):
 
     def setUp(self):
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = self.TEST_DB
-        self.env["OA_FORMAT"] = "json"
+        self.env["VIDUSHI_MONGO_DB"] = self.TEST_DB
+        self.env["VIDUSHI_FORMAT"] = "json"
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         db = self.client[self.TEST_DB]
         db["invoices"].insert_many([dict(self.INVOICE_A), dict(self.INVOICE_B)])

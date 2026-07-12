@@ -19,9 +19,9 @@ Baseline behaviour TODAY (pre-GREEN):
     triggers the new no-arg path, no accidental hijack of real verbs.
     Test 4 passes today.
 
-DATA SAFETY: every subprocess call points `OA_DATA_DIR` at an EMPTY
-tempdir (never the real repo `data/`) and `OA_MONGO_DB` at
-`office_assistant_test` (never the real DB), dropped/removed in
+DATA SAFETY: every subprocess call points `VIDUSHI_DATA_DIR` at an EMPTY
+tempdir (never the real repo `data/`) and `VIDUSHI_MONGO_DB` at
+`vidushi_oa_test` (never the real DB), dropped/removed in
 tearDown. Requires a local mongod on 127.0.0.1:27017 (office_assistant
 instance; CR-OA-001).
 """
@@ -40,7 +40,7 @@ ROOT = os.path.dirname(HERE)
 SCRIPTS = os.path.join(ROOT, "scripts")
 STORE = os.path.join(SCRIPTS, "store.py")
 
-TEST_DB = "office_assistant_test"
+TEST_DB = "vidushi_oa_test"
 
 # Seed one attention-worthy subscription: an OPEN action, matching the
 # `$or: [{"actions.status": "OPEN"}, {"status": {"$in": ATTENTION_STATUSES}}]`
@@ -63,8 +63,8 @@ class NoArgLiveDataTest(unittest.TestCase):
     def setUp(self):
         self.data_dir = tempfile.mkdtemp(prefix="oa-cr010c-noarg-")
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_MONGO_DB"] = TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[TEST_DB]

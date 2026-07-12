@@ -16,8 +16,8 @@ action). `--dry-run` performs the same lookahead query but writes nothing to Mon
 implementation: argparse rejects the `due-sweep` command (rc != 0, "invalid choice"),
 so no test can reach the point of asserting the post-sweep Mongo state.
 
-DATA SAFETY: every subprocess call points `OA_DATA_DIR` at a fresh EMPTY tempdir
-(never the real repo `data/`) and `OA_MONGO_DB` at `office_assistant_test` (never the
+DATA SAFETY: every subprocess call points `VIDUSHI_DATA_DIR` at a fresh EMPTY tempdir
+(never the real repo `data/`) and `VIDUSHI_MONGO_DB` at `vidushi_oa_test` (never the
 real DB). Requires a local mongod on 127.0.0.1:27017 (CR-OA-001).
 """
 import datetime
@@ -43,7 +43,7 @@ def _iso(days_from_today):
 class DueSweepEngineTest(unittest.TestCase):
     """§S4 — `due-sweep` drives the recurring stores through the transition engine."""
 
-    TEST_DB = "office_assistant_test"
+    TEST_DB = "vidushi_oa_test"
 
     def setUp(self):
         # An EMPTY data dir: due-sweep must operate on Mongo, never the real
@@ -51,8 +51,8 @@ class DueSweepEngineTest(unittest.TestCase):
         self.data_dir = tempfile.mkdtemp(prefix="oa-empty-data-")
 
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = self.TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_MONGO_DB"] = self.TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[self.TEST_DB]
@@ -157,7 +157,7 @@ class InsuranceDueSweepTest(unittest.TestCase):
     "effects": [{"op": "open-action", "action": "renew-policy", ...}]}`) via the
     shared `_apply_transition` engine — the same engine subscriptions already use."""
 
-    TEST_DB = "office_assistant_test"
+    TEST_DB = "vidushi_oa_test"
 
     def setUp(self):
         # An EMPTY data dir: due-sweep must operate on Mongo, never the real
@@ -165,8 +165,8 @@ class InsuranceDueSweepTest(unittest.TestCase):
         self.data_dir = tempfile.mkdtemp(prefix="oa-empty-data-")
 
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = self.TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_MONGO_DB"] = self.TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[self.TEST_DB]

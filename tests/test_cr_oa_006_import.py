@@ -1,21 +1,21 @@
-"""CR-OA-006 Cycle A — `store.py import [<type>]` + `OA_DATA_DIR`.
+"""CR-OA-006 Cycle A — `store.py import [<type>]` + `VIDUSHI_DATA_DIR`.
 
 Verifies the §S1 ACs for the migration-import verb:
-  - `import <type>` reads `<OA_DATA_DIR or repo data/>/<file>.jsonl` and upserts every
+  - `import <type>` reads `<VIDUSHI_DATA_DIR or repo data/>/<file>.jsonl` and upserts every
     record into Mongo by `id` (`replace_one({id}, doc, upsert=True)`).
   - Re-running `import` is idempotent: the collection count is unchanged and no
     duplicate `id` is created.
   - `import` (no type) walks every `store.STORES` type; against the REAL repo `data/`
-    tree (no `OA_DATA_DIR` override) each collection's document count must equal the
+    tree (no `VIDUSHI_DATA_DIR` override) each collection's document count must equal the
     real `data/<file>.jsonl` line count (invoices 48, contacts 18, warranties 19,
     cases 1, products 19 = 105, plus subscriptions 11, insurance 2 = 118 total per
     the CR's AC).
 
-`import` is currently NOT a registered subparser and `OA_DATA_DIR` is not yet honoured
+`import` is currently NOT a registered subparser and `VIDUSHI_DATA_DIR` is not yet honoured
 by `store.py`'s data-dir resolution, so every test here MUST fail until Cycle A's GREEN
 phase lands both.
 
-DATA SAFETY: `import` only ever WRITES to Mongo (the `office_assistant_test` database,
+DATA SAFETY: `import` only ever WRITES to Mongo (the `vidushi_oa_test` database,
 dropped in tearDown) and only READS the JSONL files — the real `data/*.jsonl` files are
 never written to by any test in this file.
 Requires a local mongod on 127.0.0.1:27017 (the office_assistant instance).
@@ -40,16 +40,16 @@ import store  # noqa: E402  (for store.STORES — the type -> filename map)
 
 
 class ImportVerbTest(unittest.TestCase):
-    """§S1 — `store.py import [<type>]` upserts JSONL rows into Mongo, honouring OA_DATA_DIR."""
+    """§S1 — `store.py import [<type>]` upserts JSONL rows into Mongo, honouring VIDUSHI_DATA_DIR."""
 
-    TEST_DB = "office_assistant_test"
+    TEST_DB = "vidushi_oa_test"
 
     def setUp(self):
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[self.TEST_DB]
         self.base_env = dict(os.environ)
-        self.base_env.pop("OA_DATA_DIR", None)
-        self.base_env["OA_MONGO_DB"] = self.TEST_DB
+        self.base_env.pop("VIDUSHI_DATA_DIR", None)
+        self.base_env["VIDUSHI_MONGO_DB"] = self.TEST_DB
 
     def tearDown(self):
         self.client.drop_database(self.TEST_DB)
@@ -73,7 +73,7 @@ class ImportVerbTest(unittest.TestCase):
             for r in rows:
                 f.write(json.dumps(r) + "\n")
 
-    # ---- §S1 import from a fixture dir (OA_DATA_DIR override) ----
+    # ---- §S1 import from a fixture dir (VIDUSHI_DATA_DIR override) ----
 
     def test_import_from_fixture_dir_upserts_invoices_by_id(self):
         tmpdir = tempfile.mkdtemp(prefix="oa-import-fixture-")
@@ -85,7 +85,7 @@ class ImportVerbTest(unittest.TestCase):
              "date": "2026-02-01", "acct": "personal", "status": "NEW"},
         ])
         env = dict(self.base_env)
-        env["OA_DATA_DIR"] = tmpdir
+        env["VIDUSHI_DATA_DIR"] = tmpdir
 
         self._run("import", "invoices", env=env)
 
@@ -109,7 +109,7 @@ class ImportVerbTest(unittest.TestCase):
              "date": "2026-02-01", "acct": "personal", "status": "NEW"},
         ])
         env = dict(self.base_env)
-        env["OA_DATA_DIR"] = tmpdir
+        env["VIDUSHI_DATA_DIR"] = tmpdir
 
         self._run("import", "invoices", env=env)
         first_count = self.db["invoices"].count_documents({})
@@ -123,11 +123,11 @@ class ImportVerbTest(unittest.TestCase):
         self.assertEqual(self.db["invoices"].count_documents({"id": "doc_i1"}), 1)
         self.assertEqual(self.db["invoices"].count_documents({"id": "doc_i2"}), 1)
 
-    # ---- §S1 real-data count parity (no OA_DATA_DIR -> reads the real repo data/) ----
+    # ---- §S1 real-data count parity (no VIDUSHI_DATA_DIR -> reads the real repo data/) ----
 
     def test_import_all_types_matches_real_data_line_counts(self):
-        # no OA_DATA_DIR in env -> must fall back to the real repo data/ directory
-        self.assertNotIn("OA_DATA_DIR", self.base_env)
+        # no VIDUSHI_DATA_DIR in env -> must fall back to the real repo data/ directory
+        self.assertNotIn("VIDUSHI_DATA_DIR", self.base_env)
 
         result = self._run("import")
 

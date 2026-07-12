@@ -1,17 +1,17 @@
 """CR-OA-004 Cycle B — `attention` on pymongo.
 
 Verifies the §S4 AC for porting `attention` off JSONL `load()` onto Mongo
-(`oa_mongo.coll(t)`, database honouring `OA_MONGO_DB`):
+(`oa_mongo.coll(t)`, database honouring `VIDUSHI_MONGO_DB`):
 
   - `attention [<type>]` returns records with an OPEN action OR an explicit
     `status in {NEW, UNKNOWN, EXPIRED, DUE}`; a record with NO `status` field at
     all is NOT flagged. Projects {type, id, name, status, open_actions}.
 
 Currently `attention` still calls `load()` on the real `data/*.jsonl` files, so
-this test MUST fail against a seeded `office_assistant_test` Mongo database until
+this test MUST fail against a seeded `vidushi_oa_test` Mongo database until
 CR-OA-004 Cycle B's GREEN phase ports this command too.
 
-DATA SAFETY: every subprocess call points `OA_DATA_DIR` at an EMPTY tempdir (never the
+DATA SAFETY: every subprocess call points `VIDUSHI_DATA_DIR` at an EMPTY tempdir (never the
 real repo `data/`), so the current JSONL-backed verb reads/writes nothing but that
 tempdir. No real `data/*.jsonl` file is ever opened by this test.
 Requires a local mongod on 127.0.0.1:27017 (the office_assistant instance; CR-OA-001).
@@ -39,7 +39,7 @@ sys.path.insert(0, SCRIPTS)
 class AttentionMongoTest(unittest.TestCase):
     """§S4 `attention` reads/projects from Mongo, not JSONL."""
 
-    TEST_DB = "office_assistant_test"
+    TEST_DB = "vidushi_oa_test"
     COLLECTIONS = ["contacts", "invoices", "warranties", "cases", "products"]
 
     def setUp(self):
@@ -48,9 +48,9 @@ class AttentionMongoTest(unittest.TestCase):
         self.data_dir = tempfile.mkdtemp(prefix="oa-empty-data-")
 
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = self.TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
-        self.env["OA_FORMAT"] = "json"
+        self.env["VIDUSHI_MONGO_DB"] = self.TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_FORMAT"] = "json"
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[self.TEST_DB]

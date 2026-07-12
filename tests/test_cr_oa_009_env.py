@@ -1,27 +1,27 @@
-"""CR-OA-009 Cycle C — §S3 `OA_FORMAT` env var sets the default output format.
+"""CR-OA-009 Cycle C — §S3 `VIDUSHI_FORMAT` env var sets the default output format.
 
-Verifies the §S3 AC: an `OA_FORMAT` env var participates in the format
+Verifies the §S3 AC: an `VIDUSHI_FORMAT` env var participates in the format
 resolution store.py's `main()` performs into the module global `_FMT`, with
 precedence:
 
-    explicit `--format` flag  >  `--json` shortcut  >  `OA_FORMAT` env  >  "toon" (default)
+    explicit `--format` flag  >  `--json` shortcut  >  `VIDUSHI_FORMAT` env  >  "toon" (default)
 
-An unrecognised `OA_FORMAT` value falls back to `"toon"` silently (unlike an
+An unrecognised `VIDUSHI_FORMAT` value falls back to `"toon"` silently (unlike an
 invalid `--format <value>` flag, which argparse still rejects with a nonzero
-exit). This mirrors the existing `OA_MONGO_URI`/`OA_MONGO_DB`/`OA_DATA_DIR`
+exit). This mirrors the existing `VIDUSHI_MONGO_URI`/`VIDUSHI_MONGO_DB`/`VIDUSHI_DATA_DIR`
 env-var pattern (see `scripts/oa_mongo.py`, `scripts/store.py` `DATA`).
 
 CR-OA-009 Cycle C has NOT been implemented yet — `store.py`'s `main()` never
-reads `OA_FORMAT`, so the module always falls back to the argparse `--format`
+reads `VIDUSHI_FORMAT`, so the module always falls back to the argparse `--format`
 default of `"toon"` regardless of the environment. This means:
 
-  - test 1 (OA_FORMAT=json, no --format -> JSON output) MUST fail today: the
+  - test 1 (VIDUSHI_FORMAT=json, no --format -> JSON output) MUST fail today: the
     query still emits TOON, so `json.loads(stdout)` raises;
-  - test 3 (no OA_FORMAT, no flag -> TOON) and test 4 (garbage OA_FORMAT ->
+  - test 3 (no VIDUSHI_FORMAT, no flag -> TOON) and test 4 (garbage VIDUSHI_FORMAT ->
     TOON fallback) happen to pass today "by accident" since TOON is always
     the outcome pre-CR — kept for regression coverage of the *other* ends of
     the precedence chain once Cycle C lands;
-  - test 2 (explicit --format toon overrides OA_FORMAT=json) also happens to
+  - test 2 (explicit --format toon overrides VIDUSHI_FORMAT=json) also happens to
     pass today by accident (the flag already always wins over env, since env
     isn't consulted at all yet) — kept to guard the precedence order.
 
@@ -33,8 +33,8 @@ three tests that assert a TOON default now decode via
 instead of matching a bare tabular header line. The JSON-path assertions are
 unchanged.
 
-DATA SAFETY: every subprocess call points `OA_DATA_DIR` at an EMPTY tempdir
-(never the real repo `data/`) and `OA_MONGO_DB` at `office_assistant_test`
+DATA SAFETY: every subprocess call points `VIDUSHI_DATA_DIR` at an EMPTY tempdir
+(never the real repo `data/`) and `VIDUSHI_MONGO_DB` at `vidushi_oa_test`
 (never the real DB), which is dropped in tearDown. Requires a local mongod on
 127.0.0.1:27017 (the office_assistant instance; CR-OA-001).
 """
@@ -53,7 +53,7 @@ ROOT = os.path.dirname(HERE)
 SCRIPTS = os.path.join(ROOT, "scripts")
 STORE = os.path.join(SCRIPTS, "store.py")
 
-TEST_DB = "office_assistant_test"
+TEST_DB = "vidushi_oa_test"
 
 sys.path.insert(0, SCRIPTS)
 import oa_toon  # noqa: E402  (needs sys.path insert above)
@@ -78,15 +78,15 @@ TOON_HEADER_ID_PROVIDER = r"^\[2[,]?\]\{id,provider\}:"
 
 
 class OaFormatEnvTest(unittest.TestCase):
-    """§S3 — `OA_FORMAT` env var default, honouring the full precedence chain."""
+    """§S3 — `VIDUSHI_FORMAT` env var default, honouring the full precedence chain."""
 
     def setUp(self):
         self.data_dir = tempfile.mkdtemp(prefix="oa-cr009c-env-")
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_MONGO_DB"] = TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
         # Ensure a clean slate regardless of the ambient shell's env.
-        self.env.pop("OA_FORMAT", None)
+        self.env.pop("VIDUSHI_FORMAT", None)
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[TEST_DB]
@@ -105,7 +105,7 @@ class OaFormatEnvTest(unittest.TestCase):
 
     def test_oa_format_json_env_makes_json_the_default(self):
         env = dict(self.env)
-        env["OA_FORMAT"] = "json"
+        env["VIDUSHI_FORMAT"] = "json"
 
         result = self._query(["--fields", "id,provider"], env)
 
@@ -124,8 +124,8 @@ class OaFormatEnvTest(unittest.TestCase):
     def test_explicit_format_flag_overrides_oa_format_env(self):
         env = dict(self.env)
         # Precondition: the env var really is set to the opposite of what we expect to win.
-        env["OA_FORMAT"] = "json"
-        self.assertEqual(env["OA_FORMAT"], "json")
+        env["VIDUSHI_FORMAT"] = "json"
+        self.assertEqual(env["VIDUSHI_FORMAT"], "json")
 
         result = self._query(["--fields", "id,provider", "--format", "toon"], env)
 
@@ -137,7 +137,7 @@ class OaFormatEnvTest(unittest.TestCase):
         d = oa_toon.from_toon(result.stdout.strip())
         self.assertIsInstance(
             d, dict,
-            f"explicit --format toon must win over OA_FORMAT=json (envelope dict), "
+            f"explicit --format toon must win over VIDUSHI_FORMAT=json (envelope dict), "
             f"got {type(d).__name__}: {d!r}",
         )
         self.assertIn("results", d)
@@ -148,8 +148,8 @@ class OaFormatEnvTest(unittest.TestCase):
 
     def test_no_oa_format_no_flag_defaults_to_toon(self):
         env = dict(self.env)
-        env.pop("OA_FORMAT", None)
-        self.assertNotIn("OA_FORMAT", env)
+        env.pop("VIDUSHI_FORMAT", None)
+        self.assertNotIn("VIDUSHI_FORMAT", env)
 
         result = self._query(["--fields", "id"], env)
 
@@ -160,7 +160,7 @@ class OaFormatEnvTest(unittest.TestCase):
         d = oa_toon.from_toon(result.stdout.strip())
         self.assertIsInstance(
             d, dict,
-            f"default (no OA_FORMAT, no --format) must be a TOON envelope dict, "
+            f"default (no VIDUSHI_FORMAT, no --format) must be a TOON envelope dict, "
             f"got {type(d).__name__}: {d!r}",
         )
         self.assertIn("results", d)
@@ -170,15 +170,15 @@ class OaFormatEnvTest(unittest.TestCase):
 
     def test_invalid_oa_format_falls_back_to_toon_without_crashing(self):
         env = dict(self.env)
-        env["OA_FORMAT"] = "xml"  # garbage value
+        env["VIDUSHI_FORMAT"] = "xml"  # garbage value
 
         result = self._query(["--fields", "id"], env)
 
-        # negative bound: garbage OA_FORMAT must NOT crash the process, unlike an
+        # negative bound: garbage VIDUSHI_FORMAT must NOT crash the process, unlike an
         # invalid --format flag (which argparse legitimately rejects).
         self.assertEqual(
             result.returncode, 0,
-            f"invalid OA_FORMAT=xml must fall back silently, not crash: rc={result.returncode} stderr={result.stderr!r}",
+            f"invalid VIDUSHI_FORMAT=xml must fall back silently, not crash: rc={result.returncode} stderr={result.stderr!r}",
         )
         with self.assertRaises(json.JSONDecodeError):
             json.loads(result.stdout)
@@ -186,7 +186,7 @@ class OaFormatEnvTest(unittest.TestCase):
         d = oa_toon.from_toon(result.stdout.strip())
         self.assertIsInstance(
             d, dict,
-            f"invalid OA_FORMAT must fall back to a TOON envelope dict, "
+            f"invalid VIDUSHI_FORMAT must fall back to a TOON envelope dict, "
             f"got {type(d).__name__}: {d!r}",
         )
         self.assertIn("results", d)

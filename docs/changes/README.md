@@ -33,7 +33,7 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-008](CR-OA-008-docs-and-rules.md) | Docs & rules refresh | docs | COMPLETED (2026-07-12) | 001–007 | 4 |
 | [CR-OA-009](CR-OA-009-toon-output.md) | TOON output for the store CLI (AXI interface) | feature | COMPLETED (2026-07-12) | 003, 004, 005, 007 | 4 |
 | [CR-OA-010](CR-OA-010-axi-ergonomics.md) | AXI ergonomics — remaining principles (#2–#5, #7–#9) | feature | COMPLETED (2026-07-12) | 009 | 5 |
-| [CR-OA-011](CR-OA-011-packaging-rebrand.md) | Packaging + rebrand to Vidushi OA | feature | PENDING | 010 | 6 · v0.1.0 |
+| [CR-OA-011](CR-OA-011-packaging-rebrand.md) | Packaging + rebrand to Vidushi OA | feature | COMPLETED (2026-07-12) | 010 | 6 · v0.1.0 |
 | [CR-OA-012](CR-OA-012-unified-skill.md) | Unified `vidushi-oa` skill (cross-harness) | feature | PENDING | 011 | 6 · v0.1.0 |
 | [CR-OA-013](CR-OA-013-disposition-aware-sweep.md) | Disposition-aware `due-sweep` | feature | PENDING | 007 | 6 · v0.1.0 |
 | [CR-OA-014](CR-OA-014-aggregate-tally.md) | Aggregate tally in the TOON envelope | feature | PENDING | 010 | 6 · v0.1.0 |
@@ -93,3 +93,8 @@ Small items (no design surface → tasks, not CRs) surfaced during execution:
   action, not a cancel prompt; only **TOMBSTONE/UNDECIDED** subs should get `cancel-before-charge`.
   Make the opened action disposition-aware (transition effect keyed on `disposition`, or a
   post-sweep pass). Until then, do NOT run a live `due-sweep` on the migrated KEEP subscriptions.
+- **Drop the old `office_assistant` Mongo DB** (filed 2026-07-12, from CR-OA-011 §S4) — the live data was
+  migrated to `vidushi_oa` (118 records, count-parity + validator-clean verified) but the old
+  `office_assistant` DB is **deliberately retained as a backup**; the drop is hard to reverse and is
+  **gated on explicit user confirmation**. Drop it once the user is satisfied the `vidushi_oa` cut-over is
+  stable (`voa`/`store.py` both read `vidushi_oa` by default now).

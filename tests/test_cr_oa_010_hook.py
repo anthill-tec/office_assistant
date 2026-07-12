@@ -14,9 +14,9 @@ Baseline behaviour TODAY (pre-GREEN):
     test 2 (hook body actually emits the worklist) passes today; kept as a
     guard that the hook's target keeps working.
 
-DATA SAFETY: test 2's subprocess call points `OA_DATA_DIR` at an EMPTY
-tempdir (never the real repo `data/`) and `OA_MONGO_DB` at
-`office_assistant_test` (never the real DB), dropped/removed in
+DATA SAFETY: test 2's subprocess call points `VIDUSHI_DATA_DIR` at an EMPTY
+tempdir (never the real repo `data/`) and `VIDUSHI_MONGO_DB` at
+`vidushi_oa_test` (never the real DB), dropped/removed in
 tearDown. Requires a local mongod on 127.0.0.1:27017 (office_assistant
 instance; CR-OA-001).
 """
@@ -39,7 +39,7 @@ SETTINGS = os.path.join(ROOT, ".claude", "settings.json")
 CLAUDE_MD = os.path.join(ROOT, "CLAUDE.md")
 SCRIPTS_README = os.path.join(SCRIPTS, "README.md")
 
-TEST_DB = "office_assistant_test"
+TEST_DB = "vidushi_oa_test"
 
 # Seed one attention-worthy subscription: an OPEN action, matching the
 # `$or: [{"actions.status": "OPEN"}, {"status": {"$in": ATTENTION_STATUSES}}]`
@@ -125,8 +125,8 @@ class HookBodyEmitsWorklistTest(unittest.TestCase):
     def setUp(self):
         self.data_dir = tempfile.mkdtemp(prefix="oa-cr010d-hook-")
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_MONGO_DB"] = TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[TEST_DB]

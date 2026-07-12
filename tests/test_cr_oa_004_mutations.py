@@ -1,7 +1,7 @@
 """CR-OA-004 Cycle A — `set-status` / `action-add` / `action-resolve` / `doc-add` on pymongo.
 
 Verifies the §S1/§S2/§S3 ACs for porting the four tracking-mutation verbs off JSONL
-`load()`/`save()` onto Mongo (`oa_mongo.coll(t)`, database honouring `OA_MONGO_DB`):
+`load()`/`save()` onto Mongo (`oa_mongo.coll(t)`, database honouring `VIDUSHI_MONGO_DB`):
 
   - `set-status <type> <STATUS> --id <id>` `$set`s status + `updated` on ONE Mongo doc
     and returns {"status":..., "count":1, "ids":[id]}.
@@ -17,10 +17,10 @@ Verifies the §S1/§S2/§S3 ACs for porting the four tracking-mutation verbs off
 Currently all four verbs still call `load()`/`save()` on the real `data/*.jsonl` files
 (only `query`/`get` were ported in CR-OA-003 Cycle A, and `add`/`update`/`rm`/`stats`
 in CR-OA-003 Cycle B), so every test here MUST fail against a seeded
-`office_assistant_test` Mongo database until CR-OA-004 Cycle A's GREEN phase ports
+`vidushi_oa_test` Mongo database until CR-OA-004 Cycle A's GREEN phase ports
 these four commands too.
 
-DATA SAFETY: every subprocess call points `OA_DATA_DIR` at an EMPTY tempdir (never the
+DATA SAFETY: every subprocess call points `VIDUSHI_DATA_DIR` at an EMPTY tempdir (never the
 real repo `data/`), so the current JSONL-backed verbs read/write nothing but that
 tempdir. No real `data/*.jsonl` file is ever opened by this test.
 Requires a local mongod on 127.0.0.1:27017 (the office_assistant instance; CR-OA-001).
@@ -46,7 +46,7 @@ sys.path.insert(0, SCRIPTS)
 class TrackingVerbsMongoTest(unittest.TestCase):
     """§S1/§S2/§S3 — set-status/action-add/action-resolve/doc-add mutate Mongo, not JSONL."""
 
-    TEST_DB = "office_assistant_test"
+    TEST_DB = "vidushi_oa_test"
     COLLECTIONS = ["contacts", "invoices", "warranties", "cases", "products"]
 
     def setUp(self):
@@ -55,9 +55,9 @@ class TrackingVerbsMongoTest(unittest.TestCase):
         self.data_dir = tempfile.mkdtemp(prefix="oa-empty-data-")
 
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = self.TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
-        self.env["OA_FORMAT"] = "json"
+        self.env["VIDUSHI_MONGO_DB"] = self.TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_FORMAT"] = "json"
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[self.TEST_DB]
