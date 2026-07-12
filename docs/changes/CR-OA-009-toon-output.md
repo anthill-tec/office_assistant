@@ -1,6 +1,6 @@
 # CR-OA-009 — TOON output for the store CLI (AXI interface)
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-12 on feature/CR-OA-009-toon-output)
 **Type:** feature
 **Priority:** Medium
 **Depends on:** 003, 004, 005, 007
@@ -30,20 +30,23 @@ Add a global `--format` option (values `toon`|`json`, **default `toon`**) honore
 reads (`query`, `get`, `stats`, `attention`, `validate`) *and* writes (`add`, `update`, `set-status`,
 `action-add`, `action-resolve`, `doc-add`, `event`, the sweeps). Every stdout payload routes through
 `toon.to_toon()` unless `--json` is given, in which case today's exact `json.dumps` output is preserved.
+An **`OA_FORMAT`** env var (`toon`|`json`) sets the default when no flag is given — precedence `--format` >
+`--json` shortcut > `OA_FORMAT` env > `toon` — so programmatic consumers can opt into JSON globally without
+threading `--json` (consistent with the `OA_MONGO_*`/`OA_DATA_DIR` env pattern; garbage value → `toon`, no crash).
 
 ## Acceptance criteria
 
-- [ ] §S1 `scripts/oa_toon.py` imports cleanly; `to_toon([{…}])` returns a TOON string and
+- [x] §S1 `scripts/oa_toon.py` imports cleanly; `to_toon([{…}])` returns a TOON string and
   `from_toon(to_toon(x)) == x` for the store's shapes; `python-toon` is pinned `>=0.1.3,<0.2` in the
   project's dependency record.
-- [ ] §S2 `store.py query subscriptions --fields id,provider,disposition,status,renews` with no
+- [x] §S2 `store.py query subscriptions --fields id,provider,disposition,status,renews` with no
   `--format` emits a TOON block whose first line matches `^\[11[,]?\]\{id,provider,disposition,status,renews\}:`
   followed by 11 indented rows — **not** a JSON array.
-- [ ] §S2 The same query with `--json` emits a strict JSON array (byte-for-byte the pre-CR output).
-- [ ] §S2 **Lossless:** `from_toon(<toon output>)` deep-equals the `--json` object for the same query.
-- [ ] §S2 A write verb (`add`/`set-status`) emits a **TOON** status object by default and a JSON one
+- [x] §S2 The same query with `--json` emits a strict JSON array (byte-for-byte the pre-CR output).
+- [x] §S2 **Lossless:** `from_toon(<toon output>)` deep-equals the `--json` object for the same query.
+- [x] §S2 A write verb (`add`/`set-status`) emits a **TOON** status object by default and a JSON one
   under `--json` — i.e. `--format` is honored on writes too, not reads-only.
-- [ ] §S2 (caller) `--format` is a real global argparse option with `default="toon"`; grep confirms the
+- [x] §S2 (caller) `--format` is a real global argparse option with `default="toon"`; grep confirms the
   read *and* write verbs route stdout through the `oa_toon.py` seam rather than a bare `json.dumps`.
 
 ## Estimated size

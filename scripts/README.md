@@ -30,7 +30,7 @@ Filters: `--where field=value` (exact), `--contains field=substr` (case-insensit
 `--after field=YYYY-MM-DD` / `--before field=YYYY-MM-DD` (ISO date, **inclusive** on both ends; null/missing
 dates are excluded). All are repeatable and AND-combined, and accept **dotted paths** (`source.email_id`,
 `registration.done`, `last_contact.date`). `--fields a,b,c` projects; `--sort`, `--limit`.
-Output is compact JSON on stdout; warnings go to stderr.
+Output is **TOON by default** — token-efficient (pass `--json` or set `OA_FORMAT=json` for JSON); warnings go to stderr.
 
 **Lifecycle + admin verbs:** `set-status` / `action-add` / `action-resolve` / `doc-add` drive the shared
 `status` + `actions[]`; `event <type> <id> <event>` fires a mapped `transitions.py` transition; `attention`
