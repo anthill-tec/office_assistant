@@ -1,6 +1,6 @@
 # DN — Packaging & cross-harness distribution (Vidushi OA)
 
-**Status:** Accepted (2026-07-12), except the license decision (§6, pending)
+**Status:** Accepted (2026-07-12) — all decisions confirmed by the user, incl. §4 full rename + §6 license
 **Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
 **Related:** [PRD-distribution-release.md](PRD-distribution-release.md) · [DN-agent-interface-toon.md](DN-agent-interface-toon.md)
 
@@ -36,15 +36,17 @@ sweep is **folded in as a "deep-sweep" mode** rather than kept as a separate age
 **Why fold, not keep separate:** subagents are a **harness-specific primitive** (Claude Code dispatches
 them; many harnesses don't have the concept). A skill *mode* — a documented capability within the one
 skill — ports to every harness, which is the entire point of Decision 2. In Claude Code the deep-sweep can
-still be dispatched as a subagent under the hood; elsewhere it is simply a mode. (User raised this as an
-open question on the diagram; recommendation accepted pending final confirmation.)
+still be dispatched as a subagent under the hood; elsewhere it is simply a mode. **(User confirmed 2026-07-12.)**
 
-## Decision 4 — Rebrand to "Vidushi OA", minimal internal churn
+## Decision 4 — Full rename to "Vidushi OA" (hard cut) — CONFIRMED 2026-07-12
 
-Product name → **Vidushi OA**. The pip distribution is `vidushi-oa`, the import package `vidushi_oa`, the
-unified skill `vidushi-oa`. **Kept for compatibility + low churn:** the console command `oa`, the env vars
-`OA_*`, and the Mongo DB name `office_assistant` — all read naturally as *vidushi-OA*. Renaming those is an
-explicit **non-goal** for v0.1.0 (a later, migration-bearing change if ever wanted).
+Product → **Vidushi OA**, a **full rename** — the user chose full-rename over minimal-churn and a **hard
+cut** over back-compat aliases: pip `vidushi-oa`, package `vidushi_oa`, skill `vidushi-oa`, console
+**`voa`**, env **`VIDUSHI_MONGO_URI`/`VIDUSHI_MONGO_DB`/`VIDUSHI_DATA_DIR`/`VIDUSHI_FORMAT`**, Mongo DB
+**`vidushi_oa`** (migrated from `office_assistant`, test DB `vidushi_oa_test`). The old `oa`/`OA_*` names
+are **dropped** (no aliases). The repo/folder name `office_assistant` stays (a separate git step). The live
+DB migration runs via `snapshot`→`import` with count/validator verification before dropping the old DB (see
+CR-OA-011 §S4).
 
 ## Decision 5 — A `setup` mode provisions the local MongoDB
 
@@ -58,8 +60,8 @@ Whether the repo stays **private** or migrates to an **open-source license** gat
 - **CI/CD** — a private repo won't run GitHub Actions on the free tier; OSS unlocks it.
 - **Distribution** — private ⇒ private-index / git-install; OSS ⇒ public `pip install vidushi-oa`.
 
-**Not decided yet.** v0.1.0 can ship **privately** (git-install, no CI) and go public later. This DN records
-the tradeoff; the decision is a prerequisite for the deferred CI/CD work and any public publish.
+**Decided 2026-07-12: ship v0.1.0 privately (git-install), go public later.** CI/CD and a public PyPI
+publish stay deferred until an open-source migration; v0.1.0 distributes privately (git-install).
 
 ## Consequences
 
