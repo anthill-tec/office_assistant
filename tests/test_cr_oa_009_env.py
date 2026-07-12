@@ -25,6 +25,14 @@ default of `"toon"` regardless of the environment. This means:
     pass today by accident (the flag already always wins over env, since env
     isn't consulted at all yet) — kept to guard the precedence order.
 
+NOTE (CR-OA-010 Cycle B, decision "B"): `query`'s TOON output is now a
+`{count, results, next}` envelope, superseding the bare `[N,]{...}:` header
+this file originally asserted for the TOON side of the precedence chain. The
+three tests that assert a TOON default now decode via
+`oa_toon.from_toon(stdout)` and check for a dict with a `results` list,
+instead of matching a bare tabular header line. The JSON-path assertions are
+unchanged.
+
 DATA SAFETY: every subprocess call points `OA_DATA_DIR` at an EMPTY tempdir
 (never the real repo `data/`) and `OA_MONGO_DB` at `office_assistant_test`
 (never the real DB), which is dropped in tearDown. Requires a local mongod on
@@ -64,9 +72,9 @@ SEED_SUBSCRIPTIONS = [
     },
 ]
 
-# TOON tabular header for the 2-row seed, e.g. "[2]{id,provider}:" or "[2,]{id,provider}:"
+# Bare-TOON tabular header the JSON-path tests check for ABSENCE of (negative
+# bound: the JSON default must not look like the old bare-array TOON shape).
 TOON_HEADER_ID_PROVIDER = r"^\[2[,]?\]\{id,provider\}:"
-TOON_HEADER_ID = r"^\[2[,]?\]\{id\}:"
 
 
 class OaFormatEnvTest(unittest.TestCase):
@@ -122,19 +130,21 @@ class OaFormatEnvTest(unittest.TestCase):
         result = self._query(["--fields", "id,provider", "--format", "toon"], env)
 
         self.assertEqual(result.returncode, 0, f"query failed: {result.stderr}")
-        lines = [line for line in result.stdout.splitlines() if line.strip()]
-        self.assertTrue(lines, "query produced no output")
-        header = lines[0]
-        self.assertRegex(
-            header, TOON_HEADER_ID_PROVIDER,
-            f"explicit --format toon must win over OA_FORMAT=json: {header!r}",
-        )
         # negative bound: NOT valid JSON (i.e. env=json did not leak through)
         with self.assertRaises(json.JSONDecodeError):
             json.loads(result.stdout)
+
+        d = oa_toon.from_toon(result.stdout.strip())
+        self.assertIsInstance(
+            d, dict,
+            f"explicit --format toon must win over OA_FORMAT=json (envelope dict), "
+            f"got {type(d).__name__}: {d!r}",
+        )
+        self.assertIn("results", d)
+        self.assertIsInstance(d["results"], list)
         # cross-check via lossless TOON decode -> exactly the 2 seeded rows
-        decoded = oa_toon.from_toon(result.stdout.strip())
-        self.assertEqual(len(decoded), 2)
+        self.assertEqual(len(d["results"]), 2)
+        self.assertEqual(sorted(r["id"] for r in d["results"]), ["sub_a", "sub_b"])
 
     def test_no_oa_format_no_flag_defaults_to_toon(self):
         env = dict(self.env)
@@ -144,15 +154,19 @@ class OaFormatEnvTest(unittest.TestCase):
         result = self._query(["--fields", "id"], env)
 
         self.assertEqual(result.returncode, 0, f"query failed: {result.stderr}")
-        lines = [line for line in result.stdout.splitlines() if line.strip()]
-        self.assertTrue(lines, "query produced no output")
-        header = lines[0]
-        self.assertRegex(
-            header, TOON_HEADER_ID,
-            f"default (no OA_FORMAT, no --format) must be TOON: {header!r}",
-        )
         with self.assertRaises(json.JSONDecodeError):
             json.loads(result.stdout)
+
+        d = oa_toon.from_toon(result.stdout.strip())
+        self.assertIsInstance(
+            d, dict,
+            f"default (no OA_FORMAT, no --format) must be a TOON envelope dict, "
+            f"got {type(d).__name__}: {d!r}",
+        )
+        self.assertIn("results", d)
+        self.assertIsInstance(d["results"], list)
+        self.assertEqual(len(d["results"]), 2)
+        self.assertEqual(sorted(r["id"] for r in d["results"]), ["sub_a", "sub_b"])
 
     def test_invalid_oa_format_falls_back_to_toon_without_crashing(self):
         env = dict(self.env)
@@ -166,15 +180,19 @@ class OaFormatEnvTest(unittest.TestCase):
             result.returncode, 0,
             f"invalid OA_FORMAT=xml must fall back silently, not crash: rc={result.returncode} stderr={result.stderr!r}",
         )
-        lines = [line for line in result.stdout.splitlines() if line.strip()]
-        self.assertTrue(lines, "query produced no output")
-        header = lines[0]
-        self.assertRegex(
-            header, TOON_HEADER_ID,
-            f"invalid OA_FORMAT must fall back to TOON: {header!r}",
-        )
         with self.assertRaises(json.JSONDecodeError):
             json.loads(result.stdout)
+
+        d = oa_toon.from_toon(result.stdout.strip())
+        self.assertIsInstance(
+            d, dict,
+            f"invalid OA_FORMAT must fall back to a TOON envelope dict, "
+            f"got {type(d).__name__}: {d!r}",
+        )
+        self.assertIn("results", d)
+        self.assertIsInstance(d["results"], list)
+        self.assertEqual(len(d["results"]), 2)
+        self.assertEqual(sorted(r["id"] for r in d["results"]), ["sub_a", "sub_b"])
 
 
 if __name__ == "__main__":

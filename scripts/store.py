@@ -118,6 +118,43 @@ def project(rec, fields):
     return rec if not fields else {f: getp(rec, f) for f in fields}
 
 
+# CR-OA-010 #2 — per-store minimal default field set for TOON row output. When a
+# read verb runs in TOON with neither --fields nor --full, rows are projected to
+# these identifying columns (id first) to keep the token cost low. `id` is always
+# included. A default key missing from a given doc is simply skipped.
+DEFAULT_FIELDS = {
+    "products": ["id", "product", "manufacturer", "category"],
+    "subscriptions": ["id", "provider", "disposition", "status", "renews"],
+    "invoices": ["id", "vendor", "number", "amount", "date"],
+    "warranties": ["id", "vendor", "product", "expiry", "status"],
+    "contacts": ["id", "vendor", "kind", "category"],
+    "insurance": ["id", "insurer", "policy_no", "expiry", "status"],
+    "cases": ["id", "vendor", "issue", "status"],
+}
+
+# CR-OA-010 #3 — TOON string values longer than this cap are truncated to
+# `<first CAP chars>…(+N chars)` so a single long field can't blow up a row.
+_TRUNC_CAP = 80
+
+
+def _truncate(v):
+    """Truncate an over-long string to the CAP with a `…(+N chars)` size hint;
+    non-strings and short strings pass through untouched."""
+    if isinstance(v, str) and len(v) > _TRUNC_CAP:
+        return v[:_TRUNC_CAP] + f"…(+{len(v) - _TRUNC_CAP} chars)"
+    return v
+
+
+def _toon_shape(rec, type_):
+    """TOON-only row shaping (CR-OA-010 #2 + #3): project to DEFAULT_FIELDS for
+    the store type (keeping the declared order, skipping absent keys), then
+    truncate each long string value. Callers gate this on
+    `_FMT == "toon" and not --full and not --fields`."""
+    keys = DEFAULT_FIELDS.get(type_)
+    shaped = {k: rec[k] for k in keys if k in rec} if keys else dict(rec)
+    return {k: _truncate(v) for k, v in shaped.items()}
+
+
 def expand(rec, fields):
     import oa_mongo
     for f in fields:
@@ -234,7 +271,24 @@ def cmd_query(a):
         exp = a.expand.split(",")
         docs = [expand(r, exp) for r in docs]
     fields = a.fields.split(",") if a.fields else None
-    out([project(r, fields) for r in docs])
+    rows = [project(r, fields) for r in docs]
+    if _FMT == "toon" and not getattr(a, "full", False) and not fields:
+        rows = [_toon_shape(r, a.type) for r in rows]
+    if _FMT == "toon":
+        out({"count": len(rows), "results": rows, "next": _query_next(a.type, rows)})
+    else:
+        out(rows)
+
+
+def _query_next(type_, rows):
+    """Contextual follow-up command templates for a TOON `query` envelope
+    (CR-OA-010 Cycle B #9): a concise 1-3 entry list, always referencing the
+    queried store type."""
+    nxt = []
+    if rows and rows[0].get("id"):
+        nxt.append(f"get {type_} {rows[0]['id']}")
+    nxt.append(f"query {type_} --where <field>=<value>")
+    return nxt[:3]
 
 
 def cmd_get(a):
@@ -246,6 +300,8 @@ def cmd_get(a):
         r = expand(r, a.expand.split(","))
     if a.fields:
         r = project(r, a.fields.split(","))
+    elif _FMT == "toon" and not getattr(a, "full", False):
+        r = _toon_shape(r, a.type)
     out(r)
 
 
@@ -587,7 +643,11 @@ def main():
         sp.add_argument("--json", action="store_true", dest="json_out",
                         help="emit strict JSON instead of the default TOON")
 
-    q = add_parser("query"); with_type(q); read_json(q)
+    def read_full(sp):
+        sp.add_argument("--full", action="store_true", dest="full",
+                        help="TOON: show every field, untruncated (disable the default minimal projection)")
+
+    q = add_parser("query"); with_type(q); read_json(q); read_full(q)
     q.add_argument("--where", action="append"); q.add_argument("--contains", action="append")
     q.add_argument("--after", action="append",
                    help="FIELD=YYYY-MM-DD: keep rows where ISO date FIELD >= value (inclusive); repeatable, dotted paths ok")
@@ -597,7 +657,7 @@ def main():
     q.add_argument("--filter", help="native MongoDB filter as a JSON object, AND-merged with the other flags")
     q.add_argument("--expand", help="comma list of FK fields to resolve inline (e.g. contact_id,invoice_id)")
     q.set_defaults(func=cmd_query)
-    g = add_parser("get"); with_type(g); g.add_argument("id"); read_json(g)
+    g = add_parser("get"); with_type(g); g.add_argument("id"); read_json(g); read_full(g)
     g.add_argument("--expand"); g.add_argument("--fields"); g.set_defaults(func=cmd_get)
     ad = add_parser("add"); with_type(ad); ad.add_argument("--json", required=True); ad.set_defaults(func=cmd_add)
     up = add_parser("update"); with_type(up); up.add_argument("id")
@@ -634,8 +694,20 @@ def main():
     it = add_parser("init"); it.set_defaults(func=cmd_init)
     av = add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
 
-    a = p.parse_args()
+    # Content-first no-arg path (S6/AXI #8): a truly-empty argv (just the
+    # program name) prints live data — a one-line description + the executable
+    # path token, then the `attention` worklist — instead of letting argparse
+    # error with `usage:`. `-h`/`--help` still reaches argparse (handled there).
     global _FMT
+    if len(sys.argv) == 1:
+        env = os.environ.get("OA_FORMAT")
+        _FMT = env if env in ("toon", "json") else "toon"
+        print("office_assistant store (scripts/store.py) — MongoDB-backed "
+              "personal-admin data CLI. Rows needing attention:")
+        cmd_attention(argparse.Namespace(type=None))
+        return
+
+    a = p.parse_args()
     fmt_choice = getattr(a, "format", None)          # explicit flag wins
     if fmt_choice is None:
         if getattr(a, "json_out", False):            # --json read shortcut

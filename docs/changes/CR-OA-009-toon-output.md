@@ -17,6 +17,11 @@ default so the agent reads its output in ~30–60% fewer tokens than JSON, with 
 fallback. Encoding comes from the vetted `python-toon` library (the spec-org `toon_format` package is an
 unbuilt stub — see the DN). This is the AXI stance: an agent-ergonomic CLI, not a protocol server.
 
+> **Superseded in part by CR-OA-010 (2026-07-12):** the `query` TOON output is now a `{count, results, next}`
+> envelope (AXI #4/#5/#9) with minimal default fields + truncation, so the "query TOON ≡ `--json` array"
+> byte-equality asserted here holds only at `--full`. The `--json`/`OA_FORMAT=json` contract remains
+> byte-stable. See CR-OA-010's design decision "B".
+
 ## Scope
 
 ### §S1 `scripts/oa_toon.py` — the encoder seam

@@ -1,6 +1,6 @@
 # CR-OA-010 — AXI ergonomics (remaining principles)
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-12 on feature/CR-OA-010-axi-ergonomics)
 **Type:** feature
 **Priority:** Low
 **Depends on:** 009
@@ -19,6 +19,12 @@ for scheduling; #2/#3 folded in as the remaining efficiency principles.
 
 ## Scope
 
+> **Design decision (reviewed + approved 2026-07-12 — "B"): shape-changing ergonomics are TOON-only.**
+> #2/#3/#4/#5/#9 reshape output, so they apply to the **TOON** (agent-facing default) view only. The
+> **`--json` / `OA_FORMAT=json`** output stays a **clean, full-data array** — the stable programmatic
+> contract — so no consumer is re-broken (the reconciled test suite needs no further changes). #7 (hook)
+> and #8 (no-arg) are format-independent.
+
 ### §S1 Minimal default schemas (#2)
 `query`/`get` return a per-store minimal default projection (a `DEFAULT_FIELDS` map, ~3–4 identifying
 fields) unless `--fields` or `--full` is given. `--full` returns the whole document; `--fields` overrides.
@@ -32,8 +38,8 @@ Long string fields (e.g. `note`, `key_specs`) truncate to a length cap with a si
 doesn't round-trip a separate `stats` call.
 
 ### §S4 Definitive empty states (#5)
-An empty result returns an explicit zero-result marker (`count == 0`) rather than a bare `[]`, so
-"nothing matched" is unambiguous. _(This changes the `query` output envelope — see Risk.)_
+An empty TOON result shows an explicit zero-result marker (`count: 0`) rather than a bare `[]`, so
+"nothing matched" is unambiguous. _(TOON envelope only — `--json` stays `[]`; see the design decision.)_
 
 ### §S5 Ambient context hook (#7)
 Ship a session hook (+ optional skill) that surfaces `attention` (the open-action worklist) before the
@@ -48,22 +54,23 @@ Commands append a **concise** `next[]` block of suggested follow-up command temp
 (e.g. after a `query` that surfaces an OPEN action → an `action-resolve …` template). Kept terse.
 
 ## Acceptance criteria
-- [ ] §S1 `query products` (no flags) returns only the `DEFAULT_FIELDS` for products; `--full` returns all fields; `--fields` still overrides.
-- [ ] §S2 a record with a long `note` shows it truncated with a `(+N chars)` hint by default; `--full` shows the whole field.
-- [ ] §S3 `query <type>` output includes a `count` equal to the number of results (matching `stats <type>.total` for an unfiltered query).
-- [ ] §S4 a query matching nothing returns an explicit zero-result marker (`count == 0`), not a bare `[]`.
-- [ ] §S5 the session hook (or skill) emits the `attention` worklist; installation is documented and testable.
-- [ ] §S6 `store.py` with no args exits 0 and prints the `attention` summary + path + one-line description (not usage); `store.py --help` still shows help.
-- [ ] §S7 a verb's output ends with a `next[]` list of concrete, relevant command templates.
+- [x] §S1 in **TOON**, `query products` (no flags) shows only the `DEFAULT_FIELDS` for products; `--full` shows all fields; `--fields` overrides. Under `--json`/`OA_FORMAT=json` the same query returns the **full** documents (unchanged).
+- [x] §S2 in **TOON**, a record with a long `note` is truncated with a `(+N chars)` hint by default; `--full` shows the whole field. Under `--json` the field is never truncated.
+- [x] §S3 the **TOON** `query <type>` output carries a `count` equal to the number of results (matching `stats <type>.total` for an unfiltered query); the `--json` output is a bare array (no `count` wrapper).
+- [x] §S4 in **TOON**, a query matching nothing shows an explicit `count: 0` marker; under `--json` it stays a bare `[]`.
+- [x] §S5 the session hook (or skill) emits the `attention` worklist; installation is documented and testable.
+- [x] §S6 `store.py` with no args exits 0 and prints the `attention` summary + path + one-line description (not usage); `store.py --help` still shows help.
+- [x] §S7 in **TOON**, a read verb's output ends with a concise `next[]` block of relevant command templates; the `--json` output has no `next[]`.
+- [ ] **(contract)** `--json` / `OA_FORMAT=json` output is **unchanged** by this CR for every read verb — a clean, full-data JSON array, no envelope / `count` / `next[]` / truncation — so the reconciled test suite needs no further edits.
 
 ## Estimated size
 M–L — seven small ergonomics touches across the CLI output path + one session hook.
 
 ## Risk
-Changing the default output shape (minimal fields, `count` envelope, empty-state marker, `next[]`) affects
-any consumer parsing `store.py` output — the `--full` / `--fields` / `--json` escape hatches preserve full
-access, and the office-assistant skills are updated to match. §S4's envelope layers **after** CR-OA-009's
-byte-for-byte-array behaviour (which describes the pre-CR-010 output).
+The shape-changing ergonomics touch the **TOON** view only; the `--json` / `OA_FORMAT=json` contract is held
+byte-stable (decision "B"), so **no JSON consumer is re-broken** — the whole point of the fork. The care
+points: keep the TOON envelope (`count` / `results` / `next[]`) losslessly encodable via `oa_toon`, and make
+the field-projection + truncation logic **format-aware** (minimal/truncated in TOON, full/verbatim in JSON).
 
 ## Non-goals
 Re-implementing TOON (CR-OA-009); principles #6 and #10 (already met); a protocol server (dropped in the DN).
