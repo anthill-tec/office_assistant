@@ -7,7 +7,7 @@ Verifies the ACs:
           reject a document with an out-of-enum `status` (pymongo.errors.WriteError)
           while a schema-valid invoice inserts cleanly.
 
-A3 runs against a throwaway `office_assistant_test` database (OA_MONGO_DB env override)
+A3 runs against a throwaway `vidushi_oa_test` database (VIDUSHI_MONGO_DB env override)
 so it never touches the real `office_assistant` data, and drops that database in
 teardown. Requires a local mongod on 127.0.0.1:27017 (same instance CR-OA-001 pinned to).
 """
@@ -88,15 +88,15 @@ class ValidatorEnforcedTest(unittest.TestCase):
     """A3 (S2) — `apply-validators` (via `store.py init`) attaches a Mongo $jsonSchema
     validator to `invoices` that rejects an out-of-enum status and accepts a valid one.
 
-    Runs entirely against a throwaway `office_assistant_test` database so it never
+    Runs entirely against a throwaway `vidushi_oa_test` database so it never
     touches real data.
     """
 
-    TEST_DB = "office_assistant_test"
+    TEST_DB = "vidushi_oa_test"
 
     def setUp(self):
         env = dict(os.environ)
-        env["OA_MONGO_DB"] = self.TEST_DB
+        env["VIDUSHI_MONGO_DB"] = self.TEST_DB
         result = subprocess.run(
             [sys.executable, STORE, "init"],
             capture_output=True, text=True, env=env,

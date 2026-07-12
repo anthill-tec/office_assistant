@@ -1,6 +1,6 @@
 """CR-OA-010 Cycle B — AXI ergonomics #4 (pre-computed aggregates), #5
 (definitive empty states), and #9 (contextual `next[]`), TOON-only (decision
-"B"). The `--json` / `OA_FORMAT=json` contract stays a clean, full-data bare
+"B"). The `--json` / `VIDUSHI_FORMAT=json` contract stays a clean, full-data bare
 array, byte-stable and envelope-free.
 
 Verifies:
@@ -14,7 +14,7 @@ Verifies:
   §S7 — a TOON `query` response ends with a concise `next[]` block (1-3
         entries) of concrete follow-up command templates relevant to the
         query.
-  contract — `--json` (and `OA_FORMAT=json`) stays a bare array: no `count`
+  contract — `--json` (and `VIDUSHI_FORMAT=json`) stays a bare array: no `count`
         wrapper, no `next[]`, no envelope of any kind.
 
 None of the envelope exists in `store.py` yet — `cmd_query` still calls
@@ -24,8 +24,8 @@ dict with `count`/`results`/`next` keys. Tests 1-3 below MUST fail today
 assertions fail outright); the `--json` contract tests (4) pass today and
 continue to guard decision "B" post-GREEN.
 
-DATA SAFETY: every subprocess call points `OA_DATA_DIR` at an EMPTY tempdir
-(never the real repo `data/`) and `OA_MONGO_DB` at `office_assistant_test`
+DATA SAFETY: every subprocess call points `VIDUSHI_DATA_DIR` at an EMPTY tempdir
+(never the real repo `data/`) and `VIDUSHI_MONGO_DB` at `vidushi_oa_test`
 (never the real DB), dropped in tearDown. Requires a local mongod on
 127.0.0.1:27017 (the office_assistant instance; CR-OA-001).
 """
@@ -44,7 +44,7 @@ ROOT = os.path.dirname(HERE)
 SCRIPTS = os.path.join(ROOT, "scripts")
 STORE = os.path.join(SCRIPTS, "store.py")
 
-TEST_DB = "office_assistant_test"
+TEST_DB = "vidushi_oa_test"
 
 sys.path.insert(0, SCRIPTS)
 import oa_toon  # noqa: E402  (needs sys.path insert above; from_toon for envelope checks)
@@ -83,8 +83,8 @@ class _BaseSubprocessCase(unittest.TestCase):
     def setUp(self):
         self.data_dir = tempfile.mkdtemp(prefix="oa-cr010b-")
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_MONGO_DB"] = TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[TEST_DB]
 
@@ -220,7 +220,7 @@ class EnvelopeNextTest(_BaseSubprocessCase):
 
 
 class JsonContractStaysBareArrayTest(_BaseSubprocessCase):
-    """Contract — `--json` / `OA_FORMAT=json` stay a bare array: no `count`
+    """Contract — `--json` / `VIDUSHI_FORMAT=json` stay a bare array: no `count`
     wrapper, no `next[]`, no envelope of any kind (decision "B"). These PASS
     today; they guard the fork so GREEN cannot leak the envelope into JSON."""
 
@@ -245,8 +245,8 @@ class JsonContractStaysBareArrayTest(_BaseSubprocessCase):
         )
 
     def test_oa_format_json_env_returns_bare_array_no_envelope(self):
-        result = self._run(["query", "subscriptions"], extra_env={"OA_FORMAT": "json"})
-        self.assertEqual(result.returncode, 0, f"OA_FORMAT=json query failed: {result.stderr}")
+        result = self._run(["query", "subscriptions"], extra_env={"VIDUSHI_FORMAT": "json"})
+        self.assertEqual(result.returncode, 0, f"VIDUSHI_FORMAT=json query failed: {result.stderr}")
 
         parsed = json.loads(result.stdout)
         self.assertIsInstance(parsed, list)

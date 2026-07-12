@@ -23,8 +23,8 @@ not-yet-existing entries, and the subprocess-driven tests because `store.py`'s a
 the validator/index tests, because no validator/index is attached and the bad/duplicate
 insert therefore succeeds where it should raise).
 
-DATA SAFETY: every subprocess call points `OA_DATA_DIR` at an EMPTY tempdir (never the
-real repo `data/`) and `OA_MONGO_DB` at `office_assistant_test` (never the real DB), which
+DATA SAFETY: every subprocess call points `VIDUSHI_DATA_DIR` at an EMPTY tempdir (never the
+real repo `data/`) and `VIDUSHI_MONGO_DB` at `vidushi_oa_test` (never the real DB), which
 is dropped in tearDown. Requires a local mongod on 127.0.0.1:27017 (the office_assistant
 instance; CR-OA-001).
 """
@@ -45,7 +45,7 @@ SCRIPTS = os.path.join(ROOT, "scripts")
 STORE = os.path.join(SCRIPTS, "store.py")
 SCHEMA_DIR = os.path.join(ROOT, "data", "schema")
 
-TEST_DB = "office_assistant_test"
+TEST_DB = "vidushi_oa_test"
 
 
 def _load_schema(type_name):
@@ -146,9 +146,9 @@ class GenIdAnchorTest(unittest.TestCase):
         self.data_dir = tempfile.mkdtemp(prefix="oa-cr007-data-")
 
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
-        self.env["OA_FORMAT"] = "json"
+        self.env["VIDUSHI_MONGO_DB"] = TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_FORMAT"] = "json"
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[TEST_DB]
@@ -208,12 +208,12 @@ class GenIdAnchorTest(unittest.TestCase):
 class ValidatorEnforcedTest(unittest.TestCase):
     """§S1 — `apply-validators` (via `store.py init`) attaches a Mongo $jsonSchema
     validator to `subscriptions`/`insurance` that rejects an out-of-enum status and
-    accepts a valid one, entirely against the throwaway `office_assistant_test` DB."""
+    accepts a valid one, entirely against the throwaway `vidushi_oa_test` DB."""
 
     def setUp(self):
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = TEST_DB
-        self.env["OA_FORMAT"] = "json"
+        self.env["VIDUSHI_MONGO_DB"] = TEST_DB
+        self.env["VIDUSHI_FORMAT"] = "json"
         result = subprocess.run(
             [sys.executable, STORE, "init"], capture_output=True, text=True, env=self.env,
         )
@@ -278,8 +278,8 @@ class ValidateVerbTest(unittest.TestCase):
 
     def setUp(self):
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = TEST_DB
-        self.env["OA_FORMAT"] = "json"
+        self.env["VIDUSHI_MONGO_DB"] = TEST_DB
+        self.env["VIDUSHI_FORMAT"] = "json"
         result = subprocess.run(
             [sys.executable, STORE, "init"], capture_output=True, text=True, env=self.env,
         )
@@ -340,8 +340,8 @@ class InvoiceExpandSubscriptionFkTest(unittest.TestCase):
 
     def setUp(self):
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = TEST_DB
-        self.env["OA_FORMAT"] = "json"
+        self.env["VIDUSHI_MONGO_DB"] = TEST_DB
+        self.env["VIDUSHI_FORMAT"] = "json"
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[TEST_DB]
 

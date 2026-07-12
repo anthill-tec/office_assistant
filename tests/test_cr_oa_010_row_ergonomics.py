@@ -1,6 +1,6 @@
 """CR-OA-010 Cycle A — AXI ergonomics #2 (minimal default schemas) + #3
 (content truncation), gated behind a shared `--full` flag. TOON-only (decision
-"B"): the `--json` / `OA_FORMAT=json` contract stays a clean, full-data array,
+"B"): the `--json` / `VIDUSHI_FORMAT=json` contract stays a clean, full-data array,
 byte-stable and untruncated.
 
 Verifies:
@@ -11,7 +11,7 @@ Verifies:
   §S2 — a long string value in a DEFAULT field truncates to a ~80-char cap
         with a `<prefix>…(+N chars)` hint in TOON; `--full` disables
         truncation.
-  contract — `--json` (and `OA_FORMAT=json`) is untouched: full fields,
+  contract — `--json` (and `VIDUSHI_FORMAT=json`) is untouched: full fields,
         untruncated values, bare JSON array (no envelope).
 
 None of this exists in `store.py` yet — `project()` only honors `--fields`
@@ -25,8 +25,8 @@ now decode via `_envelope_results()` (reads `d["results"]`) instead of
 treating the decoded TOON as a bare list; the `--json` contract is untouched
 and still decodes as a bare array via `json.loads`.
 
-DATA SAFETY: every subprocess call points `OA_DATA_DIR` at an EMPTY tempdir
-(never the real repo `data/`) and `OA_MONGO_DB` at `office_assistant_test`
+DATA SAFETY: every subprocess call points `VIDUSHI_DATA_DIR` at an EMPTY tempdir
+(never the real repo `data/`) and `VIDUSHI_MONGO_DB` at `vidushi_oa_test`
 (never the real DB), dropped in tearDown. Requires a local mongod on
 127.0.0.1:27017 (the office_assistant instance; CR-OA-001).
 """
@@ -46,7 +46,7 @@ ROOT = os.path.dirname(HERE)
 SCRIPTS = os.path.join(ROOT, "scripts")
 STORE = os.path.join(SCRIPTS, "store.py")
 
-TEST_DB = "office_assistant_test"
+TEST_DB = "vidushi_oa_test"
 
 sys.path.insert(0, SCRIPTS)
 import oa_toon  # noqa: E402  (needs sys.path insert above; from_toon for lossless checks)
@@ -134,8 +134,8 @@ class _BaseSubprocessCase(unittest.TestCase):
     def setUp(self):
         self.data_dir = tempfile.mkdtemp(prefix="oa-cr010a-")
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_MONGO_DB"] = TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[TEST_DB]
 
@@ -286,7 +286,7 @@ class ProductsTruncationTest(_BaseSubprocessCase):
 
 
 class JsonContractUnchangedTest(_BaseSubprocessCase):
-    """Contract — `--json` / `OA_FORMAT=json` stay a clean, full-data,
+    """Contract — `--json` / `VIDUSHI_FORMAT=json` stay a clean, full-data,
     untruncated bare array (decision "B"). These PASS today; they guard the
     fork so GREEN cannot accidentally leak the TOON reshaping into JSON."""
 
@@ -314,8 +314,8 @@ class JsonContractUnchangedTest(_BaseSubprocessCase):
         self.assertNotIn("…(+", long_row["category"])
 
     def test_oa_format_json_env_returns_full_untruncated_documents(self):
-        result = self._run(["query", "products"], extra_env={"OA_FORMAT": "json"})
-        self.assertEqual(result.returncode, 0, f"OA_FORMAT=json query failed: {result.stderr}")
+        result = self._run(["query", "products"], extra_env={"VIDUSHI_FORMAT": "json"})
+        self.assertEqual(result.returncode, 0, f"VIDUSHI_FORMAT=json query failed: {result.stderr}")
 
         parsed = json.loads(result.stdout)
         self.assertIsInstance(parsed, list)

@@ -3,8 +3,8 @@
 Pinned to the local *office_assistant* instance on 127.0.0.1:27017 — port 27018 hosts the
 user's platform DBs and is off-limits. Configuration via environment (read lazily so a caller
 or test can override per-call):
-  OA_MONGO_URI   default mongodb://127.0.0.1:27017
-  OA_MONGO_DB    default office_assistant
+  VIDUSHI_MONGO_URI   default mongodb://127.0.0.1:27017
+  VIDUSHI_MONGO_DB    default vidushi_oa
 No secrets in code (local bind, no auth).
 """
 import os
@@ -12,16 +12,16 @@ import os
 from pymongo import MongoClient
 
 _DEFAULT_URI = "mongodb://127.0.0.1:27017"
-_DEFAULT_DB = "office_assistant"
+_DEFAULT_DB = "vidushi_oa"
 _client = None
 
 
 def _uri():
-    return os.environ.get("OA_MONGO_URI", _DEFAULT_URI)
+    return os.environ.get("VIDUSHI_MONGO_URI", _DEFAULT_URI)
 
 
 def _db_name():
-    return os.environ.get("OA_MONGO_DB", _DEFAULT_DB)
+    return os.environ.get("VIDUSHI_MONGO_DB", _DEFAULT_DB)
 
 
 def client():
@@ -33,7 +33,7 @@ def client():
 
 
 def db():
-    """The office_assistant database (name honours OA_MONGO_DB at call time)."""
+    """The office-assistant database (name honours VIDUSHI_MONGO_DB at call time)."""
     return client()[_db_name()]
 
 

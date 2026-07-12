@@ -17,8 +17,8 @@ still RED), so EVERY test here MUST fail: the table tests via ModuleNotFoundErro
 `import transitions`, and the `event`-verb tests because `store.py` has no `event`
 subparser (argparse rejects it) so nothing in Mongo is ever mutated.
 
-DATA SAFETY: every subprocess call points `OA_DATA_DIR` at an EMPTY tempdir (never the
-real repo `data/`) and `OA_MONGO_DB` at `office_assistant_test` (never the real DB).
+DATA SAFETY: every subprocess call points `VIDUSHI_DATA_DIR` at an EMPTY tempdir (never the
+real repo `data/`) and `VIDUSHI_MONGO_DB` at `vidushi_oa_test` (never the real DB).
 Requires a local mongod on 127.0.0.1:27017 (the office_assistant instance; CR-OA-001).
 """
 import json
@@ -96,7 +96,7 @@ class TransitionsTableTest(unittest.TestCase):
 class EventVerbTest(unittest.TestCase):
     """§S2 — `store.py event <type> <id> <event>` drives Mongo docs via the transition table."""
 
-    TEST_DB = "office_assistant_test"
+    TEST_DB = "vidushi_oa_test"
     COLLECTIONS = ["contacts", "invoices", "warranties", "cases", "products"]
 
     def setUp(self):
@@ -105,9 +105,9 @@ class EventVerbTest(unittest.TestCase):
         self.data_dir = tempfile.mkdtemp(prefix="oa-empty-data-")
 
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = self.TEST_DB
-        self.env["OA_DATA_DIR"] = self.data_dir
-        self.env["OA_FORMAT"] = "json"
+        self.env["VIDUSHI_MONGO_DB"] = self.TEST_DB
+        self.env["VIDUSHI_DATA_DIR"] = self.data_dir
+        self.env["VIDUSHI_FORMAT"] = "json"
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[self.TEST_DB]

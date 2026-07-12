@@ -32,7 +32,7 @@ Fields support dotted paths (e.g. source.email_id). Output is compact JSON on st
 import argparse, json, os, sys, datetime, re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DATA = os.environ.get("OA_DATA_DIR") or os.path.normpath(os.path.join(HERE, "..", "data"))
+DATA = os.environ.get("VIDUSHI_DATA_DIR") or os.path.normpath(os.path.join(HERE, "..", "data"))
 STORES = {"contacts": "vendor_contacts.jsonl", "invoices": "invoices.jsonl",
           "warranties": "warranties.jsonl", "cases": "support_cases.jsonl",
           "products": "product_catalogue.jsonl",
@@ -576,7 +576,7 @@ def cmd_validate(a):
 
 
 def cmd_import(a):
-    """Read each store's JSONL from DATA (honouring OA_DATA_DIR) and upsert every
+    """Read each store's JSONL from DATA (honouring VIDUSHI_DATA_DIR) and upsert every
     record into Mongo by `id` (idempotent — re-running creates no duplicates)."""
     import oa_mongo
     types = [a.type] if a.type else list(STORES)
@@ -605,7 +605,7 @@ def cmd_init(a):
 
 def cmd_snapshot(a):
     """Export each store's Mongo collection back to its JSONL file under DATA
-    (honouring OA_DATA_DIR). One JSON object per line, `_id` stripped, keys ordered
+    (honouring VIDUSHI_DATA_DIR). One JSON object per line, `_id` stripped, keys ordered
     `id` first then the rest sorted -> byte-identical output across repeated runs.
     Writes atomically (tmp file + os.replace)."""
     import oa_mongo
@@ -700,7 +700,7 @@ def main():
     # error with `usage:`. `-h`/`--help` still reaches argparse (handled there).
     global _FMT
     if len(sys.argv) == 1:
-        env = os.environ.get("OA_FORMAT")
+        env = os.environ.get("VIDUSHI_FORMAT")
         _FMT = env if env in ("toon", "json") else "toon"
         print("office_assistant store (scripts/store.py) — MongoDB-backed "
               "personal-admin data CLI. Rows needing attention:")
@@ -713,7 +713,7 @@ def main():
         if getattr(a, "json_out", False):            # --json read shortcut
             fmt_choice = "json"
         else:
-            env = os.environ.get("OA_FORMAT")
+            env = os.environ.get("VIDUSHI_FORMAT")
             fmt_choice = env if env in ("toon", "json") else "toon"   # env, else default; garbage env -> toon
     _FMT = fmt_choice
     a.func(a)

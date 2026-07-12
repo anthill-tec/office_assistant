@@ -12,7 +12,7 @@ Verifies the §S3 ACs for the write-side backend swap:
 
 Currently `add`/`update`/`rm`/`stats` still call `load()`/`save()` on the real
 `data/*.jsonl` files (Cycle A only ported `query`/`get`), so every test here MUST fail
-against a seeded `office_assistant_test` Mongo database until Cycle B's GREEN phase
+against a seeded `vidushi_oa_test` Mongo database until Cycle B's GREEN phase
 ports these four commands too.
 
 DATA SAFETY: the current write commands operate on the REAL `data/*.jsonl` files, so
@@ -41,9 +41,9 @@ sys.path.insert(0, SCRIPTS)
 
 
 class WritePathMongoTest(unittest.TestCase):
-    """§S3 — add/update/rm/stats write to Mongo (office_assistant_test), preserving CLI semantics."""
+    """§S3 — add/update/rm/stats write to Mongo (vidushi_oa_test), preserving CLI semantics."""
 
-    TEST_DB = "office_assistant_test"
+    TEST_DB = "vidushi_oa_test"
     COLLECTIONS = ["contacts", "invoices", "warranties", "cases", "products"]
 
     def setUp(self):
@@ -54,8 +54,8 @@ class WritePathMongoTest(unittest.TestCase):
             shutil.copy(f, os.path.join(self.backup_dir, os.path.basename(f)))
 
         self.env = dict(os.environ)
-        self.env["OA_MONGO_DB"] = self.TEST_DB
-        self.env["OA_FORMAT"] = "json"
+        self.env["VIDUSHI_MONGO_DB"] = self.TEST_DB
+        self.env["VIDUSHI_FORMAT"] = "json"
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[self.TEST_DB]
