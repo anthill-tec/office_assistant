@@ -127,7 +127,7 @@ DEFAULT_FIELDS = {
     "subscriptions": ["id", "provider", "disposition", "status", "renews"],
     "invoices": ["id", "vendor", "number", "amount", "date"],
     "warranties": ["id", "vendor", "product", "expiry", "status"],
-    "contacts": ["id", "vendor", "support_email", "status"],
+    "contacts": ["id", "vendor", "kind", "category"],
     "insurance": ["id", "insurer", "policy_no", "expiry", "status"],
     "cases": ["id", "vendor", "issue", "status"],
 }
@@ -663,7 +663,7 @@ def main():
     up = add_parser("update"); with_type(up); up.add_argument("id")
     up.add_argument("--json"); up.add_argument("--append-log", dest="append_log"); up.set_defaults(func=cmd_update)
     rm = add_parser("rm"); with_type(rm); rm.add_argument("id"); rm.set_defaults(func=cmd_rm)
-    st = add_parser("stats"); with_type(st); read_json(st); read_full(st); st.add_argument("--by"); st.set_defaults(func=cmd_stats)
+    st = add_parser("stats"); with_type(st); read_json(st); st.add_argument("--by"); st.set_defaults(func=cmd_stats)
 
     # tracking-state framework
     ss = add_parser("set-status"); with_type(ss)
@@ -677,7 +677,7 @@ def main():
     arv.set_defaults(func=cmd_action_resolve)
     da = add_parser("doc-add"); with_type(da); da.add_argument("id"); da.add_argument("asset_type"); da.add_argument("path")
     da.add_argument("--number"); da.add_argument("--date"); da.set_defaults(func=cmd_doc_add)
-    at = add_parser("attention"); at.add_argument("type", nargs="?", choices=STORES.keys()); read_json(at); read_full(at)
+    at = add_parser("attention"); at.add_argument("type", nargs="?", choices=STORES.keys()); read_json(at)
     at.set_defaults(func=cmd_attention)
     ws = add_parser("warranty-sweep"); ws.add_argument("--dry-run", action="store_true", dest="dry_run")
     ws.set_defaults(func=cmd_warranty_sweep)
@@ -685,7 +685,7 @@ def main():
     ds.set_defaults(func=cmd_due_sweep)
     ev = add_parser("event"); with_type(ev); ev.add_argument("id"); ev.add_argument("event")
     ev.set_defaults(func=cmd_event)
-    va = add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys()); read_json(va); read_full(va)
+    va = add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys()); read_json(va)
     va.set_defaults(func=cmd_validate)
     im = add_parser("import"); im.add_argument("type", nargs="?", choices=STORES.keys())
     im.set_defaults(func=cmd_import)
