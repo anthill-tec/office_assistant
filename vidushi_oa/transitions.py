@@ -33,7 +33,8 @@ TRANSITIONS = {
     ],
     "subscriptions": [
         {"from": "IN_PROGRESS", "event": "renewal-window", "to": "DUE", "owner": "agent",
-         "effects": [{"op": "open-action", "action": "cancel-before-charge", "owner": "user"}]},
+         "effects": [{"op": "open-action", "action": "cancel-before-charge", "owner": "user",
+                      "by_disposition": {"KEEP": "renewal-confirm"}}]},
         {"from": "DUE", "event": "renewed", "to": "IN_PROGRESS", "owner": "agent", "effects": []},
         {"from": "DUE", "event": "cancelled", "to": "COMPLETED", "owner": "user", "effects": []},
     ],
