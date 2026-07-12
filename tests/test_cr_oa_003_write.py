@@ -55,6 +55,7 @@ class WritePathMongoTest(unittest.TestCase):
 
         self.env = dict(os.environ)
         self.env["OA_MONGO_DB"] = self.TEST_DB
+        self.env["OA_FORMAT"] = "json"
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[self.TEST_DB]

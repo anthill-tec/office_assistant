@@ -52,6 +52,7 @@ class ReadPathMongoTest(unittest.TestCase):
     def setUp(self):
         self.env = dict(os.environ)
         self.env["OA_MONGO_DB"] = self.TEST_DB
+        self.env["OA_FORMAT"] = "json"
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         db = self.client[self.TEST_DB]
         db["invoices"].insert_many([dict(self.INVOICE_A), dict(self.INVOICE_B)])

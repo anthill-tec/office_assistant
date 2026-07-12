@@ -49,6 +49,7 @@ class SnapshotVerbTest(unittest.TestCase):
         self.env = dict(os.environ)
         self.env["OA_MONGO_DB"] = self.TEST_DB
         self.env["OA_DATA_DIR"] = self.tmpdir
+        self.env["OA_FORMAT"] = "json"
 
     def tearDown(self):
         self.client.drop_database(self.TEST_DB)

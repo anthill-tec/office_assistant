@@ -34,6 +34,7 @@ class ValidateVerbTest(unittest.TestCase):
     def setUp(self):
         self.env = dict(os.environ)
         self.env["OA_MONGO_DB"] = TEST_DB
+        self.env["OA_FORMAT"] = "json"
 
         init_result = subprocess.run(
             [sys.executable, STORE, "init"],
