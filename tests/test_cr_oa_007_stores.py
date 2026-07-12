@@ -148,6 +148,7 @@ class GenIdAnchorTest(unittest.TestCase):
         self.env = dict(os.environ)
         self.env["OA_MONGO_DB"] = TEST_DB
         self.env["OA_DATA_DIR"] = self.data_dir
+        self.env["OA_FORMAT"] = "json"
 
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[TEST_DB]
@@ -212,6 +213,7 @@ class ValidatorEnforcedTest(unittest.TestCase):
     def setUp(self):
         self.env = dict(os.environ)
         self.env["OA_MONGO_DB"] = TEST_DB
+        self.env["OA_FORMAT"] = "json"
         result = subprocess.run(
             [sys.executable, STORE, "init"], capture_output=True, text=True, env=self.env,
         )
@@ -277,6 +279,7 @@ class ValidateVerbTest(unittest.TestCase):
     def setUp(self):
         self.env = dict(os.environ)
         self.env["OA_MONGO_DB"] = TEST_DB
+        self.env["OA_FORMAT"] = "json"
         result = subprocess.run(
             [sys.executable, STORE, "init"], capture_output=True, text=True, env=self.env,
         )
@@ -338,6 +341,7 @@ class InvoiceExpandSubscriptionFkTest(unittest.TestCase):
     def setUp(self):
         self.env = dict(os.environ)
         self.env["OA_MONGO_DB"] = TEST_DB
+        self.env["OA_FORMAT"] = "json"
         self.client = pymongo.MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000)
         self.db = self.client[TEST_DB]
 

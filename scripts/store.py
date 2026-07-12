@@ -128,8 +128,19 @@ def expand(rec, fields):
     return rec
 
 
+# Resolved stdout encoding for the current invocation (set in main()); every
+# verb prints through out(). "toon" is the default; "json" preserves the exact
+# pre-CR compact JSON. Does NOT affect the data/*.jsonl snapshot writer, which
+# stays JSON for chezmoi.
+_FMT = "toon"
+
+
 def out(obj):
-    print(json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
+    if _FMT == "toon":
+        import oa_toon
+        print(oa_toon.to_toon(obj))
+    else:
+        print(json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
 
 
 def find(rows, rid):
@@ -560,9 +571,23 @@ def cmd_snapshot(a):
 def main():
     p = argparse.ArgumentParser(description="Office-assistant JSONL store")
     sub = p.add_subparsers(dest="cmd", required=True)
+    # Global --format toon|json (default toon), available AFTER every verb via a
+    # shared parent parser. Read verbs additionally accept a bare --json shortcut
+    # (write verbs already own --json for their input payload).
+    fmt = argparse.ArgumentParser(add_help=False)
+    fmt.add_argument("--format", choices=["toon", "json"], default=None, dest="format")
+
+    def add_parser(name, **kw):
+        return sub.add_parser(name, parents=[fmt], **kw)
+
     def with_type(sp):
         sp.add_argument("type", choices=STORES.keys())
-    q = sub.add_parser("query"); with_type(q)
+
+    def read_json(sp):
+        sp.add_argument("--json", action="store_true", dest="json_out",
+                        help="emit strict JSON instead of the default TOON")
+
+    q = add_parser("query"); with_type(q); read_json(q)
     q.add_argument("--where", action="append"); q.add_argument("--contains", action="append")
     q.add_argument("--after", action="append",
                    help="FIELD=YYYY-MM-DD: keep rows where ISO date FIELD >= value (inclusive); repeatable, dotted paths ok")
@@ -572,44 +597,54 @@ def main():
     q.add_argument("--filter", help="native MongoDB filter as a JSON object, AND-merged with the other flags")
     q.add_argument("--expand", help="comma list of FK fields to resolve inline (e.g. contact_id,invoice_id)")
     q.set_defaults(func=cmd_query)
-    g = sub.add_parser("get"); with_type(g); g.add_argument("id")
+    g = add_parser("get"); with_type(g); g.add_argument("id"); read_json(g)
     g.add_argument("--expand"); g.add_argument("--fields"); g.set_defaults(func=cmd_get)
-    ad = sub.add_parser("add"); with_type(ad); ad.add_argument("--json", required=True); ad.set_defaults(func=cmd_add)
-    up = sub.add_parser("update"); with_type(up); up.add_argument("id")
+    ad = add_parser("add"); with_type(ad); ad.add_argument("--json", required=True); ad.set_defaults(func=cmd_add)
+    up = add_parser("update"); with_type(up); up.add_argument("id")
     up.add_argument("--json"); up.add_argument("--append-log", dest="append_log"); up.set_defaults(func=cmd_update)
-    rm = sub.add_parser("rm"); with_type(rm); rm.add_argument("id"); rm.set_defaults(func=cmd_rm)
-    st = sub.add_parser("stats"); with_type(st); st.add_argument("--by"); st.set_defaults(func=cmd_stats)
+    rm = add_parser("rm"); with_type(rm); rm.add_argument("id"); rm.set_defaults(func=cmd_rm)
+    st = add_parser("stats"); with_type(st); read_json(st); st.add_argument("--by"); st.set_defaults(func=cmd_stats)
 
     # tracking-state framework
-    ss = sub.add_parser("set-status"); with_type(ss)
+    ss = add_parser("set-status"); with_type(ss)
     ss.add_argument("status", help="one of: " + " ".join(STATUSES))
     ss.add_argument("--id"); ss.add_argument("--where", action="append"); ss.add_argument("--contains", action="append")
     ss.set_defaults(func=cmd_set_status)
-    aa = sub.add_parser("action-add"); with_type(aa); aa.add_argument("id"); aa.add_argument("action")
+    aa = add_parser("action-add"); with_type(aa); aa.add_argument("id"); aa.add_argument("action")
     aa.add_argument("--detail"); aa.add_argument("--owner", choices=["user", "agent"]); aa.add_argument("--due")
     aa.set_defaults(func=cmd_action_add)
-    arv = sub.add_parser("action-resolve"); with_type(arv); arv.add_argument("id"); arv.add_argument("action")
+    arv = add_parser("action-resolve"); with_type(arv); arv.add_argument("id"); arv.add_argument("action")
     arv.set_defaults(func=cmd_action_resolve)
-    da = sub.add_parser("doc-add"); with_type(da); da.add_argument("id"); da.add_argument("asset_type"); da.add_argument("path")
+    da = add_parser("doc-add"); with_type(da); da.add_argument("id"); da.add_argument("asset_type"); da.add_argument("path")
     da.add_argument("--number"); da.add_argument("--date"); da.set_defaults(func=cmd_doc_add)
-    at = sub.add_parser("attention"); at.add_argument("type", nargs="?", choices=STORES.keys())
+    at = add_parser("attention"); at.add_argument("type", nargs="?", choices=STORES.keys()); read_json(at)
     at.set_defaults(func=cmd_attention)
-    ws = sub.add_parser("warranty-sweep"); ws.add_argument("--dry-run", action="store_true", dest="dry_run")
+    ws = add_parser("warranty-sweep"); ws.add_argument("--dry-run", action="store_true", dest="dry_run")
     ws.set_defaults(func=cmd_warranty_sweep)
-    ds = sub.add_parser("due-sweep"); ds.add_argument("--dry-run", action="store_true", dest="dry_run")
+    ds = add_parser("due-sweep"); ds.add_argument("--dry-run", action="store_true", dest="dry_run")
     ds.set_defaults(func=cmd_due_sweep)
-    ev = sub.add_parser("event"); with_type(ev); ev.add_argument("id"); ev.add_argument("event")
+    ev = add_parser("event"); with_type(ev); ev.add_argument("id"); ev.add_argument("event")
     ev.set_defaults(func=cmd_event)
-    va = sub.add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys())
+    va = add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys()); read_json(va)
     va.set_defaults(func=cmd_validate)
-    im = sub.add_parser("import"); im.add_argument("type", nargs="?", choices=STORES.keys())
+    im = add_parser("import"); im.add_argument("type", nargs="?", choices=STORES.keys())
     im.set_defaults(func=cmd_import)
-    sn = sub.add_parser("snapshot"); sn.add_argument("type", nargs="?", choices=STORES.keys())
+    sn = add_parser("snapshot"); sn.add_argument("type", nargs="?", choices=STORES.keys())
     sn.set_defaults(func=cmd_snapshot)
-    it = sub.add_parser("init"); it.set_defaults(func=cmd_init)
-    av = sub.add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
+    it = add_parser("init"); it.set_defaults(func=cmd_init)
+    av = add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
 
-    a = p.parse_args(); a.func(a)
+    a = p.parse_args()
+    global _FMT
+    fmt_choice = getattr(a, "format", None)          # explicit flag wins
+    if fmt_choice is None:
+        if getattr(a, "json_out", False):            # --json read shortcut
+            fmt_choice = "json"
+        else:
+            env = os.environ.get("OA_FORMAT")
+            fmt_choice = env if env in ("toon", "json") else "toon"   # env, else default; garbage env -> toon
+    _FMT = fmt_choice
+    a.func(a)
 
 
 if __name__ == "__main__":
