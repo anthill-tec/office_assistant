@@ -1,11 +1,11 @@
-# CR queue — office-assistant (OA)
+# CR queue — Vidushi OA (repo `office_assistant`, code `OA`)
 
 Single source of truth for Change-Request **process state**: status, dependencies, wave, and
 ordering. Pick the next `PENDING` CR whose dependencies are all `COMPLETED`. Status lives here —
 never inside a CR spec file.
 
-- **Design contract:** [`../research/PRD-lifecycle-domain-model.md`](../research/PRD-lifecycle-domain-model.md)
-- **Decision note:** [`../research/DN-persistence-mongodb.md`](../research/DN-persistence-mongodb.md)
+- **Design contracts:** [`PRD-lifecycle-domain-model.md`](../research/PRD-lifecycle-domain-model.md) (domain model) · [`PRD-distribution-release.md`](../research/PRD-distribution-release.md) (packaging + v0.1.0)
+- **Decision notes:** [`DN-persistence-mongodb.md`](../research/DN-persistence-mongodb.md) · [`DN-agent-interface-toon.md`](../research/DN-agent-interface-toon.md) · [`DN-packaging-distribution.md`](../research/DN-packaging-distribution.md)
 - **Canonical states:** `PENDING` · `IN_PROGRESS` · `COMPLETED` · `SUPERSEDED` · `DEFERRED`.
 
 ## Execution model — Solo single-orchestrator (no Mainline / parallel Tracks)
@@ -33,6 +33,23 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-008](CR-OA-008-docs-and-rules.md) | Docs & rules refresh | docs | COMPLETED (2026-07-12) | 001–007 | 4 |
 | [CR-OA-009](CR-OA-009-toon-output.md) | TOON output for the store CLI (AXI interface) | feature | COMPLETED (2026-07-12) | 003, 004, 005, 007 | 4 |
 | [CR-OA-010](CR-OA-010-axi-ergonomics.md) | AXI ergonomics — remaining principles (#2–#5, #7–#9) | feature | COMPLETED (2026-07-12) | 009 | 5 |
+| [CR-OA-011](CR-OA-011-packaging-rebrand.md) | Packaging + rebrand to Vidushi OA | feature | PENDING | 010 | 6 · v0.1.0 |
+| [CR-OA-012](CR-OA-012-unified-skill.md) | Unified `vidushi-oa` skill (cross-harness) | feature | PENDING | 011 | 6 · v0.1.0 |
+| [CR-OA-013](CR-OA-013-disposition-aware-sweep.md) | Disposition-aware `due-sweep` | feature | PENDING | 007 | 6 · v0.1.0 |
+| [CR-OA-014](CR-OA-014-aggregate-tally.md) | Aggregate tally in the TOON envelope | feature | PENDING | 010 | 6 · v0.1.0 |
+
+## v0.1.0 milestone — Wave 6
+
+CRs **011–014** constitute the **v0.1.0 release** (design contract:
+[`../research/PRD-distribution-release.md`](../research/PRD-distribution-release.md)): packaging + rebrand →
+**Vidushi OA**, the unified cross-harness skill, and the two approved AXI refinements (disposition-aware
+`due-sweep`, aggregate tally). **Order:** 011 → 012 (the skill needs the package), with 013 + 014
+(independent store refinements) runnable any time after their deps. Cut **v0.1.0** once all four merge.
+
+- **Pending decision — license (DN §6):** OSS-vs-private gates CI/CD *and* a public PyPI publish. v0.1.0 can
+  ship **privately** (git-install) and go public later.
+- **Beyond v0.1.0 (roadmap, not yet CRs):** reporting/export verb · 3rd mailbox (Yahoo — roll-our-own) ·
+  attention TUI (needs a storyboard) · CI/CD (after OSS) · MCP wrapper (only if a non-CLI harness needs it).
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
