@@ -694,8 +694,20 @@ def main():
     it = add_parser("init"); it.set_defaults(func=cmd_init)
     av = add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
 
-    a = p.parse_args()
+    # Content-first no-arg path (S6/AXI #8): a truly-empty argv (just the
+    # program name) prints live data — a one-line description + the executable
+    # path token, then the `attention` worklist — instead of letting argparse
+    # error with `usage:`. `-h`/`--help` still reaches argparse (handled there).
     global _FMT
+    if len(sys.argv) == 1:
+        env = os.environ.get("OA_FORMAT")
+        _FMT = env if env in ("toon", "json") else "toon"
+        print("office_assistant store (scripts/store.py) — MongoDB-backed "
+              "personal-admin data CLI. Rows needing attention:")
+        cmd_attention(argparse.Namespace(type=None))
+        return
+
+    a = p.parse_args()
     fmt_choice = getattr(a, "format", None)          # explicit flag wins
     if fmt_choice is None:
         if getattr(a, "json_out", False):            # --json read shortcut
