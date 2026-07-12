@@ -118,6 +118,43 @@ def project(rec, fields):
     return rec if not fields else {f: getp(rec, f) for f in fields}
 
 
+# CR-OA-010 #2 — per-store minimal default field set for TOON row output. When a
+# read verb runs in TOON with neither --fields nor --full, rows are projected to
+# these identifying columns (id first) to keep the token cost low. `id` is always
+# included. A default key missing from a given doc is simply skipped.
+DEFAULT_FIELDS = {
+    "products": ["id", "product", "manufacturer", "category"],
+    "subscriptions": ["id", "provider", "disposition", "status", "renews"],
+    "invoices": ["id", "vendor", "number", "amount", "date"],
+    "warranties": ["id", "vendor", "product", "expiry", "status"],
+    "contacts": ["id", "vendor", "support_email", "status"],
+    "insurance": ["id", "insurer", "policy_no", "expiry", "status"],
+    "cases": ["id", "vendor", "issue", "status"],
+}
+
+# CR-OA-010 #3 — TOON string values longer than this cap are truncated to
+# `<first CAP chars>…(+N chars)` so a single long field can't blow up a row.
+_TRUNC_CAP = 80
+
+
+def _truncate(v):
+    """Truncate an over-long string to the CAP with a `…(+N chars)` size hint;
+    non-strings and short strings pass through untouched."""
+    if isinstance(v, str) and len(v) > _TRUNC_CAP:
+        return v[:_TRUNC_CAP] + f"…(+{len(v) - _TRUNC_CAP} chars)"
+    return v
+
+
+def _toon_shape(rec, type_):
+    """TOON-only row shaping (CR-OA-010 #2 + #3): project to DEFAULT_FIELDS for
+    the store type (keeping the declared order, skipping absent keys), then
+    truncate each long string value. Callers gate this on
+    `_FMT == "toon" and not --full and not --fields`."""
+    keys = DEFAULT_FIELDS.get(type_)
+    shaped = {k: rec[k] for k in keys if k in rec} if keys else dict(rec)
+    return {k: _truncate(v) for k, v in shaped.items()}
+
+
 def expand(rec, fields):
     import oa_mongo
     for f in fields:
@@ -234,7 +271,10 @@ def cmd_query(a):
         exp = a.expand.split(",")
         docs = [expand(r, exp) for r in docs]
     fields = a.fields.split(",") if a.fields else None
-    out([project(r, fields) for r in docs])
+    rows = [project(r, fields) for r in docs]
+    if _FMT == "toon" and not getattr(a, "full", False) and not fields:
+        rows = [_toon_shape(r, a.type) for r in rows]
+    out(rows)
 
 
 def cmd_get(a):
@@ -246,6 +286,8 @@ def cmd_get(a):
         r = expand(r, a.expand.split(","))
     if a.fields:
         r = project(r, a.fields.split(","))
+    elif _FMT == "toon" and not getattr(a, "full", False):
+        r = _toon_shape(r, a.type)
     out(r)
 
 
@@ -587,7 +629,11 @@ def main():
         sp.add_argument("--json", action="store_true", dest="json_out",
                         help="emit strict JSON instead of the default TOON")
 
-    q = add_parser("query"); with_type(q); read_json(q)
+    def read_full(sp):
+        sp.add_argument("--full", action="store_true", dest="full",
+                        help="TOON: show every field, untruncated (disable the default minimal projection)")
+
+    q = add_parser("query"); with_type(q); read_json(q); read_full(q)
     q.add_argument("--where", action="append"); q.add_argument("--contains", action="append")
     q.add_argument("--after", action="append",
                    help="FIELD=YYYY-MM-DD: keep rows where ISO date FIELD >= value (inclusive); repeatable, dotted paths ok")
@@ -597,13 +643,13 @@ def main():
     q.add_argument("--filter", help="native MongoDB filter as a JSON object, AND-merged with the other flags")
     q.add_argument("--expand", help="comma list of FK fields to resolve inline (e.g. contact_id,invoice_id)")
     q.set_defaults(func=cmd_query)
-    g = add_parser("get"); with_type(g); g.add_argument("id"); read_json(g)
+    g = add_parser("get"); with_type(g); g.add_argument("id"); read_json(g); read_full(g)
     g.add_argument("--expand"); g.add_argument("--fields"); g.set_defaults(func=cmd_get)
     ad = add_parser("add"); with_type(ad); ad.add_argument("--json", required=True); ad.set_defaults(func=cmd_add)
     up = add_parser("update"); with_type(up); up.add_argument("id")
     up.add_argument("--json"); up.add_argument("--append-log", dest="append_log"); up.set_defaults(func=cmd_update)
     rm = add_parser("rm"); with_type(rm); rm.add_argument("id"); rm.set_defaults(func=cmd_rm)
-    st = add_parser("stats"); with_type(st); read_json(st); st.add_argument("--by"); st.set_defaults(func=cmd_stats)
+    st = add_parser("stats"); with_type(st); read_json(st); read_full(st); st.add_argument("--by"); st.set_defaults(func=cmd_stats)
 
     # tracking-state framework
     ss = add_parser("set-status"); with_type(ss)
@@ -617,7 +663,7 @@ def main():
     arv.set_defaults(func=cmd_action_resolve)
     da = add_parser("doc-add"); with_type(da); da.add_argument("id"); da.add_argument("asset_type"); da.add_argument("path")
     da.add_argument("--number"); da.add_argument("--date"); da.set_defaults(func=cmd_doc_add)
-    at = add_parser("attention"); at.add_argument("type", nargs="?", choices=STORES.keys()); read_json(at)
+    at = add_parser("attention"); at.add_argument("type", nargs="?", choices=STORES.keys()); read_json(at); read_full(at)
     at.set_defaults(func=cmd_attention)
     ws = add_parser("warranty-sweep"); ws.add_argument("--dry-run", action="store_true", dest="dry_run")
     ws.set_defaults(func=cmd_warranty_sweep)
@@ -625,7 +671,7 @@ def main():
     ds.set_defaults(func=cmd_due_sweep)
     ev = add_parser("event"); with_type(ev); ev.add_argument("id"); ev.add_argument("event")
     ev.set_defaults(func=cmd_event)
-    va = add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys()); read_json(va)
+    va = add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys()); read_json(va); read_full(va)
     va.set_defaults(func=cmd_validate)
     im = add_parser("import"); im.add_argument("type", nargs="?", choices=STORES.keys())
     im.set_defaults(func=cmd_import)
