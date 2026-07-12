@@ -1,6 +1,6 @@
 # CR-OA-010 — AXI ergonomics (remaining principles)
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-12 on feature/CR-OA-010-axi-ergonomics)
 **Type:** feature
 **Priority:** Low
 **Depends on:** 009
@@ -54,13 +54,13 @@ Commands append a **concise** `next[]` block of suggested follow-up command temp
 (e.g. after a `query` that surfaces an OPEN action → an `action-resolve …` template). Kept terse.
 
 ## Acceptance criteria
-- [ ] §S1 in **TOON**, `query products` (no flags) shows only the `DEFAULT_FIELDS` for products; `--full` shows all fields; `--fields` overrides. Under `--json`/`OA_FORMAT=json` the same query returns the **full** documents (unchanged).
-- [ ] §S2 in **TOON**, a record with a long `note` is truncated with a `(+N chars)` hint by default; `--full` shows the whole field. Under `--json` the field is never truncated.
-- [ ] §S3 the **TOON** `query <type>` output carries a `count` equal to the number of results (matching `stats <type>.total` for an unfiltered query); the `--json` output is a bare array (no `count` wrapper).
-- [ ] §S4 in **TOON**, a query matching nothing shows an explicit `count: 0` marker; under `--json` it stays a bare `[]`.
-- [ ] §S5 the session hook (or skill) emits the `attention` worklist; installation is documented and testable.
-- [ ] §S6 `store.py` with no args exits 0 and prints the `attention` summary + path + one-line description (not usage); `store.py --help` still shows help.
-- [ ] §S7 in **TOON**, a read verb's output ends with a concise `next[]` block of relevant command templates; the `--json` output has no `next[]`.
+- [x] §S1 in **TOON**, `query products` (no flags) shows only the `DEFAULT_FIELDS` for products; `--full` shows all fields; `--fields` overrides. Under `--json`/`OA_FORMAT=json` the same query returns the **full** documents (unchanged).
+- [x] §S2 in **TOON**, a record with a long `note` is truncated with a `(+N chars)` hint by default; `--full` shows the whole field. Under `--json` the field is never truncated.
+- [x] §S3 the **TOON** `query <type>` output carries a `count` equal to the number of results (matching `stats <type>.total` for an unfiltered query); the `--json` output is a bare array (no `count` wrapper).
+- [x] §S4 in **TOON**, a query matching nothing shows an explicit `count: 0` marker; under `--json` it stays a bare `[]`.
+- [x] §S5 the session hook (or skill) emits the `attention` worklist; installation is documented and testable.
+- [x] §S6 `store.py` with no args exits 0 and prints the `attention` summary + path + one-line description (not usage); `store.py --help` still shows help.
+- [x] §S7 in **TOON**, a read verb's output ends with a concise `next[]` block of relevant command templates; the `--json` output has no `next[]`.
 - [ ] **(contract)** `--json` / `OA_FORMAT=json` output is **unchanged** by this CR for every read verb — a clean, full-data JSON array, no envelope / `count` / `next[]` / truncation — so the reconciled test suite needs no further edits.
 
 ## Estimated size

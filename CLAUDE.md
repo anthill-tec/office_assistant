@@ -49,7 +49,7 @@ python3 scripts/store.py snapshot [<type>]                # Mongo -> data/*.json
 
 **Ambient-context hook (AXI #7):** `.claude/settings.json` registers a Claude Code **SessionStart** hook that runs bare `store.py` (no verb — read-only) so the **attention** worklist (rows with an OPEN action or a status needing attention) is surfaced automatically at the start of every session, before the agent acts.
 
-IDs are auto-generated from anchor fields (`ven_<vendor>`, `doc_<vendor>_<number|date>`, `war_<vendor>_<product>`, `case_<vendor>`, `prod_<manufacturer>_<model>`, `sub_<provider>`, `ins_<insurer>_<policy_no>`). Output is **TOON by default** (token-efficient — pass `--json` or set `OA_FORMAT=json` for JSON); warnings to stderr. The shell here is **fish** — `VAR=...` assignment fails; use full paths or `set`.
+IDs are auto-generated from anchor fields (`ven_<vendor>`, `doc_<vendor>_<number|date>`, `war_<vendor>_<product>`, `case_<vendor>`, `prod_<manufacturer>_<model>`, `sub_<provider>`, `ins_<insurer>_<policy_no>`). Output is **TOON by default** (token-efficient — `query` is enveloped `{count, results, next}` with minimal default fields + `…(+N chars)` truncation; `--full` shows all fields untruncated; `--json`/`OA_FORMAT=json` gives a clean full JSON array). Bare `store.py` (no verb) prints the `attention` worklist. Warnings to stderr. The shell here is **fish** — `VAR=...` assignment fails; use full paths or `set`.
 
 ## Architecture (the big picture)
 
