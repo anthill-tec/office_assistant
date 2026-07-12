@@ -575,7 +575,7 @@ def main():
     # shared parent parser. Read verbs additionally accept a bare --json shortcut
     # (write verbs already own --json for their input payload).
     fmt = argparse.ArgumentParser(add_help=False)
-    fmt.add_argument("--format", choices=["toon", "json"], default="toon", dest="format")
+    fmt.add_argument("--format", choices=["toon", "json"], default=None, dest="format")
 
     def add_parser(name, **kw):
         return sub.add_parser(name, parents=[fmt], **kw)
@@ -636,7 +636,14 @@ def main():
 
     a = p.parse_args()
     global _FMT
-    _FMT = "json" if getattr(a, "json_out", False) else getattr(a, "format", "toon")
+    fmt_choice = getattr(a, "format", None)          # explicit flag wins
+    if fmt_choice is None:
+        if getattr(a, "json_out", False):            # --json read shortcut
+            fmt_choice = "json"
+        else:
+            env = os.environ.get("OA_FORMAT")
+            fmt_choice = env if env in ("toon", "json") else "toon"   # env, else default; garbage env -> toon
+    _FMT = fmt_choice
     a.func(a)
 
 

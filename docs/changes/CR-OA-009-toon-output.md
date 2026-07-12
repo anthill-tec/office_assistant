@@ -19,7 +19,7 @@ unbuilt stub — see the DN). This is the AXI stance: an agent-ergonomic CLI, no
 
 ## Scope
 
-### §S1 `scripts/toon.py` — the encoder seam
+### §S1 `scripts/oa_toon.py` — the encoder seam
 A thin shim over `python-toon`: `to_toon(obj) -> str` (and a symmetric `from_toon(s) -> obj` for tests /
 round-trip). Isolates the one dependency behind our own module so it can be swapped or vendored later
 without touching call sites. `python-toon` is declared as a project dependency, pinned compatible
@@ -33,7 +33,7 @@ reads (`query`, `get`, `stats`, `attention`, `validate`) *and* writes (`add`, `u
 
 ## Acceptance criteria
 
-- [ ] §S1 `scripts/toon.py` imports cleanly; `to_toon([{…}])` returns a TOON string and
+- [ ] §S1 `scripts/oa_toon.py` imports cleanly; `to_toon([{…}])` returns a TOON string and
   `from_toon(to_toon(x)) == x` for the store's shapes; `python-toon` is pinned `>=0.1.3,<0.2` in the
   project's dependency record.
 - [ ] §S2 `store.py query subscriptions --fields id,provider,disposition,status,renews` with no
@@ -44,7 +44,7 @@ reads (`query`, `get`, `stats`, `attention`, `validate`) *and* writes (`add`, `u
 - [ ] §S2 A write verb (`add`/`set-status`) emits a **TOON** status object by default and a JSON one
   under `--json` — i.e. `--format` is honored on writes too, not reads-only.
 - [ ] §S2 (caller) `--format` is a real global argparse option with `default="toon"`; grep confirms the
-  read *and* write verbs route stdout through the `toon.py` seam rather than a bare `json.dumps`.
+  read *and* write verbs route stdout through the `oa_toon.py` seam rather than a bare `json.dumps`.
 
 ## Estimated size
 
@@ -52,7 +52,7 @@ M — one shim module + threading a `--format` switch through the CLI's single o
 
 ## Risk
 
-`python-toon` is v0.1.x/beta — mitigated by the `toon.py` seam, the compatible pin, and the permanent
+`python-toon` is v0.1.x/beta — mitigated by the `oa_toon.py` seam, the compatible pin, and the permanent
 `--json` fallback (a bad release degrades to JSON, never bricks the store). See the DN.
 
 ## Non-goals
