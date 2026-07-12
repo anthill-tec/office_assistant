@@ -17,6 +17,7 @@ voa = "vidushi_oa.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["vidushi_oa"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"vidushi_oa/schema" = "vidushi_oa/schema"
+# `packages` already bundles vidushi_oa/schema/*.json; `artifacts` just pins the
+# packaging intent for the schema validators (a pattern set, not a source->dest
+# map, so it can't raise the force-include "second file being added" error).
+artifacts = ["vidushi_oa/schema/*.json"]

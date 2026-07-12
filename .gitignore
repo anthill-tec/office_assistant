@@ -27,10 +27,17 @@ Thumbs.db
 *.swp
 *~
 
+# Kiro editor
+/.kiro/
+
 # Python
 __pycache__/
 *.py[cod]
 .venv/
+
+# Python build output (wheels/sdists, packaging metadata)
+/dist/
+*.egg-info/
 
 # Local env (Crucible project key) + test artifacts
 .env

@@ -63,7 +63,7 @@ class RenameHardCutTest(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp(prefix="oa-cr011a-rename-")
 
     def tearDown(self):
-        for db_name in (TEST_DB, "oa_probe", "vidushi_oa_probe", NEW_DEFAULT_DB):
+        for db_name in (TEST_DB, "oa_probe", "vidushi_oa_probe"):
             self.client.drop_database(db_name)
         self.client.close()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
