@@ -154,9 +154,11 @@ silent, warranty-window risk). An RMA parcel in transit hands to the purchase do
 **Deep-sweep** is a **mode** of this skill: a heavy, autonomous, **read-only** cross-mailbox pass
 over both Fastmail and Gmail (subscriptions / purchases / customs / invoices / warranties / general
 triage) that returns **structured findings + recommended actions** and **mutates nothing** — no
-send, delete, archive, file/move, label, pay, calendar write, or store/memory write. The main
-thread then executes any side effects (persist via `voa`, create reminders, draft mail). Because it
-is a **mode**, it ports across harnesses — a skill mode travels where a separate agent would not.
+send, **reply, draft**, delete/trash, archive, file/move (`update_email`), label, **mark-read**,
+pay, calendar write (`create_event`/`compose_event`), or store/memory/file write. If it cannot do
+something read-only, it **says so and stops — it never improvises a workaround that writes**. The
+main thread then executes any side effects (persist via `voa`, create reminders, **draft** mail).
+Because it is a **mode**, it ports across harnesses — a skill mode travels where a separate agent would not.
 
 In **Claude Code** the deep-sweep mode may **optionally** be dispatched as a subagent (the
 folded-in `inbox-analyst`) **under the hood** as a context-saving optimisation — an optional
