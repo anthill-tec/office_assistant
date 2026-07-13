@@ -43,6 +43,40 @@ reports violations; `import` / `snapshot` move data between `data/*.jsonl` and M
 `127.0.0.1:27017` db `vidushi_oa`, overridable via `VIDUSHI_MONGO_URI` / `VIDUSHI_MONGO_DB`
 (`VIDUSHI_DATA_DIR` relocates the snapshot/import dir).
 
+## Release gate (run BEFORE `git flow release finish`)
+
+The pre-finish gate validates the **shipped artifacts**, not the source tree, so it catches what the
+unit suite can't. It's the **generic, cross-project** ecosystem tool
+`~/.claude/scripts/skill-release-gate.py`; this repo just declares its specifics in a standalone
+`.skill-release.toml`. Run it on the release branch — a non-zero exit means
+**do not finish the release**.
+
+```bash
+python3 ~/.claude/scripts/skill-release-gate.py --project-dir .
+```
+
+Phases (each auto-skips when its config is absent):
+1. **Skill-bundle conformance** — wraps the official **`agentskills validate`** (`pip install
+   skills-ref`; auto-provisioned in a throwaway venv if absent) over every `skills/<name>/SKILL.md`,
+   validating against the Agent Skills standard ([agentskills.io](https://agentskills.io/specification))
+   + the Vercel `npx skills` flat layout.
+2. **Engine build + packaging** — `python -m build --wheel`; asserts the `voa` entry point, that the
+   7 schema validators are bundled, and no stray `oa` entry point.
+3. **Clean-install smoke** — installs the wheel into a fresh venv; confirms `voa` runs and imports
+   from site-packages (neutral cwd).
+4. **Lifecycle + AXI conformance** — declarative `[[check]]` steps (in `.skill-release.toml`) run
+   against the installed `voa` over a **throwaway** Mongo DB (`setup → add → due-sweep → attention → validate`),
+   plus the 10 [axi.md](https://axi.md) principles + the decision-B `--json` contract.
+
+Nothing touches the live `vidushi_oa` store (throwaway DB + venv, cleaned up on exit). Self-test the
+gate with `SKILLGATE_SOON=2999-01-01 python3 ~/.claude/scripts/skill-release-gate.py --project-dir .`
+— the out-of-window renewal makes `due-sweep` skip, so the gate must FAIL (exit 1).
+
+**Authoring a new skill** (the init counterpart to this gate): use the **skill-creator** skill
+(anthropics/skills) to scaffold it — conformant frontmatter, progressive-disclosure layout
+(`references/`+`scripts/`+`assets/`), and `python -m scripts.package_skill <dir>` to bundle a
+distributable `.skill` file. skill-creator *authors*; `agentskills validate` (this gate) *checks*.
+
 ## Conventions
 - One concern per call; let the script do the filtering — don't pull the whole store back.
 - `acct` is `personal` or `business` (business = bought on `antojk@anthilllabs.in`, usually GST).
