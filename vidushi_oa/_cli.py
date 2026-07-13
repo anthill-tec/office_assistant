@@ -493,7 +493,12 @@ def _apply_transition(coll, doc, tr):
     for effect in tr.get("effects", []):
         op = effect.get("op")
         if op == "open-action":
-            act = {"action": effect.get("action"), "status": "OPEN", "opened": now}
+            slug = effect.get("action")
+            by_disp = effect.get("by_disposition")
+            if by_disp:
+                disp = str(doc.get("disposition") or "").upper()
+                slug = by_disp.get(disp, slug)
+            act = {"action": slug, "status": "OPEN", "opened": now}
             if effect.get("owner"):  act["owner"] = effect["owner"]
             if effect.get("detail"): act["detail"] = effect["detail"]
             pushes.append(act)

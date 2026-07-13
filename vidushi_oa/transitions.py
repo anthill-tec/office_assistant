@@ -8,9 +8,14 @@
 
 An effect is one of:
 
-    {"op": "open-action",    "action": <slug>, "owner": "user"|"agent", "detail"?: str}
+    {"op": "open-action",    "action": <slug>, "owner": "user"|"agent", "detail"?: str,
+                             "by_disposition"?: {<UPPER-CASE disposition>: <slug>}}
     {"op": "resolve-action", "action": <slug>}
     {"op": "require-doc",    "type": <slug>}
+
+`by_disposition` (optional, open-action only) overrides the opened action's slug
+when the doc's `disposition` (upper-cased) matches a key — e.g. a subscriptions
+`renewal-window` opens `renewal-confirm` for a KEEP sub, else `cancel-before-charge`.
 
 `store.py event <type> <id> <event>` looks up the doc's current `status` in the
 table (via `find_transition`), applies the matching transition (setting `status`
@@ -33,7 +38,8 @@ TRANSITIONS = {
     ],
     "subscriptions": [
         {"from": "IN_PROGRESS", "event": "renewal-window", "to": "DUE", "owner": "agent",
-         "effects": [{"op": "open-action", "action": "cancel-before-charge", "owner": "user"}]},
+         "effects": [{"op": "open-action", "action": "cancel-before-charge", "owner": "user",
+                      "by_disposition": {"KEEP": "renewal-confirm"}}]},
         {"from": "DUE", "event": "renewed", "to": "IN_PROGRESS", "owner": "agent", "effects": []},
         {"from": "DUE", "event": "cancelled", "to": "COMPLETED", "owner": "user", "effects": []},
     ],
