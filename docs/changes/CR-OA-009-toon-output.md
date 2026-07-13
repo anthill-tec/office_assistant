@@ -7,7 +7,7 @@
 **Labels:** axi, toon, interface, cli
 **Phase:** Wave 4
 **Design reference:** PRD §8 (agent interface) · [DN-agent-interface-toon.md](../research/DN-agent-interface-toon.md)
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 **Supersedes:** the MCP-server scope (dropped — see the DN)
 
 ## Context

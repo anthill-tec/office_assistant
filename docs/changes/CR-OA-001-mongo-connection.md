@@ -7,7 +7,7 @@
 **Labels:** mongo, infra
 **Phase:** Wave 1
 **Design reference:** docs/research/DN-persistence-mongodb.md (Fixed choices); PRD §8
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
 

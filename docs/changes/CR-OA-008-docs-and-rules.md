@@ -7,7 +7,7 @@
 **Labels:** docs
 **Phase:** Wave 4
 **Design reference:** DN (consequences: Mongo primary, pymongo dep, snapshot versioning)
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
 

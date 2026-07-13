@@ -7,7 +7,7 @@
 **Labels:** packaging, rebrand, rename, migration, release, v0.1.0
 **Phase:** Wave 6 (v0.1.0)
 **Design reference:** PRD-distribution-release §1–§3 · [DN-packaging-distribution.md](../research/DN-packaging-distribution.md) (Decisions 4, 5)
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
 

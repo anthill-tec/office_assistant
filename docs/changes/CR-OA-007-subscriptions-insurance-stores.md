@@ -7,7 +7,7 @@
 **Labels:** mongo, new-store, migration
 **Phase:** Wave 3
 **Design reference:** PRD §2, §3, §6 (recurring domains, new stores, FK `subscription_id`)
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
 

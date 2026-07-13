@@ -7,7 +7,7 @@
 **Labels:** mongo, schema, validation
 **Phase:** Wave 1
 **Design reference:** PRD §3–§5 (status vocabulary, actions[], documents[]); DN (schema+validation)
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
 

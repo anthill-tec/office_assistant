@@ -1,7 +1,7 @@
 # DN — Persistence: JSONL → MongoDB, and the backend-owned state machine
 
 > **Type:** DN (design note) · **Status:** ACCEPTED
-> **Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant) · 2026-07-11
+> **Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant) · 2026-07-11
 > **Informs:** CR-OA-001 … CR-OA-009 · **Design contract:** [`PRD-lifecycle-domain-model.md`](PRD-lifecycle-domain-model.md)
 
 Captures the design rationale behind moving the store from flat JSONL + a stdlib CLI to MongoDB,

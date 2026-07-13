@@ -7,7 +7,7 @@
 **Labels:** axi, toon, ergonomics, v0.1.0
 **Phase:** Wave 6 (v0.1.0)
 **Design reference:** PRD-distribution-release §5 · CR-OA-010 §S3 (the envelope) · axi.md #4
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
 

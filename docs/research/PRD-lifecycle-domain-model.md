@@ -1,7 +1,7 @@
 # Personal Asset & Subscription Lifecycle — Domain Model
 
 > **Type:** PRD (design contract) · **Status:** ACTIVE
-> **Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant) · 2026-07-11
+> **Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant) · 2026-07-11
 >
 > The authoritative WHY + WHAT for the asset & subscription lifecycle framework. CRs cite this;
 > they do not re-derive design. The persistence choice + rationale live in

@@ -1,7 +1,7 @@
 # DN — Packaging & cross-harness distribution (Vidushi OA)
 
 **Status:** Accepted (2026-07-12) — all decisions confirmed by the user, incl. §4 full rename + §6 license
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 **Related:** [PRD-distribution-release.md](PRD-distribution-release.md) · [DN-agent-interface-toon.md](DN-agent-interface-toon.md)
 
 ## Context

@@ -2,7 +2,7 @@
 
 **Status:** Accepted (2026-07-12)
 **Supersedes:** the "MCP interface" direction in PRD §8 and the original CR-OA-009 scope
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 **Related:** [PRD §8](PRD-lifecycle-domain-model.md) · [CR-OA-009](../changes/CR-OA-009-toon-output.md)
 
 ## Context
