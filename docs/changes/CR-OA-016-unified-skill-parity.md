@@ -6,7 +6,7 @@
 **Depends on:** 012, 015
 **Labels:** skill, distribution, supersede, parity
 **Phase:** Wave 7 (unified-skill parity)
-**Design reference:** [DN-purchases-persistence.md](../research/DN-purchases-persistence.md) · PRD-lifecycle-domain-model §3 · CR-OA-012 (the skill this completes)
+**Design reference:** [DN-purchases-persistence.md](../research/DN-purchases-persistence.md) · [DN-packaging-distribution.md](../research/DN-packaging-distribution.md) · PRD-lifecycle-domain-model §3 · CR-OA-012 (the skill this completes)
 **Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
@@ -56,12 +56,20 @@ keeps `SKILL.md` under the ~500-line guideline), linked from the body:
 - `references/report-templates.md` — the per-domain report skeletons + urgency ladders + the invoice
   retrieval-tier order + the expense/tax (sum-by-`acct`/period/GST) view.
 
-### §S5 Formal supersession
+### §S5 Formal supersession — replace by install, not by roster edit
 `CLAUDE.md` "Vidushi OA toolkit — roles" and `README.md` present the unified `vidushi-oa` skill as
-the single installed role; the seven legacy `~/.claude/skills/` skills + the `inbox-analyst` agent
-are marked **deprecated / decommissioned** with a one-line migration note (the deep-sweep mode
-replaces the agent; the legacy files remain under `~/.claude/` outside the repo until the user
-prunes them).
+the single role and document the **replacement path**: install the bundle (§S6), verify it, then
+remove the seven legacy `~/.claude/skills/` skills + the `inbox-analyst` agent (the deep-sweep mode
+replaces the agent). Supersession is thus a real swap — install the bundle over the legacy set — not
+a roster note alone.
+
+### §S6 Package & formal install as a vercel/skills bundle
+The `skills/vidushi-oa/` bundle (SKILL.md + `references/`) installs into **any agentic harness** via
+the vercel/skills standard — `npx skills add <source>` pointed at the repo's `skills/vidushi-oa`
+(no `skill.json` / manifest required; the SKILL.md defines the skill and `references/` travel with
+it). Document the two-step install in `README.md` + `scripts/README.md`: (1) the engine prerequisite
+`pip install vidushi-oa` then `voa setup`; (2) `npx skills add …` to drop the skill into the target
+harness's skills dir. The existing `agentskills validate` gate guards the bundle shape.
 
 ## Acceptance criteria
 
@@ -80,18 +88,22 @@ prunes them).
 - [ ] Restored-content greps pass: a carrier name (`Delhivery`) and `create_event` appear under `references/`, and the `compose_event` caveat text is present.
 
 ### §S5
-- [ ] `CLAUDE.md` + `README.md` present the unified `vidushi-oa` skill as the role set; a deprecation/migration note for the seven legacy skills + `inbox-analyst` exists.
+- [ ] `CLAUDE.md` + `README.md` present the unified `vidushi-oa` skill as the role set and document the replacement path (install the bundle → verify → remove the legacy skills + `inbox-analyst`).
 - [ ] Fidelity: every legacy capability maps to a domain section or a `references/` file — the coverage matrix in this Scope leaves no legacy feature unaccounted for.
 
+### §S6
+- [ ] `README.md` + `scripts/README.md` document the exact two-step install: `pip install vidushi-oa` + `voa setup` (engine), then `npx skills add <…/skills/vidushi-oa>` (skill).
+- [ ] The bundle installs as one unit: `skills/vidushi-oa/references/*.md` sit inside the skill dir so `npx skills add` carries them; `agentskills validate skills/vidushi-oa` exits `0`.
+
 ## Estimated size
-M — prose + five reference files + two roster docs; grep/validate-gated. No package code (the
-`orders` store is CR-OA-015).
+M — prose + five reference files + two roster docs + the vercel/skills install path; grep/validate-gated.
+No package code (the `orders` store is CR-OA-015).
 
 ## Risk
 Re-bloating `SKILL.md` past the ~500-line guideline — mitigated by pushing specifics to
 `references/`. Losing a nuance again — mitigated by the fidelity AC (§S5) + grep gates.
-Supersession is a doc/roster change; the legacy skill files physically remain in `~/.claude/skills/`
-(outside the repo) until the user removes them.
+Supersession still needs the user to run the install + prune the legacy `~/.claude/skills/` files
+(outside the repo) — the CR documents the exact steps so it's a one-time mechanical swap.
 
 ## Non-goals
 Deleting the legacy skill files from `~/.claude/` (outside the repo; the user prunes them);
