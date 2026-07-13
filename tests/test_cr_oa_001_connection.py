@@ -21,29 +21,30 @@ import store     # noqa: E402
 
 class TestConnection(unittest.TestCase):
     def test_db_defaults_to_office_assistant(self):
-        self.assertEqual(oa_mongo.db().name, "office_assistant")
+        self.assertEqual(oa_mongo.db().name, "vidushi_oa")
 
     def test_client_pinned_to_27017(self):
         oa_mongo.client().admin.command("ping")
         self.assertEqual(oa_mongo.client().address, ("127.0.0.1", 27017))
 
     def test_env_override_db_name(self):
-        os.environ["OA_MONGO_DB"] = "office_assistant_test"
+        os.environ["VIDUSHI_MONGO_DB"] = "vidushi_oa_test"
         try:
-            self.assertEqual(oa_mongo.db().name, "office_assistant_test")
+            self.assertEqual(oa_mongo.db().name, "vidushi_oa_test")
         finally:
-            del os.environ["OA_MONGO_DB"]
+            del os.environ["VIDUSHI_MONGO_DB"]
 
     def test_stores_are_the_five_types(self):
         self.assertEqual(
             set(store.STORES),
-            {"contacts", "invoices", "warranties", "cases", "products"},
+            {"contacts", "invoices", "warranties", "cases", "products",
+             "subscriptions", "insurance"},
         )
 
     def test_coll_targets_named_collection(self):
         c = oa_mongo.coll("invoices")
         self.assertEqual(c.name, "invoices")
-        self.assertEqual(c.database.name, "office_assistant")
+        self.assertEqual(c.database.name, "vidushi_oa")
 
     def test_init_creates_unique_id_index_idempotently(self):
         r1 = subprocess.run([sys.executable, STORE, "init"], capture_output=True, text=True)

@@ -13,7 +13,7 @@ documents/
 Filename convention: `2026-06-14_lioncircuits_invoice_INV-225862.pdf` (date first → sorts chronologically).
 
 ## Registry & lookup
-The document **registry is JSONL**, not a markdown index: `../data/invoices.jsonl`, queried via
+The document **registry lives in MongoDB** (snapshotted to `../data/invoices.jsonl`), queried via
 `../scripts/store.py` (each row carries the `file` path here + the `source` mail pin). lean-ctx indexes
 this folder so files are discoverable. To find a document, query the store — don't scan the folder:
 ```bash

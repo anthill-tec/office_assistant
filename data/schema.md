@@ -1,9 +1,40 @@
 # Office Assistant — Data Store Schema
 
-All records are **JSONL** (one JSON object per line) under `data/`, accessed via
-`scripts/store.py` (never hand-parse whole files — query through the script to save tokens).
-Common fields: `id` (string, auto), `acct` (`personal`|`business`), `updated` (YYYY-MM-DD).
+All records live in **MongoDB** (db `office_assistant`, one collection per type), accessed via
+`scripts/store.py` (never hand-parse — query through the script to save tokens). `store.py snapshot`
+mirrors every collection to `data/*.jsonl` for chezmoi versioning; `store.py import` loads them back.
+Common fields on every row: `id` (string, auto), `acct` (`personal`|`business`), `updated` (YYYY-MM-DD),
+and the shared lifecycle triplet **`status` / `actions[]` / `documents[]`** (see *Lifecycle state model* below).
 `source` pins the originating mail: `{"mailbox":"FM"|"GM","email_id":"...","thread_id":"...","attachment":"name.pdf"|null}`.
+
+## Lifecycle state model
+Every record carries a shared **`status`** plus a domain-specific **`actions[]`** set. Transitions are
+locked into `scripts/transitions.py` and fired only by `store.py event` / the sweeps — the agent names
+events, it never hand-rolls a state change.
+
+**`status`** (enum, uppercase):
+| value | meaning |
+|---|---|
+| `NEW` | just discovered, not yet worked |
+| `UNKNOWN` | needs human clarification before it can advance |
+| `IN_PROGRESS` | active (paid/shipped, warranty in force, subscription live) |
+| `COMPLETED` | done (delivered / closed / cancelled-and-ended) |
+| `EXPIRED` | warranties only — past term |
+| `DUE` | recurring only — inside the renewal window, awaiting renew/cancel |
+
+**`actions[]`** — pending/'done' work items, each `{"action": <slug>, "status": "OPEN"|"RESOLVED",
+"owner": "user"|"support"|"agent", "opened": YYYY-MM-DD, "due"?: …, "detail"?: …, "resolved"?: …}`.
+The **action set differs per domain** (that *is* the domain's state machine): warranties open
+`renew-or-extend`, subscriptions `cancel-before-charge`, insurance `renew-policy`/`renew-registration`,
+cases the RMA steps. `store.py attention` surfaces any row with an OPEN action or an attention-status.
+
+**`documents[]`** — the scraped/saved artefacts backing the record, each `{"type": <slug>, "ref"|"file": …}`
+(receipt PDF, policy schedule, mandate…); AI-extracted metadata off the source document lands here.
+
+**Transitions** (`transitions.py`): purchase `NEW→IN_PROGRESS` (`paid`/`shipped`) `→COMPLETED` (`delivered`);
+warranty `IN_PROGRESS→EXPIRED` (`expire` ⇒ open `renew-or-extend`) `→IN_PROGRESS` (`renew`); recurring
+`IN_PROGRESS→DUE` (`renewal-window` ⇒ open the renew/cancel action) `→IN_PROGRESS` (`renewed`) /
+`→COMPLETED` (`cancelled`/`lapsed`). Illegal `(status, event)` pairs are rejected and write nothing.
 
 ### Foreign keys & joins
 Records reference each other by id. `store.py ... --expand <fk[,fk...]>` resolves them inline (adds
@@ -13,7 +44,8 @@ Records reference each other by id. `store.py ... --expand <fk[,fk...]>` resolve
 | `contact_id` | contacts | products (manufacturer support), warranties, cases, invoices |
 | `invoice_id` | invoices | warranties, cases, products |
 | `warranty_id` | warranties | cases, products, invoices |
-| `product_id` | products | warranties, cases |
+| `product_id` | products | warranties, cases, insurance |
+| `subscription_id` | subscriptions | invoices |
 `contacts.kind` ∈ `reseller`|`manufacturer`|`service` distinguishes who a contact is. A product's
 `contact_id` should point to a **manufacturer** (or service) contact, not the reseller it was bought from.
 Example: `store.py get products prod_fnirsi_tmp-610s --expand contact_id,invoice_id,warranty_id`
@@ -81,6 +113,9 @@ Links must point to the **manufacturer's official** resources, never an intermed
 | bought_from | str\|null | reseller/marketplace/intermediary (links to the invoice's `vendor`) |
 | model | str\|null | | serial | str\|null | (usually on the warranty record) |
 | category | str\|null | |
+| kind | enum\|null | `physical` \| `virtual` (a service/digital good) |
+| relation | enum\|null | `accessory` \| `consumable` (relative to a parent product) |
+| billing | enum\|null | `one-time` \| `subscription` (how it's paid for) |
 | links | obj | manufacturer-official only: `{product_page, manual, datasheet, support, drivers_firmware, spec_sheet, community}` (each url or null) |
 | key_specs | str\|null | short spec summary |
 | invoice_id | str\|null | proof-of-purchase link | warranty_id | str\|null | coverage link |
@@ -99,7 +134,7 @@ Links must point to the **manufacturer's official** resources, never an intermed
 | issue | str | short summary |
 | channel | enum | email \| portal \| phone |
 | ticket | str\|null | vendor ticket/RMA number |
-| status | enum | open \| awaiting_support \| awaiting_user \| rma_issued \| in_repair \| resolved \| closed |
+| status | enum | shared lifecycle: `NEW` \| `UNKNOWN` \| `IN_PROGRESS` \| `COMPLETED` (per-stage detail — awaiting-support, rma-issued, in-repair — now lives in `actions[]`) |
 | opened | str | YYYY-MM-DD |
 | last_contact | obj | `{"date":str,"by":"support"|"user"}` |
 | next_action | str\|null | | owner | enum | user \| support |
@@ -108,3 +143,40 @@ Links must point to the **manufacturer's official** resources, never an intermed
 | threads | [obj] | `[{"mailbox":"FM"|"GM","thread_id":"..."}]` |
 | log | [obj] | `[{"date":str,"note":str}]` append-only history |
 | acct | enum | personal \| business |
+
+## subscriptions — `subscriptions.jsonl`  (recurring billing / SaaS / memberships)
+Recurring domain — rides the `DUE` status via `due-sweep` (renewal window on `renews`). **Disposition is user-owned.**
+| field | type | notes |
+|------|------|------|
+| id | str | `sub_<provider-slug>` |
+| provider | str | who bills (the id anchor) |
+| category | str\|null | e.g. `SaaS / AI`, `media / streaming` |
+| disposition | enum | **user-set**: `KEEP` \| `TOMBSTONE` \| `UNDECIDED` \| `CANCELLED` |
+| plan | str\|null | plan/tier name |
+| cadence | str\|null | annual \| monthly \| 30-day \| usage-based \| … |
+| amount | num\|null | recurring charge |
+| currency | str\|null | |
+| renews | str\|null | next renewal/charge date (drives `due-sweep`) |
+| alias | str\|null | masked buying alias / billing email |
+| status | enum | shared lifecycle (recurring: adds `DUE`) |
+| actions | [obj] | e.g. `cancel-before-charge`, `renewal-confirm` |
+| documents | [obj] | receipt / mandate / cancellation |
+| source | obj | mail pin |
+
+## insurance — `insurance.jsonl`  (policies + regulatory renewals — starts subscription-like, renews yearly)
+Recurring domain; an insurance record links the **insured asset** via `product_id` (e.g. a vehicle's motor policy or RC re-registration). Drives `due-sweep` off `expiry`.
+| field | type | notes |
+|------|------|------|
+| id | str | `ins_<insurer-slug>_<policy_no>` |
+| insurer | str | insurer / issuing authority (the id anchor) |
+| policy_no | str\|null | policy or registration number |
+| product_id | str\|null | FK → products (the insured asset) |
+| premium | num\|null | |
+| currency | str\|null | |
+| period | str\|null | term description |
+| expiry | str\|null | cover/registration end (drives `due-sweep`) |
+| status | enum | shared lifecycle (recurring: adds `DUE`) |
+| actions | [obj] | e.g. `renew-policy`, `renew-registration` |
+| documents | [obj] | policy-schedule / renewal-notice / premium-receipt |
+| invoice_id | str\|null | premium proof-of-purchase link |
+| source | obj | mail pin |

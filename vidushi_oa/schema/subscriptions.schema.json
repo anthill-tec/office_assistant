@@ -1,0 +1,56 @@
+{
+  "bsonType": "object",
+  "required": ["id"],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "bsonType": "string",
+      "pattern": "^sub_"
+    },
+    "provider": {
+      "bsonType": "string"
+    },
+    "category": {
+      "bsonType": "string"
+    },
+    "disposition": {
+      "enum": ["KEEP", "TOMBSTONE", "UNDECIDED", "CANCELLED"]
+    },
+    "plan": {
+      "bsonType": "string"
+    },
+    "cadence": {
+      "bsonType": "string"
+    },
+    "amount": {
+      "bsonType": ["double", "int", "long", "decimal"]
+    },
+    "currency": {
+      "bsonType": "string"
+    },
+    "renews": {
+      "bsonType": "string"
+    },
+    "alias": {
+      "bsonType": "string"
+    },
+    "status": {
+      "enum": ["NEW", "UNKNOWN", "IN_PROGRESS", "COMPLETED", "EXPIRED", "DUE"]
+    },
+    "actions": {
+      "bsonType": "array",
+      "items": {
+        "bsonType": "object",
+        "additionalProperties": true,
+        "properties": {
+          "status": {
+            "enum": ["OPEN", "RESOLVED"]
+          }
+        }
+      }
+    },
+    "documents": {
+      "bsonType": "array"
+    }
+  }
+}

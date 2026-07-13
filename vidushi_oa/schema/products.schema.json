@@ -1,0 +1,47 @@
+{
+  "bsonType": "object",
+  "required": ["id"],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "bsonType": "string",
+      "pattern": "^prod_"
+    },
+    "product": {
+      "bsonType": "string"
+    },
+    "manufacturer": {
+      "bsonType": "string"
+    },
+    "acct": {
+      "enum": ["personal", "business"]
+    },
+    "kind": {
+      "enum": ["physical", "virtual"]
+    },
+    "relation": {
+      "enum": ["accessory", "consumable"]
+    },
+    "billing": {
+      "enum": ["one-time", "subscription"]
+    },
+    "status": {
+      "enum": ["NEW", "UNKNOWN", "IN_PROGRESS", "COMPLETED", "EXPIRED", "DUE"]
+    },
+    "actions": {
+      "bsonType": "array",
+      "items": {
+        "bsonType": "object",
+        "additionalProperties": true,
+        "properties": {
+          "status": {
+            "enum": ["OPEN", "RESOLVED"]
+          }
+        }
+      }
+    },
+    "documents": {
+      "bsonType": "array"
+    }
+  }
+}

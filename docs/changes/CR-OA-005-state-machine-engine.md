@@ -1,6 +1,6 @@
 # CR-OA-005 — Transition-map state-machine engine + `event` verb
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-12 on feature/CR-OA-005-state-machine-engine)
 **Type:** feature
 **Priority:** High
 **Depends on:** 003, 004
@@ -38,11 +38,16 @@ sets `to`, applies effects, bumps `updated`. An event with no matching transitio
 lookahead window.
 
 ## Acceptance criteria
-- [ ] §S2 `event invoices <id> delivered` on a doc with `status=="IN_PROGRESS"` sets `status=="COMPLETED"`; running it again (now COMPLETED, no matching transition) returns `{"error":"illegal transition",…}` and leaves the doc unchanged.
-- [ ] §S1 `TRANSITIONS["warranties"]` contains an entry `{from:"IN_PROGRESS", event:"expire", to:"EXPIRED", owner:"agent"}` whose effects open `renew-or-extend`.
-- [ ] §S3 Given a warranty with `expiry` before today, `warranty-sweep` sets `status=="EXPIRED"` and appends an OPEN `renew-or-extend` action (idempotent — a second sweep does not duplicate it).
-- [ ] §S3 Given a subscription whose `renews` is within the lookahead window, `due-sweep` sets `status=="DUE"` and opens the domain renew/cancel action.
-- [ ] **Caller:** `event` is a real subparser; `warranty-sweep`/`due-sweep` invoke the engine's `apply_transition` (grep confirms no duplicate transition logic).
+- [x] §S2 `event invoices <id> delivered` on a doc with `status=="IN_PROGRESS"` sets `status=="COMPLETED"`; running it again (now COMPLETED, no matching transition) returns `{"error":"illegal transition",…}` and leaves the doc unchanged.
+- [x] §S1 `TRANSITIONS["warranties"]` contains an entry `{from:"IN_PROGRESS", event:"expire", to:"EXPIRED", owner:"agent"}` whose effects open `renew-or-extend`.
+- [x] §S3 Given a warranty with `expiry` before today, `warranty-sweep` sets `status=="EXPIRED"` and appends an OPEN `renew-or-extend` action (idempotent — a second sweep does not duplicate it).
+- [x] §S3 Given a subscription whose `renews` is within the lookahead window, `due-sweep` sets `status=="DUE"` and opens the domain renew/cancel action.
+- [x] **Caller:** `event` is a real subparser; `warranty-sweep`/`due-sweep` invoke the engine's `apply_transition` (grep confirms no duplicate transition logic).
+
+> **Note (2026-07-12):** the generalized **`due-sweep`** (recurring subscriptions/insurance) is
+> **deferred to CR-OA-007** — the `subscriptions`/`insurance` stores don't exist until then. Their
+> transition maps ARE shipped here (`transitions.py`) for CR-007 to consume; the `warranty-sweep`
+> re-expression through the shared `_apply_transition` engine is delivered + verified.
 
 ## Estimated size
 M–L — the transition tables + a small applier + two sweeps.

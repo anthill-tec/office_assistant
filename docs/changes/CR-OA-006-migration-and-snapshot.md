@@ -1,6 +1,6 @@
 # CR-OA-006 — Migration `import` + `snapshot` versioning
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-11 on feature/CR-OA-006-migration-and-snapshot)
 **Type:** feature
 **Priority:** High
 **Depends on:** 003
@@ -30,11 +30,11 @@ versioning feature — run before a chezmoi/git checkpoint.
 `import` → `snapshot` → `import` yields an identical document set.
 
 ## Acceptance criteria
-- [ ] §S1 After `store.py import`, `store.py stats <t>` `total` equals `wc -l data/<file>.jsonl` for each: invoices 48, contacts 18, warranties 19, cases 1, products 19 (105 total).
-- [ ] §S1 Re-running `store.py import` leaves every collection count unchanged and creates no duplicate `id`.
-- [ ] §S2 After `store.py snapshot`, `git diff --stat data/` shows only key-order normalization — no record added or dropped; every emitted line is valid JSON and contains no `_id` key.
-- [ ] §S3 The sorted `(id, updated)` checksum of each collection is identical before and after an `import → snapshot → import` cycle.
-- [ ] **Caller:** `import` and `snapshot` are real subparsers; `snapshot` is the versioning entry point named in the DN.
+- [x] §S1 After `store.py import`, `store.py stats <t>` `total` equals `wc -l data/<file>.jsonl` for each: invoices 48, contacts 18, warranties 19, cases 1, products 19 (105 total).
+- [x] §S1 Re-running `store.py import` leaves every collection count unchanged and creates no duplicate `id`.
+- [x] §S2 After `store.py snapshot`, `git diff --stat data/` shows only key-order normalization — no record added or dropped; every emitted line is valid JSON and contains no `_id` key.
+- [x] §S3 The sorted `(id, updated)` checksum of each collection is identical before and after an `import → snapshot → import` cycle.
+- [x] **Caller:** `import` and `snapshot` are real subparsers; `snapshot` is the versioning entry point named in the DN.
 
 ## Estimated size
 M — two verbs + a stable serialiser (reuse `store.py`'s JSON dump path, keys ordered).

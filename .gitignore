@@ -7,7 +7,10 @@
 # two lines below — or force-add a file with:  git add -f data/invoices.jsonl
 # ──────────────────────────────────────────────────────────────────────────
 /data/*.jsonl
-/documents/**/*.pdf
+# All personal document scans/copies stay local (chezmoi-versioned) — keep only READMEs
+/documents/**
+!/documents/**/
+!/documents/**/README.md
 
 # Atomic-write temp files from store.py
 /data/*.jsonl.tmp
@@ -15,15 +18,33 @@
 # Local Claude Code settings (machine-specific)
 /.claude/settings.local.json
 
+# Lavish Editor review artifacts (local review surfaces, not versioned)
+/.lavish/
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
 *.swp
 *~
 
+# Kiro editor
+/.kiro/
+
 # Python
 __pycache__/
 *.py[cod]
+.venv/
+
+# Python build output (wheels/sdists, packaging metadata)
+/dist/
+*.egg-info/
+
+# Local env (Crucible project key) + test artifacts
+.env
+/test-reports/
+.coverage
+.coverage.*
+/htmlcov/
 
 # Misc temp
 *.tmp

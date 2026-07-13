@@ -4,36 +4,60 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-This project is a **functional personal "office assistant," not just code** — an evolving **set of role-based capabilities** (Claude *skills* + an *agent*, defined under "Office-assistant toolkit — roles" below) that read the user's mail and run the post-purchase / personal-admin lifecycle, operating over the **shared data + document store kept in this repo**.
+This project is **Vidushi OA** — a **functional personal office assistant, not just code** — an evolving **set of role-based capabilities** (Claude *skills* + an *agent*, defined under "Vidushi OA toolkit — roles" below) that read the user's mail and run the post-purchase / personal-admin lifecycle, operating over the **shared data + document store kept in this repo**.
 
-Think of it as *a system of roles plus its persistent memory*: the only executable is the JSONL data CLI (`scripts/store.py`); the actual behaviour lives in the roles. **The roster of roles is the primary artifact of this project**, and this repo is the durable state they all share. There is no build step, server, or test suite.
+Think of it as *a system of roles plus its persistent memory*: the one executable is the **`voa`** CLI (the installable `vidushi-oa` package; the in-repo `scripts/store.py` remains a path-compat shim), backed by a local **MongoDB**; the actual behaviour lives in the roles. **The roster of roles is the primary artifact of this project**, and this repo is the durable state they all share. There is no long-running server; a `pytest` suite guards the CLI. (The repo/folder name stays `office_assistant`; the *product* is Vidushi OA.)
 
 ## Cardinal rules
 
-1. **Access the JSONL stores ONLY through `scripts/store.py`.** Never read or hand-parse the `data/*.jsonl` files into context — query the script for exactly the rows/fields you need (token-frugal; writes are atomic). Editing raw JSONL bypasses id-generation, dedupe, and atomic writes.
+1. **Access the stores ONLY through the `voa` CLI** (the in-repo `scripts/store.py` is a path-compat shim to it). The data lives in **MongoDB** (db `vidushi_oa`); `data/*.jsonl` are `snapshot` outputs (chezmoi-versioned), not the source of truth. Query the script for exactly the rows/fields you need (token-frugal). Going around it — hand-editing the JSONL snapshots or hitting Mongo directly — bypasses id-generation, dedupe, the `$jsonSchema` validators, and the state-machine transitions.
 2. **Use the purpose-built skills for their tasks — don't improvise.** When a request matches a skill's domain (below), invoke that skill *first* and follow its steps; reach for the browser/web only as a skill's own documented fallback. (This is a standing user rule; improvising has caused real misses.)
 
-## Commands (the data CLI — `python3`, stdlib only)
+## Commands (the `voa` CLI — `pymongo`, MongoDB-backed)
 
-Types: `contacts` · `invoices` · `warranties` · `cases` · `products`. Full field schemas in `data/schema.md`.
+Types: `contacts` · `invoices` · `warranties` · `cases` · `products` · `subscriptions` · `insurance`. Full field schemas in `data/schema.md`.
 
 ```bash
 # read — filter + project only what you need (dotted paths supported: source.email_id, registration.done)
-python3 scripts/store.py query <type> [--where f=v] [--contains f=sub] [--after f=YYYY-MM-DD] [--before f=YYYY-MM-DD] [--fields a,b.c] [--sort f] [--limit N]   # --after/--before = inclusive ISO date range
-python3 scripts/store.py get <type> <id> [--fields ...] [--expand <fk,fk>]   # --expand resolves FKs inline as <fk>_obj
+voa query <type> [--where f=v] [--contains f=sub] [--after f=YYYY-MM-DD] [--before f=YYYY-MM-DD] [--fields a,b.c] [--sort f] [--limit N]   # --after/--before = inclusive ISO date range
+voa get <type> <id> [--fields ...] [--expand <fk,fk>]   # --expand resolves FKs inline as <fk>_obj
 
 # write — id + updated auto-filled; --json takes ONE object OR an array (bulk); add de-dupes by id
-python3 scripts/store.py add <type> --json '{...}'        # or '[{...},{...}]'
-python3 scripts/store.py update <type> <id> --json '{...}' [--append-log "note"]   # shallow-merge; --append-log is for cases
-python3 scripts/store.py rm <type> <id>
-python3 scripts/store.py stats <type> [--by field]
+voa add <type> --json '{...}'        # or '[{...},{...}]'
+voa update <type> <id> --json '{...}' [--append-log "note"]   # shallow-merge; --append-log is for cases
+voa rm <type> <id>
+voa stats <type> [--by field]
+
+# lifecycle state — shared status + per-domain action set (see data/schema.md)
+voa set-status <type> <id> <STATUS>
+voa action-add <type> <id> --json '{"action":"...","owner":"user"}'
+voa action-resolve <type> <id> <action>
+voa doc-add <type> <id> --json '{...}'
+voa event <type> <id> <event>        # fire a mapped state transition (transitions.py)
+voa attention [<type>]               # rows with an OPEN action or a status needing attention
+voa warranty-sweep [--dry-run]       # expire past-term warranties (+ open renew-or-extend)
+voa due-sweep [--dry-run]            # flag subscriptions/insurance inside the renewal window
+
+# admin — Mongo provisioning, schema validation, migration + versioning
+voa setup [--check]                  # verify/provision local MongoDB, then init (--check diagnoses only)
+voa init                             # create collections + unique id index + $jsonSchema validators
+voa validate [<type>]                # list docs that violate the validator ([] = clean)
+voa import [<type>]                  # data/*.jsonl -> Mongo (idempotent upsert by id)
+voa snapshot [<type>]                # Mongo -> data/*.jsonl (chezmoi-versioned)
 ```
 
-IDs are auto-generated from anchor fields (`ven_<vendor>`, `doc_<vendor>_<number|date>`, `war_<vendor>_<product>`, `case_<vendor>`, `prod_<manufacturer>_<model>`). Output is compact JSON on stdout; warnings to stderr. The shell here is **fish** — `VAR=...` assignment fails; use full paths or `set`.
+> The console command is **`voa`** (from `pip install vidushi-oa`, or `pip install -e .` in-repo). The
+> in-repo **`scripts/store.py`** stays a thin path-compat shim to the same CLI (`python3 scripts/store.py <verb>`).
+
+**Connection:** MongoDB on `127.0.0.1:27017`, db `vidushi_oa` — overridable via `VIDUSHI_MONGO_URI` / `VIDUSHI_MONGO_DB` (and `VIDUSHI_DATA_DIR` for the snapshot/import directory, used by the test suite for isolation). A fresh `pip install vidushi-oa` → `voa setup` provisions/verifies this local MongoDB.
+
+**Ambient-context hook (AXI #7):** `.claude/settings.json` registers a Claude Code **SessionStart** hook that runs the bare CLI (via the `scripts/store.py` shim, no verb — read-only) so the **attention** worklist (rows with an OPEN action or a status needing attention) is surfaced automatically at the start of every session, before the agent acts.
+
+IDs are auto-generated from anchor fields (`ven_<vendor>`, `doc_<vendor>_<number|date>`, `war_<vendor>_<product>`, `case_<vendor>`, `prod_<manufacturer>_<model>`, `sub_<provider>`, `ins_<insurer>_<policy_no>`). Output is **TOON by default** (token-efficient — `query` is enveloped `{count, results, next}` with minimal default fields + `…(+N chars)` truncation; `--full` shows all fields untruncated; `--json`/`VIDUSHI_FORMAT=json` gives a clean full JSON array). Bare `voa` (no verb) prints the `attention` worklist. Warnings to stderr. The shell here is **fish** — `VAR=...` assignment fails; use full paths or `set`.
 
 ## Architecture (the big picture)
 
-**Five JSONL stores in `data/` form a small relational model**, joined by foreign keys and resolved with `store.py … --expand`:
+**Seven MongoDB collections** (mirrored to `data/*.jsonl` by `snapshot`) **form a small relational model**, joined by foreign keys and resolved with `voa … --expand`:
 
 ```
 invoice (proof of purchase)  ──invoice_id──┐
@@ -43,20 +67,22 @@ warranty (coverage + expiry) ──warranty_id──┼──> product (manual/s
 case (claim/RMA) ── invoice_id / warranty_id / product_id / contact_id ──> all of the above
 ```
 
-- **FK fields** (`contact_id`, `invoice_id`, `warranty_id`, `product_id`) → see `FK_MAP` in `store.py`. One `--expand` call does a rich join (e.g. product → its warranty expiry → its invoice PDF → its support email).
+- **FK fields** (`contact_id`, `invoice_id`, `warranty_id`, `product_id`) → see `FK_MAP` in the `vidushi_oa` CLI. One `--expand` call does a rich join (e.g. product → its warranty expiry → its invoice PDF → its support email).
 - **`acct` splits personal vs business** everywhere (`business` = bought on `antojk@anthilllabs.in`, usually with a GSTIN). Mirrored in `documents/personal/` vs `documents/business/`.
 - **`documents/<acct>/<vendor>/`** holds saved PDF copies (named `YYYY-MM-DD_<vendor>_<doctype>_<number>.pdf`); the invoice row's `file` points to it. The store row always pins the originating mail (`source`) even when no copy is saved.
 - **Products are keyed on the actual MANUFACTURER**, not the reseller (`bought_from`); their `links` must be manufacturer-official.
+- **`subscriptions` + `insurance`** are the recurring domains (billing/coverage that renews): `insurance` links a `product_id` (e.g. a vehicle's motor policy), and an `invoice` may carry a `subscription_id`. They ride the `DUE` status via `due-sweep`.
+- **Every row carries the shared lifecycle** — a `status` (NEW/UNKNOWN/IN_PROGRESS/COMPLETED, +EXPIRED for warranties, +DUE for recurring), a domain-specific `actions[]` set (each OPEN→RESOLVED), and `documents[]`. Transitions are locked into `transitions.py` and fired via `event`/the sweeps — see `data/schema.md`.
 
 **Data sources:** the skills search **two mailboxes** — Fastmail (FastmailMCP) and Gmail `antojk@gmail.com` (claude.ai connector) — and write findings here.
 
-## Office-assistant toolkit — roles (skills in `~/.claude/skills/`, agents in `~/.claude/agents/`)
+## Vidushi OA toolkit — roles (skills in `~/.claude/skills/`, agents in `~/.claude/agents/`)
 
 Invoke the skill whose **role** matches the request, and load `mail-tracking-core` alongside it. Quick map:
 subscriptions→`subscription-watch` · deliveries/customs→`purchase-tracker` · invoices/receipts/POs→`invoice-tracker` · warranty/expiry→`warranty-tracker` · claims/RMA/support-mail→`support-case-manager` · manuals/specs/official-warranty→`product-catalogue`.
 
 **Foundation (load with any mail task)**
-- **`mail-tracking-core`** — shared engine: dual-mailbox (Fastmail via FastmailMCP + Gmail `antojk@gmail.com` via the claude.ai connector) search & merge with `[FM]`/`[GM]` source tagging, the phishing/customs **safety contract**, this JSONL data store (`store.py`), and calendar-reminder creation. Not run alone.
+- **`mail-tracking-core`** — shared engine: dual-mailbox (Fastmail via FastmailMCP + Gmail `antojk@gmail.com` via the claude.ai connector) search & merge with `[FM]`/`[GM]` source tagging, the phishing/customs **safety contract**, this data store (`voa`, MongoDB-backed), and calendar-reminder creation. Not run alone.
 
 **Interactive trackers — run in the main thread, the user steers them**
 - **`subscription-watch`** — recurring billing/subscriptions: classify by type, surface actions + deadlines up front, hold a per-item **KEEP/TOMBSTONE disposition** (flips advice: protect KEEP, warn-to-cancel TOMBSTONE before a charge).
@@ -67,7 +93,7 @@ subscriptions→`subscription-watch` · deliveries/customs→`purchase-tracker` 
 - **`support-case-manager`** — stateful **claims / RMA / returns / service** cases; **DRAFTS** mail to the verified support contact (**draft-then-confirm, never auto-send**), cites invoice + warranty, logs each exchange. Store type `cases`.
 
 **Agent — delegated, read-only**
-- **`inbox-analyst`** (subagent) — heavy autonomous sweep across **both** mailboxes for a full pass (subscriptions / purchases / customs / invoices / warranties / general triage). Returns **structured findings + recommended actions** and **mutates nothing** — the main thread executes side effects (persist via `store.py`, create reminders, send mail). Dispatch it when a comprehensive scan would otherwise flood the conversation.
+- **`inbox-analyst`** (subagent) — heavy autonomous sweep across **both** mailboxes for a full pass (subscriptions / purchases / customs / invoices / warranties / general triage). Returns **structured findings + recommended actions** and **mutates nothing** — the main thread executes side effects (persist via `voa`, create reminders, send mail). Dispatch it when a comprehensive scan would otherwise flood the conversation.
 
 **Supporting capabilities — a skill's documented fallback, not the default**
 - **`claude-in-chrome`** (browser) — drive the user's logged-in browser for **login-gated data** (Amazon/portal invoices, Dell service tags, carrier tracking). The user logs in; the agent navigates/downloads; **never enters credentials**.
@@ -81,4 +107,4 @@ subscriptions→`subscription-watch` · deliveries/customs→`purchase-tracker` 
 - **Never invent warranty terms** — record `term_months: null` + a note when unstated; confirm from the manufacturer's official policy (via `product-catalogue`).
 - **Login-gated data** (Amazon/portal invoices, Dell service tags): the user logs in via the Chrome extension; the agent navigates/downloads — never enters their credentials.
 - Convert relative dates to **absolute** before storing.
-- **Extending:** add a new store by editing `STORES`/`PREFIX` (and `FK_MAP` if it's referenced) in `store.py` and documenting fields in `data/schema.md`. New helper scripts stay stdlib + JSON-out.
+- **Extending:** add a new store by editing `STORES`/`PREFIX` (and `FK_MAP` if referenced) in the `vidushi_oa` package, adding a `vidushi_oa/schema/<type>.schema.json` validator (+ a `transitions.py` map if it has a lifecycle), then documenting fields in `data/schema.md` and running `voa setup`. New helper code stays JSON-out.
