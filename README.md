@@ -9,7 +9,7 @@ invoices, warranties, support cases, and product references.
 It is **a set of defined roles, not just code.** Each role is a Claude *skill* (or *agent*) with a
 clear job; they all read and write one shared **data + document store** that lives in this folder.
 The only program here is the **`voa`** CLI (the installable `vidushi-oa` package) — the behaviour lives
-in the roles. Get started: `pip install vidushi-oa` (or `pip install -e .` in-repo), then `voa setup`.
+in the roles. Get started: `pip install vidushi-oa` (or, in-repo, `python -m venv .venv && .venv/bin/pip install -e .`), then `voa setup`.
 
 ---
 
@@ -78,6 +78,13 @@ voa query warranties --fields product,expiry --sort expiry
 ```
 The in-repo `scripts/store.py` remains a path-compat shim (`python3 scripts/store.py <verb>`).
 Full field reference: `data/schema.md`. CLI details: `scripts/README.md`.
+
+> **Local `.venv` dependency.** On externally-managed Pythons (Arch/PEP 668) the in-repo install lives in
+> a repo `.venv` (editable: `python -m venv .venv && .venv/bin/pip install -e .`). The Claude Code
+> **SessionStart** hook in `.claude/settings.json` invokes `"$CLAUDE_PROJECT_DIR/.venv/bin/python"` (not
+> bare `python3`, which is the system interpreter and can't see the venv), so **that `.venv` must exist**
+> for the start-of-session attention worklist to run. If you ever recreate the environment, rebuild it
+> with the venv command above (then `voa setup`).
 
 ---
 
