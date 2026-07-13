@@ -1,0 +1,80 @@
+{
+  "bsonType": "object",
+  "required": ["id"],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "bsonType": "string",
+      "pattern": "^ord_"
+    },
+    "merchant": {
+      "bsonType": "string"
+    },
+    "number": {
+      "bsonType": "string"
+    },
+    "items": {
+      "bsonType": "array"
+    },
+    "amount": {
+      "bsonType": ["double", "int", "long", "decimal"]
+    },
+    "currency": {
+      "bsonType": "string"
+    },
+    "order_date": {
+      "bsonType": "string"
+    },
+    "carrier": {
+      "bsonType": "string"
+    },
+    "tracking": {
+      "bsonType": "string"
+    },
+    "eta": {
+      "bsonType": "string"
+    },
+    "stage": {
+      "bsonType": "string"
+    },
+    "last_event": {
+      "bsonType": "string"
+    },
+    "last_event_date": {
+      "bsonType": "string"
+    },
+    "alias": {
+      "bsonType": "string"
+    },
+    "acct": {
+      "enum": ["personal", "business"]
+    },
+    "invoice_id": {
+      "bsonType": "string"
+    },
+    "product_id": {
+      "bsonType": "string"
+    },
+    "source": {
+      "bsonType": "object"
+    },
+    "status": {
+      "enum": ["NEW", "UNKNOWN", "IN_PROGRESS", "COMPLETED"]
+    },
+    "actions": {
+      "bsonType": "array",
+      "items": {
+        "bsonType": "object",
+        "additionalProperties": true,
+        "properties": {
+          "status": {
+            "enum": ["OPEN", "RESOLVED"]
+          }
+        }
+      }
+    },
+    "documents": {
+      "bsonType": "array"
+    }
+  }
+}

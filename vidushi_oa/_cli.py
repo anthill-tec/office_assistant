@@ -36,9 +36,11 @@ DATA = os.environ.get("VIDUSHI_DATA_DIR") or os.path.normpath(os.path.join(HERE,
 STORES = {"contacts": "vendor_contacts.jsonl", "invoices": "invoices.jsonl",
           "warranties": "warranties.jsonl", "cases": "support_cases.jsonl",
           "products": "product_catalogue.jsonl",
-          "subscriptions": "subscriptions.jsonl", "insurance": "insurance.jsonl"}
+          "subscriptions": "subscriptions.jsonl", "insurance": "insurance.jsonl",
+          "orders": "orders.jsonl"}
 PREFIX = {"contacts": "ven", "invoices": "doc", "warranties": "war", "cases": "case",
-          "products": "prod", "subscriptions": "sub", "insurance": "ins"}
+          "products": "prod", "subscriptions": "sub", "insurance": "ins",
+          "orders": "ord"}
 # Foreign keys: field name -> store it references. `--expand` resolves them inline.
 FK_MAP = {"contact_id": "contacts", "invoice_id": "invoices",
           "warranty_id": "warranties", "product_id": "products",
@@ -63,6 +65,9 @@ ACTION_SETS = {
     "subscriptions": ["renewal-confirm", "cancel-before-charge", "keep-tombstone-decision",
                       "de-register-mandate", "card-update", "price-change", "trial-end-cancel"],
     "insurance":  ["renew-policy", "pay-premium", "kyc", "claim", "price-compare"],
+    "orders":     ["payment", "shipment", "in-transit", "out-for-delivery", "delivery",
+                   "customs-clearance", "duty-payment", "kyc", "clarification",
+                   "redelivery", "return", "refund", "stuck-chase"],
 }
 # Domain-specific DOCUMENT-ASSET vocabularies (advisory).
 DOC_ASSETS = {
@@ -198,11 +203,15 @@ def gen_id(t, rec, existing):
         anchor = rec.get("provider")
     elif t == "insurance":
         anchor = rec.get("insurer")
+    elif t == "orders":
+        anchor = rec.get("merchant")
     else:
         anchor = rec.get("vendor")
     base = PREFIX[t] + "_" + (slug(anchor) or "x")
     if t == "invoices":
         base += "_" + (slug(rec.get("number") or rec.get("date")) or "x")
+    elif t == "orders":
+        base += "_" + (slug(rec.get("number") or rec.get("order_date") or rec.get("date")) or "x")
     elif t == "products":
         base += "_" + (slug(rec.get("model") or rec.get("product")) or "x")
     elif t == "insurance" and rec.get("policy_no"):
@@ -452,7 +461,7 @@ def cmd_attention(a):
         for d in oa_mongo.coll(t).find(query, {"_id": 0}):
             opens = _open_actions(d)
             res.append({"type": t, "id": d.get("id"),
-                        "name": d.get("vendor") or d.get("product") or d.get("provider"),
+                        "name": d.get("vendor") or d.get("product") or d.get("provider") or d.get("merchant"),
                         "status": d.get("status") or "UNKNOWN", "open_actions": opens})
     out(res)
 
