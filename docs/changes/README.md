@@ -100,7 +100,8 @@ Small items (no design surface → tasks, not CRs) surfaced during execution:
   disposition-aware (`by_disposition {KEEP: renewal-confirm}`); a live `due-sweep` on the migrated KEEP
   subscriptions is safe to run.
 - **Drop the old `office_assistant` Mongo DB** (filed 2026-07-12, from CR-OA-011 §S4) — the live data was
-  migrated to `vidushi_oa` (118 records, count-parity + validator-clean verified) but the old
-  `office_assistant` DB is **deliberately retained as a backup**; the drop is hard to reverse and is
-  **gated on explicit user confirmation**. Drop it once the user is satisfied the `vidushi_oa` cut-over is
-  stable (`voa`/`store.py` both read `vidushi_oa` by default now).
+  migrated to `vidushi_oa` (118 records, count-parity + validator-clean verified) and the old
+  `office_assistant` DB was retained as a backup pending confirmation. **Resolved 2026-07-13 (post-v0.1.0):**
+  on explicit user confirmation the `office_assistant` DB (and a stray `office_assistant_cr009_probe` test
+  DB) were dropped after re-verifying `vidushi_oa` = 118 + validator-clean; `vidushi_oa` is now the sole
+  store. Snapshots were chezmoi-committed (local) beforehand.
