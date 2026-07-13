@@ -38,9 +38,6 @@ PYPROJECT = os.path.join(ROOT, "pyproject.toml")
 
 TEST_DB = "vidushi_oa_test"
 
-STORE_TYPES = ["contacts", "invoices", "warranties", "cases", "products",
-               "subscriptions", "insurance"]
-
 
 def _ensure_root_on_path():
     if ROOT not in sys.path:
@@ -123,21 +120,28 @@ class SchemaPackageDataTest(unittest.TestCase):
         # positive: real invoice fields present (proves it's the actual schema, not a stub)
         self.assertIn("id", parsed["properties"])
 
-    def test_all_seven_store_schemas_present_under_package(self):
+    def test_all_store_schemas_present_under_package(self):
+        # Derive the roster from the registry so a newly-registered store doesn't
+        # re-break this invariant (the exact roster is pinned by CR-OA-001).
         import importlib.resources as res
+        from vidushi_oa._cli import STORES
+        roster = set(STORES)
         schema_dir = res.files("vidushi_oa").joinpath("schema")
         present = set()
-        for t in STORE_TYPES:
+        for t in roster:
             entry = schema_dir.joinpath(f"{t}.schema.json")
             if entry.is_file():
                 present.add(t)
         self.assertEqual(
-            present, set(STORE_TYPES),
-            f"expected all 7 store schemas under vidushi_oa/schema/, found: {sorted(present)}",
+            present, roster,
+            f"expected a schema per store under vidushi_oa/schema/, found: {sorted(present)}",
         )
-        # negative bound: exactly 7, not more (no stray/duplicate schema files)
-        all_json = [p.name for p in schema_dir.iterdir() if p.name.endswith(".schema.json")]
-        self.assertEqual(len(all_json), 7, f"expected exactly 7 schema files, found: {sorted(all_json)}")
+        # negative bound: exactly one schema file per store, no stray/duplicate files
+        all_json = {p.name for p in schema_dir.iterdir() if p.name.endswith(".schema.json")}
+        self.assertEqual(
+            all_json, {f"{t}.schema.json" for t in roster},
+            f"expected exactly the per-store schema files, found: {sorted(all_json)}",
+        )
 
 
 class CompatShimTest(unittest.TestCase):

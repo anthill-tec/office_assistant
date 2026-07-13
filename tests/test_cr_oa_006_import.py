@@ -135,8 +135,13 @@ class ImportVerbTest(unittest.TestCase):
         total_expected = 0
         for t, filename in store.STORES.items():
             real_path = os.path.join(DATA, filename)
-            with open(real_path, encoding="utf-8") as f:
-                expected = sum(1 for line in f if line.strip())
+            # A newly-registered store may have no snapshot file yet -> treat as 0 rows
+            # (import must land 0 docs; do NOT create the file).
+            if os.path.exists(real_path):
+                with open(real_path, encoding="utf-8") as f:
+                    expected = sum(1 for line in f if line.strip())
+            else:
+                expected = 0
             actual = self.db[t].count_documents({})
             self.assertEqual(
                 actual, expected,
