@@ -1,5 +1,7 @@
 # Vidushi OA
 
+**Version 0.1.0** · engine `pip install vidushi-oa` (console `voa`) + the portable `vidushi-oa` skill.
+
 **Vidushi OA** is a personal office assistant that reads your mail (Fastmail + Gmail) and runs the
 everyday admin lifecycle around the things you buy and pay for — subscriptions, purchases & deliveries,
 invoices, warranties, support cases, and product references.
