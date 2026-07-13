@@ -36,7 +36,7 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-011](CR-OA-011-packaging-rebrand.md) | Packaging + rebrand to Vidushi OA | feature | COMPLETED (2026-07-12) | 010 | 6 · v0.1.0 |
 | [CR-OA-012](CR-OA-012-unified-skill.md) | Unified `vidushi-oa` skill (cross-harness) | feature | COMPLETED (2026-07-13) | 011 | 6 · v0.1.0 |
 | [CR-OA-013](CR-OA-013-disposition-aware-sweep.md) | Disposition-aware `due-sweep` | feature | COMPLETED (2026-07-13) | 007 | 6 · v0.1.0 |
-| [CR-OA-014](CR-OA-014-aggregate-tally.md) | Aggregate tally in the TOON envelope | feature | PENDING | 010 | 6 · v0.1.0 |
+| [CR-OA-014](CR-OA-014-aggregate-tally.md) | Aggregate tally in the TOON envelope | feature | COMPLETED (2026-07-13) | 010 | 6 · v0.1.0 |
 
 ## v0.1.0 milestone — Wave 6
 
@@ -44,7 +44,11 @@ CRs **011–014** constitute the **v0.1.0 release** (design contract:
 [`../research/PRD-distribution-release.md`](../research/PRD-distribution-release.md)): packaging + rebrand →
 **Vidushi OA**, the unified cross-harness skill, and the two approved AXI refinements (disposition-aware
 `due-sweep`, aggregate tally). **Order:** 011 → 012 (the skill needs the package), with 013 + 014
-(independent store refinements) runnable any time after their deps. Cut **v0.1.0** once all four merge.
+(independent store refinements) runnable any time after their deps.
+
+**✅ All four merged (2026-07-13) — v0.1.0 scope is complete and ready to cut.** Remaining pre-tag steps are
+operational, not CRs: the release tag/version bump, plus the two parked data ops (drop the old
+`office_assistant` backup DB, chezmoi-commit the refreshed snapshots).
 
 - **Pending decision — license (DN §6):** OSS-vs-private gates CI/CD *and* a public PyPI publish. v0.1.0 can
   ship **privately** (git-install) and go public later.
