@@ -46,12 +46,12 @@ voa import [<type>]                  # data/*.jsonl -> Mongo (idempotent upsert 
 voa snapshot [<type>]                # Mongo -> data/*.jsonl (chezmoi-versioned)
 ```
 
-> The console command is **`voa`** (from `pip install vidushi-oa`, or `pip install -e .` in-repo). The
+> The console command is **`voa`** (from `pip install vidushi-oa`, or in-repo `python -m venv .venv && .venv/bin/pip install -e .`). The
 > in-repo **`scripts/store.py`** stays a thin path-compat shim to the same CLI (`python3 scripts/store.py <verb>`).
 
 **Connection:** MongoDB on `127.0.0.1:27017`, db `vidushi_oa` — overridable via `VIDUSHI_MONGO_URI` / `VIDUSHI_MONGO_DB` (and `VIDUSHI_DATA_DIR` for the snapshot/import directory, used by the test suite for isolation). A fresh `pip install vidushi-oa` → `voa setup` provisions/verifies this local MongoDB.
 
-**Ambient-context hook (AXI #7):** `.claude/settings.json` registers a Claude Code **SessionStart** hook that runs the bare CLI (via the `scripts/store.py` shim, no verb — read-only) so the **attention** worklist (rows with an OPEN action or a status needing attention) is surfaced automatically at the start of every session, before the agent acts.
+**Ambient-context hook (AXI #7):** `.claude/settings.json` registers a Claude Code **SessionStart** hook that runs the bare CLI (via the `scripts/store.py` shim, no verb — read-only) so the **attention** worklist (rows with an OPEN action or a status needing attention) is surfaced automatically at the start of every session, before the agent acts. The hook prefers the repo `.venv/bin/python` when it exists (the editable in-repo install the system `python3` can't see on PEP 668 Pythons) and otherwise falls back to system `python3` — so a missing `.venv` no longer breaks session start.
 
 IDs are auto-generated from anchor fields (`ven_<vendor>`, `doc_<vendor>_<number|date>`, `war_<vendor>_<product>`, `case_<vendor>`, `prod_<manufacturer>_<model>`, `sub_<provider>`, `ins_<insurer>_<policy_no>`). Output is **TOON by default** (token-efficient — `query` is enveloped `{count, results, next}` with minimal default fields + `…(+N chars)` truncation; `--full` shows all fields untruncated; `--json`/`VIDUSHI_FORMAT=json` gives a clean full JSON array). Bare `voa` (no verb) prints the `attention` worklist. Warnings to stderr. The shell here is **fish** — `VAR=...` assignment fails; use full paths or `set`.
 

@@ -6,7 +6,7 @@ rows/fields needed.
 
 ## `voa` — data store CLI (`pymongo`, MongoDB-backed)
 
-The console command is **`voa`** (`pip install vidushi-oa`, or `pip install -e .` in-repo). The in-repo
+The console command is **`voa`** (`pip install vidushi-oa`, or in-repo `python -m venv .venv && .venv/bin/pip install -e .`). The in-repo
 `scripts/store.py` stays a path-compat shim (`python3 scripts/store.py <verb>` == `voa <verb>`).
 
 Types: `contacts` · `invoices` · `warranties` · `cases` · `products` · `subscriptions` · `insurance`

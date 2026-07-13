@@ -184,5 +184,77 @@ class HookDocumentedTest(unittest.TestCase):
         )
 
 
+class HookInterpreterSelectionTest(unittest.TestCase):
+    """The SessionStart hook command must prefer the repo `.venv/bin/python`
+    (the only interpreter that can see the editable `vidushi-oa` install on an
+    externally-managed/PEP-668 Python) and fall back to system `python3` when no
+    venv exists — resolving both regardless of the shell's cwd because it anchors
+    on `$CLAUDE_PROJECT_DIR`. Guards the CR-OA-010 hook fix (no more
+    `ModuleNotFoundError: No module named 'vidushi_oa'` at session start).
+    """
+
+    def _hook_command(self):
+        settings = _load_settings()
+        cmds = [
+            h["command"]
+            for h in _iter_session_start_commands(settings)
+            if h.get("type") == "command" and "store.py" in h.get("command", "")
+        ]
+        self.assertEqual(len(cmds), 1, f"expected one store.py SessionStart command, got: {cmds!r}")
+        return cmds[0]
+
+    def _run_hook(self, project_dir):
+        # Execute the VERBATIM hook command with CLAUDE_PROJECT_DIR set, from a
+        # NEUTRAL cwd (the tempdir root, never the repo) to prove the fix is
+        # cwd-independent — the pre-fix bug only surfaced when cwd != repo root.
+        cmd = self._hook_command()
+        env = dict(os.environ)
+        env["CLAUDE_PROJECT_DIR"] = project_dir
+        return subprocess.run(
+            ["sh", "-c", cmd],
+            capture_output=True, text=True, env=env,
+            cwd=tempfile.gettempdir(),
+        )
+
+    def test_command_is_project_dir_anchored_with_venv_preference_and_fallback(self):
+        cmd = self._hook_command()
+        # Interpreter and script both anchored on $CLAUDE_PROJECT_DIR (cwd-independent).
+        self.assertIn("CLAUDE_PROJECT_DIR", cmd)
+        # Preferred interpreter: the repo venv python (sees the editable install).
+        self.assertIn(".venv/bin/python", cmd)
+        # Fallback interpreter for the no-venv (e.g. global-install) case.
+        self.assertIn("python3", cmd)
+
+    def test_selects_venv_python_when_present(self):
+        proj = tempfile.mkdtemp(prefix="oa-cr010d-hooksel-")
+        self.addCleanup(shutil.rmtree, proj, ignore_errors=True)
+        os.makedirs(os.path.join(proj, ".venv", "bin"))
+        os.makedirs(os.path.join(proj, "scripts"))
+        venv_py = os.path.join(proj, ".venv", "bin", "python")
+        # Stand-in interpreter that identifies itself and ignores its script arg.
+        with open(venv_py, "w", encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\necho VENV_PYTHON_RAN\n")
+        os.chmod(venv_py, 0o755)
+        # Stub store.py, reached only if the fallback python3 is (wrongly) chosen.
+        with open(os.path.join(proj, "scripts", "store.py"), "w", encoding="utf-8") as fh:
+            fh.write('print("SYSTEM_PYTHON_RAN")\n')
+
+        result = self._run_hook(proj)
+        self.assertEqual(result.returncode, 0, f"stderr: {result.stderr}")
+        self.assertIn("VENV_PYTHON_RAN", result.stdout)
+        self.assertNotIn("SYSTEM_PYTHON_RAN", result.stdout)
+
+    def test_falls_back_to_system_python3_when_venv_absent(self):
+        proj = tempfile.mkdtemp(prefix="oa-cr010d-hooksel-")
+        self.addCleanup(shutil.rmtree, proj, ignore_errors=True)
+        os.makedirs(os.path.join(proj, "scripts"))  # NB: no .venv
+        with open(os.path.join(proj, "scripts", "store.py"), "w", encoding="utf-8") as fh:
+            fh.write('print("SYSTEM_PYTHON_RAN")\n')
+
+        result = self._run_hook(proj)
+        self.assertEqual(result.returncode, 0, f"stderr: {result.stderr}")
+        self.assertIn("SYSTEM_PYTHON_RAN", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
