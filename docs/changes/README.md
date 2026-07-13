@@ -5,7 +5,7 @@ ordering. Pick the next `PENDING` CR whose dependencies are all `COMPLETED`. Sta
 never inside a CR spec file.
 
 - **Design contracts:** [`PRD-lifecycle-domain-model.md`](../research/PRD-lifecycle-domain-model.md) (domain model) · [`PRD-distribution-release.md`](../research/PRD-distribution-release.md) (packaging + v0.1.0)
-- **Decision notes:** [`DN-persistence-mongodb.md`](../research/DN-persistence-mongodb.md) · [`DN-agent-interface-toon.md`](../research/DN-agent-interface-toon.md) · [`DN-packaging-distribution.md`](../research/DN-packaging-distribution.md)
+- **Decision notes:** [`DN-persistence-mongodb.md`](../research/DN-persistence-mongodb.md) · [`DN-agent-interface-toon.md`](../research/DN-agent-interface-toon.md) · [`DN-packaging-distribution.md`](../research/DN-packaging-distribution.md) · [`DN-purchases-persistence.md`](../research/DN-purchases-persistence.md)
 - **Canonical states:** `PENDING` · `IN_PROGRESS` · `COMPLETED` · `SUPERSEDED` · `DEFERRED`.
 
 ## Execution model — Solo single-orchestrator (no Mainline / parallel Tracks)
@@ -37,6 +37,8 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-012](CR-OA-012-unified-skill.md) | Unified `vidushi-oa` skill (cross-harness) | feature | COMPLETED (2026-07-13) | 011 | 6 · v0.1.0 |
 | [CR-OA-013](CR-OA-013-disposition-aware-sweep.md) | Disposition-aware `due-sweep` | feature | COMPLETED (2026-07-13) | 007 | 6 · v0.1.0 |
 | [CR-OA-014](CR-OA-014-aggregate-tally.md) | Aggregate tally in the TOON envelope | feature | COMPLETED (2026-07-13) | 010 | 6 · v0.1.0 |
+| [CR-OA-015](CR-OA-015-orders-store.md) | `orders` delivery-lifecycle store | feature | PENDING | 005, 007 | 7 |
+| [CR-OA-016](CR-OA-016-unified-skill-parity.md) | Complete unified skill (supersede legacy) | docs | PENDING | 012, 015 | 7 |
 
 ## v0.1.0 milestone — Wave 6
 
@@ -57,6 +59,25 @@ finish` gate (`~/.claude/scripts/skill-release-gate.py`, declared in `.skill-rel
   ship **privately** (git-install) and go public later.
 - **Beyond v0.1.0 (roadmap, not yet CRs):** reporting/export verb · 3rd mailbox (Yahoo — roll-our-own) ·
   attention TUI (needs a storyboard) · CI/CD (after OSS) · MCP wrapper (only if a non-CLI harness needs it).
+
+## Wave 7 — unified-skill parity (post-v0.1.0)
+
+CRs **015–016** make the unified `vidushi-oa` skill (CR-OA-012) a **complete drop-in** that formally
+supersedes the seven legacy `~/.claude/skills/` role-skills + the `inbox-analyst` agent (pre-0.1.0
+vestiges that live outside the repo). A gap review found the unified skill ~85% there — a correct
+conceptual + safety + backend superset — but with two functional holes and a layer of operational
+detail compressed out:
+
+- **015** adds the missing **`orders`** store (the fulfilment state machine) so the purchase domain
+  persists on the backend instead of a phantom placeholder, and revises PRD §3 to split fulfilment
+  off `invoices` — design in [`../research/DN-purchases-persistence.md`](../research/DN-purchases-persistence.md).
+- **016** corrects the invalid `cases.status` enum, wires the purchase domain to `orders`, gives
+  `insurance` a first-class domain section, restores the operational specifics via
+  `skills/vidushi-oa/references/`, and flips the roster (CLAUDE.md + README) to the unified skill.
+  Its ACs **are** the coverage matrix.
+
+**Order:** 015 → 016 (the skill's purchase domain needs the store). Both run on feature branches;
+015 is a code CR (RED/GREEN/VERIFY), 016 is docs/skill (orchestrator-authored + grep/validate gates).
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
