@@ -46,9 +46,12 @@ CRs **011–014** constitute the **v0.1.0 release** (design contract:
 `due-sweep`, aggregate tally). **Order:** 011 → 012 (the skill needs the package), with 013 + 014
 (independent store refinements) runnable any time after their deps.
 
-**✅ All four merged (2026-07-13) — v0.1.0 scope is complete and ready to cut.** Remaining pre-tag steps are
-operational, not CRs: the release tag/version bump, plus the two parked data ops (drop the old
-`office_assistant` backup DB, chezmoi-commit the refreshed snapshots).
+**✅ All four merged (2026-07-13) — v0.1.0 is cut and shipped.** The operational pre-tag steps are all
+done: the release tag/version bump landed, and both parked data ops are resolved (the old
+`office_assistant` backup DB was dropped post-v0.1.0 — see **Follow-up tasks** below — and the refreshed
+snapshots were chezmoi-committed). Future releases are now guarded by a standing pre-`git flow release
+finish` gate (`~/.claude/scripts/skill-release-gate.py`, declared in `.skill-release.toml`; see
+[`../../scripts/README.md`](../../scripts/README.md)).
 
 - **Pending decision — license (DN §6):** OSS-vs-private gates CI/CD *and* a public PyPI publish. v0.1.0 can
   ship **privately** (git-install) and go public later.
