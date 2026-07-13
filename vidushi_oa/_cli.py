@@ -275,9 +275,30 @@ def cmd_query(a):
     if _FMT == "toon" and not getattr(a, "full", False) and not fields:
         rows = [_toon_shape(r, a.type) for r in rows]
     if _FMT == "toon":
-        out({"count": len(rows), "results": rows, "next": _query_next(a.type, rows)})
+        out({"count": len(rows), "tally": _query_tally(docs), "results": rows, "next": _query_next(a.type, rows)})
     else:
         out(rows)
+
+
+def _query_tally(docs):
+    """By-status tally (+ acct/disposition when present) for the TOON query
+    envelope (AXI #4), derived from the already-fetched docs — no extra query.
+    status always present (missing -> UNKNOWN, so it sums to count); acct /
+    disposition included only when at least one doc carries them."""
+    status = {}
+    for d in docs:
+        st = d.get("status") or "UNKNOWN"
+        status[st] = status.get(st, 0) + 1
+    tally = {"status": status}
+    for axis in ("acct", "disposition"):
+        m = {}
+        for d in docs:
+            v = d.get(axis)
+            if v is not None:
+                m[v] = m.get(v, 0) + 1
+        if m:
+            tally[axis] = m
+    return tally
 
 
 def _query_next(type_, rows):

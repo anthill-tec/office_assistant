@@ -1,6 +1,6 @@
 # CR-OA-014 — Aggregate tally in the TOON query envelope
 
-**Status:** PENDING
+**Status:** COMPLETED (2026-07-13)
 **Type:** feature
 **Priority:** Low
 **Depends on:** 010
@@ -13,7 +13,7 @@
 
 The TOON `query` envelope (`{count, results, next}`, CR-OA-010) carries a `count` but no breakdown —
 finishing AXI #4 means adding a cheap **tally** so the agent doesn't round-trip a separate `stats` call.
-TOON-only (decision "B"); `--json`/`OA_FORMAT=json` stays a bare array.
+TOON-only (decision "B"); `--json`/`VIDUSHI_FORMAT=json` stays a bare array.
 
 ## Scope
 
@@ -25,10 +25,19 @@ second axis cheaply (`acct` on all; `disposition` on subscriptions), include it 
 (a bare array, no `tally`).
 
 ## Acceptance criteria
-- [ ] §S1 `query subscriptions` (TOON) → `from_toon(stdout)` has a `tally.status` map whose values sum to `count`, plus a `tally.disposition` map (subscriptions carry `disposition`).
-- [ ] §S1 `query invoices` (TOON) → `tally.status` present and sums to `count`; `tally.acct` present.
-- [ ] §S1 an empty query (TOON) → `count:0` and an empty/zero `tally` (no crash).
-- [ ] **(contract)** `query <type> --json` / `OA_FORMAT=json` → a bare JSON array with **no** `tally` (decision B, byte-stable).
+- [x] §S1 `query subscriptions` (TOON) → `from_toon(stdout)` has a `tally.status` map whose values sum to `count`, plus a `tally.disposition` map (subscriptions carry `disposition`).
+- [x] §S1 `query invoices` (TOON) → `tally.status` present and sums to `count`; `tally.acct` present.
+- [x] §S1 an empty query (TOON) → `count:0` and an empty/zero `tally` (no crash).
+- [x] **(contract)** `query <type> --json` / `VIDUSHI_FORMAT=json` → a bare JSON array with **no** `tally` (decision B, byte-stable).
+
+## Close-out (2026-07-13)
+RED (8 tests, `tests/test_cr_oa_014_tally.py`) → GREEN: a `_query_tally(docs)` helper adds a **`tally`** to the
+TOON `query` envelope (`{count, tally, results, next}`) — a `by-status` map (missing→`UNKNOWN`, so it sums to
+`count`) plus `acct`/`disposition` sub-maps when any doc carries them. Derived from the already-fetched
+`docs` (pre-projection), so it's correct even when `--fields`/`_toon_shape` drops those fields from the
+emitted rows — **no second Mongo query**. The `--json`/`VIDUSHI_FORMAT=json` path is untouched (bare array,
+no tally — decision B, byte-stable). VERIFY: PASS, no blocking (only the `OA_FORMAT`→`VIDUSHI_FORMAT` spec
+wording nit, fixed above). Final gate: **185/185 green**. Completes AXI principle #4.
 
 ## Estimated size
 S — a tally computed in `cmd_query`'s TOON envelope path.
