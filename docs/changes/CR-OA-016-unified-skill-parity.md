@@ -64,12 +64,17 @@ replaces the agent). Supersession is thus a real swap — install the bundle ove
 a roster note alone.
 
 ### §S6 Package & formal install as a vercel/skills bundle
-The `skills/vidushi-oa/` bundle (SKILL.md + `references/`) installs into **any agentic harness** via
-the vercel/skills standard — `npx skills add <source>` pointed at the repo's `skills/vidushi-oa`
-(no `skill.json` / manifest required; the SKILL.md defines the skill and `references/` travel with
-it). Document the two-step install in `README.md` + `scripts/README.md`: (1) the engine prerequisite
-`pip install vidushi-oa` then `voa setup`; (2) `npx skills add …` to drop the skill into the target
-harness's skills dir. The existing `agentskills validate` gate guards the bundle shape.
+Make the `skills/vidushi-oa/` bundle **install-ready** and document the install for any harness. It is
+already a conformant vercel/skills flat-layout skill (`skills/vidushi-oa/SKILL.md`, `name` matches the
+dir; no `skill.json`/manifest required); `references/` (§S4) sit inside it so they travel with
+`npx skills add`, and the existing `agentskills validate` gate guards the shape. Document **two
+install paths** in `README.md` + `scripts/README.md`:
+- **Local / dev (works today):** `npx skills add ./skills/vidushi-oa` for the skill + an in-repo
+  `pip install -e .` (or a git install) for the engine, then `voa setup` — no public distribution needed.
+- **Public** (`pip install vidushi-oa` + `npx skills add github.com/antojk/office_assistant//skills/vidushi-oa`):
+  activates once the engine is published to PyPI and the repo is public — **gated on the OSS-license
+  decision** (verified 2026-07-13: `pip install vidushi-oa` is not yet on PyPI). §S6 makes the bundle
+  install-ready and documents both paths; it does **not** itself perform the license-gated PyPI publish.
 
 ## Acceptance criteria
 
@@ -92,8 +97,8 @@ harness's skills dir. The existing `agentskills validate` gate guards the bundle
 - [ ] Fidelity: every legacy capability maps to a domain section or a `references/` file — the coverage matrix in this Scope leaves no legacy feature unaccounted for.
 
 ### §S6
-- [ ] `README.md` + `scripts/README.md` document the exact two-step install: `pip install vidushi-oa` + `voa setup` (engine), then `npx skills add <…/skills/vidushi-oa>` (skill).
-- [ ] The bundle installs as one unit: `skills/vidushi-oa/references/*.md` sit inside the skill dir so `npx skills add` carries them; `agentskills validate skills/vidushi-oa` exits `0`.
+- [ ] The bundle is self-contained + install-ready: `skills/vidushi-oa/` holds `SKILL.md` (name matches dir) + `references/*.md`; `agentskills validate skills/vidushi-oa` exits `0`; `npx skills add ./skills/vidushi-oa` resolves the skill locally.
+- [ ] `README.md` + `scripts/README.md` document **both** install paths (local/dev now; public `pip`+`npx` once published) and name the OSS-license / PyPI-publish gate for the public path.
 
 ## Estimated size
 M — prose + five reference files + two roster docs + the vercel/skills install path; grep/validate-gated.
@@ -103,7 +108,9 @@ No package code (the `orders` store is CR-OA-015).
 Re-bloating `SKILL.md` past the ~500-line guideline — mitigated by pushing specifics to
 `references/`. Losing a nuance again — mitigated by the fidelity AC (§S5) + grep gates.
 Supersession still needs the user to run the install + prune the legacy `~/.claude/skills/` files
-(outside the repo) — the CR documents the exact steps so it's a one-time mechanical swap.
+(outside the repo) — the CR documents the exact steps so it's a one-time mechanical swap. The
+**public** one-line install depends on the pending OSS-license / PyPI-publish decision; the
+local/dev install path is unblocked and ships in this CR.
 
 ## Non-goals
 Deleting the legacy skill files from `~/.claude/` (outside the repo; the user prunes them);
