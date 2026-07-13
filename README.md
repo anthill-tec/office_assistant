@@ -81,10 +81,11 @@ Full field reference: `data/schema.md`. CLI details: `scripts/README.md`.
 
 > **Local `.venv` dependency.** On externally-managed Pythons (Arch/PEP 668) the in-repo install lives in
 > a repo `.venv` (editable: `python -m venv .venv && .venv/bin/pip install -e .`). The Claude Code
-> **SessionStart** hook in `.claude/settings.json` invokes `"$CLAUDE_PROJECT_DIR/.venv/bin/python"` (not
-> bare `python3`, which is the system interpreter and can't see the venv), so **that `.venv` must exist**
-> for the start-of-session attention worklist to run. If you ever recreate the environment, rebuild it
-> with the venv command above (then `voa setup`).
+> **SessionStart** hook in `.claude/settings.json` prefers `"$CLAUDE_PROJECT_DIR/.venv/bin/python"` when
+> that venv exists (the system `python3` can't see the editable install) and otherwise falls back to
+> system `python3` — so a global `pip install vidushi-oa` still works and a missing `.venv` no longer
+> breaks session start. To use the venv path, rebuild the environment with the command above (then
+> `voa setup`).
 
 ---
 

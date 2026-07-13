@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/python\" \"$CLAUDE_PROJECT_DIR/scripts/store.py\""
+            "command": "sh -c 'P=\"$CLAUDE_PROJECT_DIR/.venv/bin/python\"; [ -x \"$P\" ] || P=python3; exec \"$P\" \"$CLAUDE_PROJECT_DIR/scripts/store.py\"'"
           }
         ]
       }
