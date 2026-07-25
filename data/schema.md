@@ -34,7 +34,11 @@ cases the RMA steps. `store.py attention` surfaces any row with an OPEN action o
 **Transitions** (`transitions.py`): purchase `NEW→IN_PROGRESS` (`paid`/`shipped`) `→COMPLETED` (`delivered`);
 warranty `IN_PROGRESS→EXPIRED` (`expire` ⇒ open `renew-or-extend`) `→IN_PROGRESS` (`renew`); recurring
 `IN_PROGRESS→DUE` (`renewal-window` ⇒ open the renew/cancel action) `→IN_PROGRESS` (`renewed`) /
-`→COMPLETED` (`cancelled`/`lapsed`). Illegal `(status, event)` pairs are rejected and write nothing.
+`→COMPLETED` (`cancelled`/`lapsed`); order fulfilment `shipped`/`out-for-delivery` advance `stage` within
+`IN_PROGRESS`, `delivered`→`COMPLETED`, customs events (`held-at-customs`/`duty-demanded`/`kyc-requested`/
+`clarification-requested`) open the matching OPEN action, and `cancelled`/`returned`/`refunded`/
+`delivery-failed` land `COMPLETED` with the terminal side-state recorded in `stage`. Illegal `(status,
+event)` pairs are rejected and write nothing.
 
 ### Foreign keys & joins
 Records reference each other by id. `store.py ... --expand <fk[,fk...]>` resolves them inline (adds
@@ -42,9 +46,9 @@ Records reference each other by id. `store.py ... --expand <fk[,fk...]>` resolve
 | FK field | → store | used on |
 |---|---|---|
 | `contact_id` | contacts | products (manufacturer support), warranties, cases, invoices |
-| `invoice_id` | invoices | warranties, cases, products |
+| `invoice_id` | invoices | warranties, cases, products, **orders** |
 | `warranty_id` | warranties | cases, products, invoices |
-| `product_id` | products | warranties, cases, insurance |
+| `product_id` | products | warranties, cases, insurance, **orders** |
 | `subscription_id` | subscriptions | invoices |
 `contacts.kind` ∈ `reseller`|`manufacturer`|`service` distinguishes who a contact is. A product's
 `contact_id` should point to a **manufacturer** (or service) contact, not the reseller it was bought from.
@@ -67,7 +71,7 @@ Example: `store.py get products prod_fnirsi_tmp-610s --expand contact_id,invoice
 | verified_source | str | how the support contact was confirmed |
 | notes | str\|null | |
 
-## invoices — `invoices.jsonl`  (purchase documents: PO / invoice / receipt / credit note)
+## invoices — `invoices.jsonl`  (purchase **documents**: PO / invoice / receipt / credit note — the fulfilment/delivery lifecycle lives in `orders`)
 | field | type | notes |
 |------|------|------|
 | id | str | `doc_<vendor>_<number-or-date>` |
@@ -85,6 +89,35 @@ Example: `store.py get products prod_fnirsi_tmp-610s --expand contact_id,invoice
 | file | str\|null | saved copy path under `documents/...`, or null if only pinned |
 | warranty_id | str\|null | link to a warranties record |
 | source | obj | mail pin (see above) |
+
+## orders — `orders.jsonl`  (purchase **fulfilment** lifecycle — the delivery state machine; the proof-of-purchase document lives in `invoices`)
+| field | type | notes |
+|------|------|------|
+| id | str | `ord_<merchant>_<number-or-date>` |
+| merchant | str | who it was bought from (reseller/marketplace) — the id anchor |
+| number | str\|null | order/reference number |
+| items | [str] | line items (short) |
+| amount | num\|null | order total |
+| currency | str\|null | e.g. INR, USD |
+| order_date | str\|null | YYYY-MM-DD |
+| carrier | str\|null | shipping carrier |
+| tracking | str\|null | AWB / tracking number |
+| eta | str\|null | expected delivery YYYY-MM-DD (a past `eta` ⇒ `delivery-sweep` chases) |
+| stage | str\|null | human-readable fine detail, distinct from `status`: `Ordered · Paid · Processing · Shipped · In transit · Customs clearance · Out for delivery · Delivered`, plus terminal side-states `Cancelled · Returned · Refunded · Delivery-failed` |
+| last_event | str\|null | latest tracking-event text |
+| last_event_date | str\|null | YYYY-MM-DD of the last event (>7 days ago ⇒ `delivery-sweep` chases) |
+| alias | str\|null | masked buying alias / billing email |
+| acct | enum | personal \| business |
+| invoice_id | str\|null | FK→invoices (proof of purchase) |
+| product_id | str\|null | FK→products |
+| source | obj | mail pin (see above) |
+
+**status:** the 4 shared values only — `NEW → UNKNOWN → IN_PROGRESS → COMPLETED` (no `EXPIRED`/`DUE`, since
+fulfilment is not a recurring domain); `COMPLETED` = delivered **or** a terminal side-state (the flavour is in `stage`).
+**action set:** `payment · shipment · in-transit · out-for-delivery · delivery · customs-clearance ·
+duty-payment · kyc · clarification · redelivery · return · refund · stuck-chase`. The customs sub-states are
+OPEN actions (`customs-clearance`/`duty-payment`/`kyc`/`clarification`), so `store.py attention` surfaces a
+parcel awaiting the user; `delivery-sweep` opens `stuck-chase` on a stalled order.
 
 ## warranties — `warranties.jsonl`
 | field | type | notes |

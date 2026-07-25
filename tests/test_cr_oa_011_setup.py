@@ -42,8 +42,11 @@ STORE = os.path.join(SCRIPTS, "store.py")
 sys.path.insert(0, SCRIPTS)
 
 TEST_DB = "vidushi_oa_test"
-STORE_TYPES = ["contacts", "invoices", "warranties", "cases", "products",
-               "subscriptions", "insurance"]
+# Derive the expected collection roster from the registry so a newly-registered
+# store doesn't re-break these provisioning invariants (the exact roster is pinned
+# by CR-OA-001). SCRIPTS is on sys.path above, so `import store` resolves the shim.
+import store  # noqa: E402
+STORE_TYPES = list(store.STORES)
 # Nothing should be listening here — used to prove the unreachable-connection path.
 UNREACHABLE_URI = "mongodb://127.0.0.1:59999"
 
