@@ -1,25 +1,27 @@
-"""CR-OA-018 §S1 — persistence backend factory.
+"""CR-OA-018 §S3 — persistence backend factory.
 
 `get_backend(name)` resolves the active persistence backend, selected by the `name` argument
-or the `VIDUSHI_BACKEND` env var. `mongo` is the backend today; `sqlite` (the future default)
-lands in §S2. An unknown name raises `ValueError`.
+or the `VIDUSHI_BACKEND` env var. `sqlite` is the default backend; `mongo` remains selectable.
+Backend modules are imported LAZILY so a SQLite-only install (no pymongo) works — pymongo is
+imported ONLY when the mongo backend is requested. An unknown name raises `ValueError`.
 """
 import os
 
 from vidushi_oa.backends.base import Backend
-from vidushi_oa.backends.mongo import MongoBackend
-from vidushi_oa.backends.sqlite import SqliteBackend
-
-_BACKENDS = {"mongo": MongoBackend, "sqlite": SqliteBackend}
 
 
 def get_backend(name=None):
-    """Return the persistence `Backend` for `name` (default from `VIDUSHI_BACKEND`, else mongo)."""
-    name = name or os.environ.get("VIDUSHI_BACKEND", "mongo")
-    try:
-        return _BACKENDS[name]()
-    except KeyError:
-        raise ValueError(f"unknown backend {name!r}; known: {sorted(_BACKENDS)}")
+    """Return the persistence `Backend` for `name` (default from `VIDUSHI_BACKEND`, else sqlite)."""
+    name = name or os.environ.get("VIDUSHI_BACKEND", "sqlite")
+    if name == "sqlite":
+        from vidushi_oa.backends.sqlite import SqliteBackend
+
+        return SqliteBackend()
+    if name == "mongo":
+        from vidushi_oa.backends.mongo import MongoBackend
+
+        return MongoBackend()
+    raise ValueError(f"unknown backend {name!r}; known: ['mongo', 'sqlite']")
 
 
 __all__ = ["Backend", "get_backend"]
