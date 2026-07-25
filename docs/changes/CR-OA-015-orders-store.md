@@ -1,6 +1,6 @@
 # CR-OA-015 — `orders` delivery-lifecycle store
 
-**Status:** PENDING
+**Status:** DONE (2026-07-25)
 **Type:** feature
 **Priority:** High
 **Depends on:** 005, 007
@@ -66,23 +66,23 @@ Stuck orders surface in `voa attention` via the OPEN action.
 ## Acceptance criteria
 
 ### §S1
-- [ ] `voa add orders --json '{"merchant":"Acme","number":"A1",...}'` mints id `ord_acme_a1`; `STORES` and `PREFIX` both contain `orders`.
-- [ ] `orders.schema.json` **rejects** `{"status":"delivered"}` (not in `{NEW,UNKNOWN,IN_PROGRESS,COMPLETED}`) with a `WriteError`, and **accepts** `{"status":"IN_PROGRESS"}`.
-- [ ] `voa get orders <id> --expand invoice_id,product_id` returns `invoice_id_obj` / `product_id_obj` when the FKs are set (via the **existing** FK_MAP entries — no new mapping added).
-- [ ] After `voa init`, the `orders` collection has a `unique:true` `id_1` index and a `$jsonSchema` validator; `voa validate orders` on seeded valid rows returns `[0]:`.
+- [x] `voa add orders --json '{"merchant":"Acme","number":"A1",...}'` mints id `ord_acme_a1`; `STORES` and `PREFIX` both contain `orders`.
+- [x] `orders.schema.json` **rejects** `{"status":"delivered"}` (not in `{NEW,UNKNOWN,IN_PROGRESS,COMPLETED}`) with a `WriteError`, and **accepts** `{"status":"IN_PROGRESS"}`.
+- [x] `voa get orders <id> --expand invoice_id,product_id` returns `invoice_id_obj` / `product_id_obj` when the FKs are set (via the **existing** FK_MAP entries — no new mapping added).
+- [x] After `voa init`, the `orders` collection has a `unique:true` `id_1` index and a `$jsonSchema` validator; `voa validate orders` on seeded valid rows returns `[0]:`.
 
 ### §S2
-- [ ] `voa event orders <id> delivered` on an `IN_PROGRESS` order → status `COMPLETED`; an unmapped event (e.g. `bogus`) errors with **no** write to the row.
-- [ ] `voa event orders <id> held-at-customs` opens an OPEN `customs-clearance` action; `voa attention orders` then lists that row.
+- [x] `voa event orders <id> delivered` on an `IN_PROGRESS` order → status `COMPLETED`; an unmapped event (e.g. `bogus`) errors with **no** write to the row.
+- [x] `voa event orders <id> held-at-customs` opens an OPEN `customs-clearance` action; `voa attention orders` then lists that row.
 
 ### §S3
-- [ ] An `IN_PROGRESS` order with `last_event_date` 8 days ago → `voa delivery-sweep` opens exactly **one** `stuck-chase` action; a second `delivery-sweep` opens **none** (idempotent via the no-open-`stuck-chase` guard); `--dry-run` writes nothing.
-- [ ] An `IN_PROGRESS` order with a **past `eta`** (but a recent `last_event_date`) also gets a `stuck-chase` from `delivery-sweep`.
-- [ ] Caller-existence: `voa --help` lists `delivery-sweep`, and a non-test path invokes the sweep function (grep returns ≥1 non-test caller).
+- [x] An `IN_PROGRESS` order with `last_event_date` 8 days ago → `voa delivery-sweep` opens exactly **one** `stuck-chase` action; a second `delivery-sweep` opens **none** (idempotent via the no-open-`stuck-chase` guard); `--dry-run` writes nothing.
+- [x] An `IN_PROGRESS` order with a **past `eta`** (but a recent `last_event_date`) also gets a `stuck-chase` from `delivery-sweep`.
+- [x] Caller-existence: `voa --help` lists `delivery-sweep`, and a non-test path invokes the sweep function (grep returns ≥1 non-test caller).
 
 ### §S4
-- [ ] `data/schema.md` documents the `orders` status + action vocabulary and its `invoice_id` / `product_id` FKs.
-- [ ] PRD §3 "Purchase / fulfilment" row names store `orders`; the `invoices` row is restated as the document domain.
+- [x] `data/schema.md` documents the `orders` status + action vocabulary and its `invoice_id` / `product_id` FKs.
+- [x] PRD §3 "Purchase / fulfilment" row names store `orders`; the `invoices` row is restated as the document domain.
 
 ## Estimated size
 M — one store on the existing domain-agnostic rails (STORES / PREFIX / FK_MAP / validator /
