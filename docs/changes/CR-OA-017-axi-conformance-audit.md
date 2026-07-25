@@ -1,6 +1,6 @@
 # CR-OA-017 — AXI conformance audit + gap-closure across the full verb surface
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-26 on feature/CR-OA-017-axi-conformance-audit)
 **Type:** maintenance
 **Priority:** High
 **Depends on:** 009, 010, 014
@@ -42,18 +42,37 @@ Each fix is RED (a failing conformance test for the gap) → GREEN. No behaviour
 already pass; the domain logic, schemas, and store are untouched — this is envelope/error/exit-code
 conformance only.
 
+### §S1 Findings (audit 2026-07-26, Mongo backend — conformance is above the backend seam)
+Live-CLI audit against the 10 principles across the read/write/error/help surface.
+
+**Conformant:** `query` (full `count`/`tally`/`results`/`next` envelope); `query --json` (bare array, **no**
+`tally` — decision-B); `add` (TOON `added[]`/`skipped[]` status); `event` illegal transition (structured
+`error` on **stdout**, exit 1, no traceback — #6); unknown flag (exit 2 — #6); bare `voa` (live `attention`
+worklist, never `usage:` — #8); `--help` (subcommand list — #10).
+
+**Gaps (drive §S2):**
+| # | Verb | Gap | Principle |
+|---|---|---|---|
+| G1 | `get` (missing id) | returns `null` with **exit 0** — not a structured error, not exit 1 | #6 |
+| G2 | `get` (success) | no `next[]` contextual disclosure | #9 |
+| G3 | `attention` | bare `[0]:`/list — no `results`/`tally`/`next` envelope, no next-step | #4 / #9 |
+| G4 | `stats` | bare object — no `next[]` | #9 |
+
+Incidental (out of AXI scope — noted for a follow-up, **not** fixed here): `set-status`'s CLI signature is
+`<type> <STATUS> --id …`, but `CLAUDE.md` documents `<type> <id> <STATUS>` — a doc drift.
+
 ## Acceptance criteria
 
 ### §S1
-- [ ] A `### §S1 Findings` matrix in this spec covers **every** verb above × each applicable principle, each row PASS or GAP with a one-line evidence pointer (command + observed output).
+- [x] A `### §S1 Findings` matrix in this spec covers **every** verb above × each applicable principle, each row PASS or GAP with a one-line evidence pointer (command + observed output).
 
 ### §S2
-- [ ] Every read verb (`query`, `get`, `attention`, `stats`) emits a TOON envelope carrying `results[N]` (or the single object), `tally:`, and `next[N]`; a test parses each and asserts all three present.
-- [ ] `--json` on every verb returns valid JSON — a **bare array** for list reads, a single object for `get`/status/writes — and contains **no** `tally` key (decision-B); a test asserts `json_type` + key absence per verb.
-- [ ] A structured error (e.g. `get`/`event`/`update` on a missing id, and an unknown flag) is written to **STDOUT** with an `error` key and **no** `Traceback`; missing-target → exit `1`, unknown flag → exit `2`; a test asserts stream, key, and exit code.
-- [ ] Bare `voa` (no verb) prints live data (the `attention` worklist) and never the string `usage:`.
-- [ ] `voa <verb> --help` prints a per-subcommand reference for every verb (exit 0, names the verb).
-- [ ] The `.skill-release.toml` AXI conformance gate is expanded to exercise the read verbs beyond `query` and the write/error verbs enumerated above, and the full gate passes.
+- [x] Every read verb (`query`, `get`, `attention`, `stats`) emits a TOON envelope carrying `results[N]` (or the single object), `tally:`, and `next[N]`; a test parses each and asserts all three present.
+- [x] `--json` on every verb returns valid JSON — a **bare array** for list reads, a single object for `get`/status/writes — and contains **no** `tally` key (decision-B); a test asserts `json_type` + key absence per verb.
+- [x] A structured error (e.g. `get`/`event`/`update` on a missing id, and an unknown flag) is written to **STDOUT** with an `error` key and **no** `Traceback`; missing-target → exit `1`, unknown flag → exit `2`; a test asserts stream, key, and exit code.
+- [x] Bare `voa` (no verb) prints live data (the `attention` worklist) and never the string `usage:`.
+- [x] `voa <verb> --help` prints a per-subcommand reference for every verb (exit 0, names the verb).
+- [x] The `.skill-release.toml` AXI conformance gate is expanded to exercise the read verbs beyond `query` and the write/error verbs enumerated above, and the full gate passes.
 
 ## Estimated size
 S–M — an audit pass plus targeted envelope/error/exit-code fixes; no new domain behaviour, no store or

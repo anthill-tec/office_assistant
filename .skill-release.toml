@@ -113,3 +113,38 @@ name = "decision-B: --json stays a bare array (no tally)"
 argv = ["query", "subscriptions", "--json"]
 json_type = "list"
 reject = ["tally"]
+
+# ---- CR-OA-017: AXI conformance across the read/error surface (beyond query) ----
+[[check]]
+name = "AXI #6 (CR-017): get on a missing id is a structured error, not null"
+argv = ["get", "subscriptions", "sub_does_not_exist"]
+allow_nonzero = true
+combine_stderr = true
+expect = ["error"]
+reject = ["Traceback", "null"]
+
+[[check]]
+name = "AXI #9 (CR-017): attention carries a next[] block"
+argv = ["attention", "subscriptions"]
+expect = ["next["]
+
+[[check]]
+name = "AXI #9 (CR-017): stats carries a next[] block"
+argv = ["stats", "subscriptions"]
+expect = ["next["]
+
+[[check]]
+name = "seed a row for the get next-step check"
+argv = ["add", "subscriptions", "--json", "{\"provider\":\"GetNext\",\"category\":\"saas\",\"status\":\"NEW\"}"]
+expect = ["added["]
+
+[[check]]
+name = "AXI #9 (CR-017): get carries a next[] block"
+argv = ["get", "subscriptions", "sub_getnext"]
+expect = ["next["]
+
+[[check]]
+name = "decision-B (CR-017): get --json stays a bare object (no next/tally)"
+argv = ["get", "subscriptions", "sub_getnext", "--json"]
+json_type = "dict"
+reject = ["\"next\"", "\"tally\""]

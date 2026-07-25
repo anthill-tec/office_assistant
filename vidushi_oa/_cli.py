@@ -327,14 +327,26 @@ def cmd_get(a):
     from vidushi_oa import mongo as oa_mongo
     r = oa_mongo.coll(a.type).find_one({"id": a.id}, {"_id": 0})
     if r is None:
-        return out(None)
+        out({"error": "not found", "type": a.type, "id": a.id}); sys.exit(1)
     if a.expand:
         r = expand(r, a.expand.split(","))
     if a.fields:
         r = project(r, a.fields.split(","))
     elif _FMT == "toon" and not getattr(a, "full", False):
         r = _toon_shape(r, a.type)
-    out(r)
+    if _FMT == "toon":
+        out({"result": r, "next": _get_next(a.type, r)})
+    else:
+        out(r)
+
+
+def _get_next(type_, rec):
+    """Next-step templates for a TOON `get` (AXI #9)."""
+    nxt = []
+    if rec.get("id"):
+        nxt.append(f"update {type_} {rec['id']} --json '{{...}}'")
+    nxt.append(f"query {type_} --where <field>=<value>")
+    return nxt[:3]
 
 
 def cmd_add(a):
@@ -386,9 +398,12 @@ def cmd_stats(a):
         counts = {}
         for doc in coll.aggregate([{"$group": {"_id": f"${a.by}", "n": {"$sum": 1}}}]):
             counts[str(doc["_id"])] = doc["n"]
-        out({"type": a.type, "total": total, "by": a.by, "counts": counts})
+        env = {"type": a.type, "total": total, "by": a.by, "counts": counts}
     else:
-        out({"type": a.type, "total": total})
+        env = {"type": a.type, "total": total}
+    if _FMT == "toon":
+        env["next"] = [f"query {a.type} --where <field>=<value>", f"stats {a.type} --by <field>"]
+    out(env)
 
 
 # ── Tracking-state verbs ──────────────────────────────────────────────────────
@@ -465,7 +480,12 @@ def cmd_attention(a):
             res.append({"type": t, "id": d.get("id"),
                         "name": d.get("vendor") or d.get("product") or d.get("provider") or d.get("merchant"),
                         "status": d.get("status") or "UNKNOWN", "open_actions": opens})
-    out(res)
+    if _FMT == "toon":
+        t = a.type or "<type>"
+        out({"count": len(res), "results": res,
+             "next": [f"action-resolve {t} <id> <action>", f"event {t} <id> <event>"]})
+    else:
+        out(res)
 
 
 def cmd_warranty_sweep(a):
