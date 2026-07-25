@@ -41,7 +41,9 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-016](CR-OA-016-unified-skill-parity.md) | Complete unified skill (supersede legacy) | docs | COMPLETED | 012, 015 | 7 |
 | [CR-OA-017](CR-OA-017-axi-conformance-audit.md) | AXI conformance audit + gap-closure (full verb surface) | maintenance | PENDING | 009, 010, 014 | 8 |
 | [CR-OA-018](CR-OA-018-pluggable-backend-and-packaging.md) | Pluggable backend (SQLite default) + GPL-v3 `uv`/PyPI packaging | feature | PENDING | 016, 017 | 8 |
-| [CR-OA-019](CR-OA-019-skill-mail-prerequisites.md) | Skill mail-access prerequisites (declared + orchestrated) | docs | PENDING | 016 | 8 |
+| [CR-OA-019](CR-OA-019-skill-mail-prerequisites.md) | Skill mail-access prerequisites (declared + orchestrated) | docs | SUPERSEDED (by 020) | 016 | 8 |
+| [CR-OA-020](CR-OA-020-embedded-mail-client.md) | Embedded mail client in `voa` (Gmail/Fastmail/Yahoo + vault-first creds) | feature | PENDING | 017 | 9 |
+| [CR-OA-021](CR-OA-021-skill-mail-verbs.md) | Skill revision — `Mailboxes & search` uses `voa mail-*` verbs | docs | PENDING | 016, 020 | 9 |
 
 ## v0.1.0 milestone — Wave 6
 
@@ -100,12 +102,30 @@ engine is mail-agnostic, so these are skill prereqs, not pip-deps), with a machi
 where a harness supports one and per-harness setup docs — honest that the claude.ai Gmail connector is
 harness-specific and not installable.
 
-**Order:** 017 → 018 (packaging ships on the audited, conformant CLI); **019 is independent** (depends
-only on 016) and can run in parallel. §S6/§S4 note: the first PyPI publish, the repo-public flip, and the
-GPL-license/CI packaging-deploy test are **release-branch** ops during `git flow release` (guarded by the
-release gate), not inside 018. CR-OA-018 §S4 performs the **live `vidushi_oa`→SQLite data migration** with
-field-level fidelity (in-record `actions[]`/logs/`documents[]` preserved) + JSONL-snapshot rollback,
-leaving the old Mongo DB intact.
+**Order:** 017 → 018 (packaging ships on the audited, conformant CLI). §S6/§S4 note: the first PyPI
+publish, the repo-public flip, and the GPL-license/CI packaging-deploy test are **release-branch** ops
+during `git flow release` (guarded by the release gate), not inside 018. CR-OA-018 §S4 performs the **live
+`vidushi_oa`→SQLite data migration** with field-level fidelity (in-record `actions[]`/logs/`documents[]`
+preserved) + JSONL-snapshot rollback, leaving the old Mongo DB intact. **CR-OA-019 is SUPERSEDED** — see
+Wave 9.
+
+## Wave 9 — embedded mail access (tokens into the backend)
+
+Reading mail is the last mechanical task still done by the LLM (via mail MCPs). Wave 9 **embeds** it in the
+engine so "read my mail" becomes a pre-computed, TOON-shaped tool call — the framework principle applied to
+mail. Design + primary-source research in
+[`../research/DN-mail-access.md`](../research/DN-mail-access.md).
+
+- **020** adds a **unified mail client** in `voa` over **Gmail / Fastmail / Yahoo** — IMAP common
+  denominator (Gmail via `X-GM-RAW`, Yahoo plain, stdlib `imaplib`) + thin-HTTP **JMAP** for Fastmail; a
+  **vault-first** secret resolver (1Password/Bitwarden primary, OS keyring fallback, `voa` holds only
+  references); and AXI `mail-*` verbs that server-side-search, merge, de-dup, source-tag, and emit TOON.
+  Net new deps ~0–2. This **supersedes CR-OA-019** (no MCP prerequisite once embedded).
+- **021** repoints the skill's "Mailboxes & search" from MCP calls to `voa mail-*` (spec authored at
+  wave-open, once 020's verb surface is final).
+
+**Order:** 017 (conformant CLI) → 020 → 021. Independent of the 018 packaging track; both can proceed in
+parallel after 017.
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the

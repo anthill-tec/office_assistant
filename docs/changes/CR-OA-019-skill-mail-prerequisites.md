@@ -1,6 +1,6 @@
 # CR-OA-019 — Skill mail-access prerequisites (declared + orchestrated)
 
-**Status:** PENDING
+**Status:** SUPERSEDED (2026-07-25 by DN-mail-access + CR-OA-020)
 **Type:** docs
 **Priority:** High
 **Depends on:** 016
@@ -8,6 +8,10 @@
 **Phase:** Wave 8 (distribution readiness)
 **Design reference:** [DN-packaging-distribution.md](../research/DN-packaging-distribution.md) (Decision 8) · CR-OA-016 (the unified skill)
 **Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
+
+> **Superseded:** [DN-mail-access.md](../research/DN-mail-access.md) decided to **embed** mail access in
+> the engine (a unified `voa` client over Gmail/Fastmail/Yahoo) rather than declare mail-MCP
+> prerequisites — so there is no MCP prerequisite to declare. This CR's intent is carried by CR-OA-020.
 
 ## Context
 
