@@ -205,19 +205,31 @@ class PyprojectTest(unittest.TestCase):
         # negative: the old `oa` console name is not declared
         self.assertNotIn("oa", scripts)
 
-    def test_dependencies_include_pymongo_and_python_toon(self):
+    def test_base_deps_are_toon_and_jsonschema_pymongo_is_optional(self):
+        # §S3 — pymongo is OPTIONAL (SQLite is the default backend); base deps carry
+        # only python-toon + jsonschema.
         deps = self.data["project"].get("dependencies", [])
         self.assertTrue(deps, "expected [project].dependencies to be non-empty")
-        joined = " ".join(deps).lower()
-        self.assertTrue(
-            any(d.lower().startswith("pymongo") for d in deps),
-            f"expected a pymongo dependency, got: {deps}",
-        )
         self.assertTrue(
             any(d.lower().replace("_", "-").startswith("python-toon") for d in deps),
             f"expected a python-toon dependency, got: {deps}",
         )
-        self.assertIn("pymongo", joined)
+        self.assertTrue(
+            any(d.lower().startswith("jsonschema") for d in deps),
+            f"expected a jsonschema dependency, got: {deps}",
+        )
+        # negative: pymongo must NOT be in the base dependency list
+        self.assertFalse(
+            any(d.lower().startswith("pymongo") for d in deps),
+            f"pymongo must not be a base dependency, got: {deps}",
+        )
+        # positive: pymongo lives under [project.optional-dependencies].mongo
+        optional = self.data["project"].get("optional-dependencies", {})
+        mongo_extra = optional.get("mongo", [])
+        self.assertTrue(
+            any(d.lower().startswith("pymongo") for d in mongo_extra),
+            f"expected pymongo under [project.optional-dependencies].mongo, got: {mongo_extra}",
+        )
 
     def test_schema_json_declared_as_package_data(self):
         # the exact hatchling knob varies (force-include / artifacts / package-data-ish
