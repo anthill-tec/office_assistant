@@ -94,7 +94,20 @@ payment / expiry is 🔴 urgent, a renewal is 🟢 expected); **TOMBSTONE** → 
 upcoming renewal becomes 🔴 "cancel before <date> so you're NOT charged"). Disposition is
 user-owned — surface UNDECIDED items under a "Decide: keep or tombstone?" prompt and record the
 answer. Never propose tombstoning a `finance/bank` or `security/password-manager` item. Recurring
-domains ride the `DUE` status via `voa due-sweep`; `insurance` (store type `insurance`) renews too.
+domains ride the `DUE` status via `voa due-sweep` (see the **Insurance** domain below for policies &
+statutory renewals, which ride `DUE` the same way).
+
+### Insurance — policies & regulatory renewals (store type `insurance`)
+
+Track recurring **insurance policies** (motor, health) and **statutory vehicle renewals** (RC
+re-registration, fitness certification) — the domains that renew on a fixed term and lapse if missed.
+Each row rides the **`DUE`** status via **`voa due-sweep`**, which flags policies/renewals inside the
+renewal window (keying on `renews`/`expiry`) and opens the domain action. The insurance action set is
+`renew-policy · pay-premium · renew-registration · fitness-test · kyc`, each running OPEN → RESOLVED.
+Link the insured asset with a **`product_id`** FK (e.g. a motor policy → the vehicle in `products`), so
+`voa get insurance <id> --expand product_id` resolves it inline. Lead with what is inside its renewal
+window and by when; propose a calendar reminder ahead of each premium / registration / fitness deadline.
+Never invent a premium or term — record what the notice states and confirm from the insurer or RTO.
 
 ### Purchase — orders, deliveries & customs (store type `orders`)
 
