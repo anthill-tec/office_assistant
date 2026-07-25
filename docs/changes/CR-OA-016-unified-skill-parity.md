@@ -1,6 +1,6 @@
 # CR-OA-016 — Complete the unified `vidushi-oa` skill to supersede the legacy role-skills
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-25 on feature/CR-OA-016-unified-skill-parity)
 **Type:** docs
 **Priority:** High
 **Depends on:** 012, 015
@@ -79,26 +79,26 @@ install paths** in `README.md` + `scripts/README.md`:
 ## Acceptance criteria
 
 ### §S1
-- [ ] `grep -Eic 'awaiting_support|rma_issued|in_repair|status["\x27: ]+open' skills/vidushi-oa/SKILL.md` returns `0`; the support section names the shared status set and lists the case actions.
-- [ ] The worked `cases` add example in `SKILL.md` **validates**: feeding its JSON to `voa add cases` against a throwaway DB raises **no** validator `WriteError`.
+- [x] `grep -Eic 'awaiting_support|rma_issued|in_repair|status["\x27: ]+open' skills/vidushi-oa/SKILL.md` returns `0`; the support section names the shared status set and lists the case actions.
+- [x] The worked `cases` add example in `SKILL.md` **validates**: feeding its JSON to `voa add cases` against a throwaway DB raises **no** validator `WriteError`.
 
 ### §S2
-- [ ] `grep -c 'store type via order tracking' skills/vidushi-oa/SKILL.md` returns `0`; the purchase section names store `orders` and references `delivery-sweep`.
+- [x] `grep -c 'store type via order tracking' skills/vidushi-oa/SKILL.md` returns `0`; the purchase section names store `orders` and references `delivery-sweep`.
 
 ### §S3
-- [ ] `SKILL.md` has a dedicated Insurance domain heading; within that section `grep` finds `renew-registration`, `due-sweep`, and `product_id`.
+- [x] `SKILL.md` has a dedicated Insurance domain heading; within that section `grep` finds `renew-registration`, `due-sweep`, and `product_id`.
 
 ### §S4
-- [ ] `skills/vidushi-oa/references/` contains the five files named in §S4; `SKILL.md` links each; `agentskills validate skills/vidushi-oa` exits `0`.
-- [ ] Restored-content greps pass: a carrier name (`Delhivery`) and `create_event` appear under `references/`, and the `compose_event` caveat text is present.
+- [x] `skills/vidushi-oa/references/` contains the five files named in §S4; `SKILL.md` links each; `agentskills validate skills/vidushi-oa` exits `0`.
+- [x] Restored-content greps pass: a carrier name (`Delhivery`) and `create_event` appear under `references/`, and the `compose_event` caveat text is present.
 
 ### §S5
-- [ ] `CLAUDE.md` + `README.md` present the unified `vidushi-oa` skill as the role set and document the replacement path (install the bundle → verify → remove the legacy skills + `inbox-analyst`).
-- [ ] Fidelity: every legacy capability maps to a domain section or a `references/` file — the coverage matrix in this Scope leaves no legacy feature unaccounted for.
+- [x] `CLAUDE.md` + `README.md` present the unified `vidushi-oa` skill as the role set and document the replacement path (install the bundle → verify → remove the legacy skills + `inbox-analyst`).
+- [x] Fidelity: every legacy capability maps to a domain section or a `references/` file — the coverage matrix in this Scope leaves no legacy feature unaccounted for.
 
 ### §S6
-- [ ] The bundle is self-contained + install-ready: `skills/vidushi-oa/` holds `SKILL.md` (name matches dir) + `references/*.md`; `agentskills validate skills/vidushi-oa` exits `0`; `npx skills add ./skills/vidushi-oa` resolves the skill locally.
-- [ ] `README.md` + `scripts/README.md` document **both** install paths (local/dev now; public `pip`+`npx` once published) and name the OSS-license / PyPI-publish gate for the public path.
+- [x] The bundle is self-contained + install-ready: `skills/vidushi-oa/` holds `SKILL.md` (name matches dir) + `references/*.md`; `agentskills validate skills/vidushi-oa` exits `0`; `npx skills add ./skills/vidushi-oa` resolves the skill locally.
+- [x] `README.md` + `scripts/README.md` document **both** install paths (local/dev now; public `pip`+`npx` once published) and name the OSS-license / PyPI-publish gate for the public path.
 
 ## Estimated size
 M — prose + five reference files + two roster docs + the vercel/skills install path; grep/validate-gated.
