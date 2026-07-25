@@ -8,8 +8,9 @@ import os
 
 from vidushi_oa.backends.base import Backend
 from vidushi_oa.backends.mongo import MongoBackend
+from vidushi_oa.backends.sqlite import SqliteBackend
 
-_BACKENDS = {"mongo": MongoBackend}
+_BACKENDS = {"mongo": MongoBackend, "sqlite": SqliteBackend}
 
 
 def get_backend(name=None):
