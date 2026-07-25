@@ -96,17 +96,24 @@ user-owned — surface UNDECIDED items under a "Decide: keep or tombstone?" prom
 answer. Never propose tombstoning a `finance/bank` or `security/password-manager` item. Recurring
 domains ride the `DUE` status via `voa due-sweep`; `insurance` (store type `insurance`) renews too.
 
-### Purchase — orders, deliveries & customs (store type via order tracking)
+### Purchase — orders, deliveries & customs (store type `orders`)
 
-Reconstruct each order's lifecycle (Ordered → Paid → Shipped → In transit → [Customs clearance]
-→ Out for delivery → Delivered) from confirmation, dispatch, and tracking mail across both
-mailboxes (Fastmail `Shipping`/`Purchases`; Gmail `category:purchases`). **Lead with what is NOT
-yet delivered** (open orders), newest activity first, with carrier + tracking/AWB + ETA. Flag
-**STUCK** orders (no event >7 days). First-class **international / customs** handling: a
-`Clarification / documents requested`, `KYC required`, or `Duty/IGST payable` sub-state is
-**action-needed**, time-sensitive, and surfaced even when the customs/broker/India-Post mail
-matches no known order (match on AWB, not just merchant). Pay/clear only via the carrier's
-official portal or **ICEGATE**, never the email link.
+The delivery lifecycle is the **order's own `status` + `actions[]`** in the `orders` store (one row
+per order; the proof-of-purchase document lives separately in `invoices`, linked by `invoice_id`).
+Reconstruct each order's lifecycle (Ordered → Paid → Shipped → In transit → [Customs clearance] →
+Out for delivery → Delivered — the fine detail rides the order's `stage` field while `status` stays
+`NEW → IN_PROGRESS → COMPLETED`, delivered/cancelled/returned/refunded being terminal) from
+confirmation, dispatch, and tracking mail across both mailboxes (Fastmail `Shipping`/`Purchases`;
+Gmail `category:purchases`), firing events with `voa event orders <id> <event>`. **Lead with what is
+NOT yet delivered** (open orders), newest activity first, with carrier + tracking/AWB + ETA. Detect
+**STUCK** orders with **`voa delivery-sweep`** — it opens a `stuck-chase` action on any in-flight order
+with no event in >7 days or a past ETA, so `voa attention` surfaces it. First-class **international /
+customs** handling: `customs-clearance`, `kyc`, `duty-payment`, and `clarification` are **OPEN actions
+on the order** (not statuses) — action-needed and time-sensitive, surfaced even when the customs /
+broker / India-Post (FPO) mail matches no known order: **match on AWB**, and a bare-AWB customs mail
+annotates the matching order or **creates a minimal `orders` row** (`status: IN_PROGRESS` + the open
+customs action) so a duty/KYC demand is never missed. Pay/clear only via the carrier's official portal
+or **ICEGATE**, never the email link.
 
 ### Invoice — purchase documents (store type `invoices`)
 
