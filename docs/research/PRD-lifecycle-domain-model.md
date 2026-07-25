@@ -53,7 +53,8 @@ purchases (plus their accessories).
 
 | Domain | Store | Lifecycle status | Action set (OPEN→RESOLVED) | Min. required docs |
 |---|---|---|---|---|
-| **Purchase / fulfilment** | `invoices` | NEW→UNKNOWN→IN_PROGRESS→**COMPLETED** (item delivered) | payment · shipment · out-for-delivery · delivery · customs-clearance · duty-payment · kyc · return · refund · tax-invoice | purchase-order · invoice/receipt |
+| **Purchase / fulfilment** | `orders` | NEW→UNKNOWN→IN_PROGRESS→**COMPLETED** (delivered *or* a terminal side-state; the fine `stage` — Shipped/In transit/Out for delivery/Delivered, or Cancelled/Returned/Refunded/Delivery-failed — is carried separately) | payment · shipment · in-transit · out-for-delivery · delivery · customs-clearance · duty-payment · kyc · clarification · redelivery · return · refund · stuck-chase | order-confirmation |
+| **Purchase document** *(proof of purchase)* | `invoices` | NEW→IN_PROGRESS→**COMPLETED** (document captured) | payment · tax-invoice · return · refund | purchase-order · invoice/receipt |
 | **Warranty** | `warranties` | IN_PROGRESS (**ACTIVE**) → **EXPIRED** (from `expiry`) → renewed/closed | register-product · capture-serial · confirm-term · **renew-or-extend** · expiry-reminder · warranty-query | warranty-card · registration |
 | **Insurance** *(new)* | `insurance` | IN_PROGRESS (ACTIVE) → **DUE** (renewal window) → RENEWED / LAPSED — **recurring yearly** | renew-policy · pay-premium · kyc · claim · price-compare | policy-schedule · renewal-notice · premium-receipt |
 | **Registration / regulatory** *(new; e.g. vehicle RC)* | `insurance` or `registrations` | VALID → **DUE** → RENEWED / LAPSED — recurring | renew-registration · fitness-test · submit-form · pay-fee | RC / certificate · fitness-cert · fee-receipt |
