@@ -69,5 +69,32 @@ class BackendSeamTest(unittest.TestCase):
             self.assertNotIn("pymongo", f.read(), "_cli.py must not reference pymongo directly")
 
 
+class DefaultBackendTest(unittest.TestCase):
+    """CR-OA-018 §S3 — SQLite becomes the default backend when none is explicitly selected."""
+
+    def setUp(self):
+        self._saved_backend_env = os.environ.pop("VIDUSHI_BACKEND", None)
+
+    def tearDown(self):
+        os.environ.pop("VIDUSHI_BACKEND", None)
+        if self._saved_backend_env is not None:
+            os.environ["VIDUSHI_BACKEND"] = self._saved_backend_env
+
+    def test_default_backend_is_sqlite(self):
+        from vidushi_oa.backends import get_backend
+
+        be = get_backend()
+        self.assertEqual(be.name, "sqlite")
+
+    def test_explicit_mongo_still_selectable(self):
+        from vidushi_oa.backends import get_backend
+
+        be = get_backend("mongo")
+        self.assertEqual(be.name, "mongo")
+
+        os.environ["VIDUSHI_BACKEND"] = "mongo"
+        self.assertEqual(get_backend().name, "mongo")
+
+
 if __name__ == "__main__":
     unittest.main()
