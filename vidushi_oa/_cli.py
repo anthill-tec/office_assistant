@@ -351,10 +351,11 @@ def _get_next(type_, rec):
 
 def cmd_add(a):
     from vidushi_oa import mongo as oa_mongo
-    from pymongo.errors import DuplicateKeyError
+    from vidushi_oa.backends import get_backend
     payload = json.loads(a.json)
     recs = payload if isinstance(payload, list) else [payload]
     coll = oa_mongo.coll(a.type)
+    dup_error = get_backend().dup_error
     existing = {d["id"] for d in coll.find({}, {"id": 1, "_id": 0})}
     added, skipped = [], []
     for rec in recs:
@@ -364,7 +365,7 @@ def cmd_add(a):
         rec.setdefault("updated", today())
         try:
             coll.insert_one(dict(rec))
-        except DuplicateKeyError:
+        except dup_error:
             skipped.append(rec["id"]); continue
         existing.add(rec["id"]); added.append(rec["id"])
     out({"added": added, "skipped": skipped})
@@ -681,31 +682,16 @@ def cmd_init(a):
 
 
 def cmd_setup(a):
-    """Verify the VIDUSHI_MONGO_URI connection (short timeout, fails fast with
-    actionable guidance if unreachable); with --check that is all. Otherwise run the
-    `init` provisioning (collections + unique `id` indexes + `$jsonSchema` validators)."""
-    from pymongo import MongoClient
-    from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+    """Probe the active backend's readiness (fails fast with actionable guidance if not
+    ready); with --check that is all. Otherwise run the `init` provisioning (collections +
+    unique `id` indexes + `$jsonSchema` validators)."""
+    from vidushi_oa.backends import get_backend
 
-    uri = os.environ.get("VIDUSHI_MONGO_URI", "mongodb://127.0.0.1:27017")
-    db_name = os.environ.get("VIDUSHI_MONGO_DB", "vidushi_oa")
-    probe = MongoClient(uri, serverSelectionTimeoutMS=2000)
-    try:
-        probe.admin.command("ping")
-    except (ServerSelectionTimeoutError, ConnectionFailure) as e:
-        print(
-            f"Cannot reach MongoDB at {uri}: {e}\n"
-            f"Start a local mongod (default port 27017) — e.g. via your service manager "
-            f"(`systemctl start mongod`) or `mongod --dbpath <dir>` — then retry. "
-            f"To point elsewhere set VIDUSHI_MONGO_URI (e.g. "
-            f"VIDUSHI_MONGO_URI=mongodb://host:27017).",
-            file=sys.stderr,
-        )
+    ok, message = get_backend().check()
+    if not ok:
+        print(message, file=sys.stderr)
         sys.exit(1)
-    finally:
-        probe.close()
-
-    print(f"Mongo reachable at {uri} — db {db_name}")
+    print(message)
     if getattr(a, "check", False):
         return
     cmd_init(a)

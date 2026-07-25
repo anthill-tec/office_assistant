@@ -13,6 +13,12 @@ class Backend(ABC):
     """Persistence backend contract. `name` identifies the backend (`mongo` | `sqlite`)."""
 
     name = "abstract"
+    #: the exception type a duplicate-`id` insert raises for this backend
+    dup_error = Exception
+
+    @abstractmethod
+    def check(self):
+        """Readiness probe for `voa setup`. Return `(ok: bool, message: str)` — never raises."""
 
     @abstractmethod
     def collection(self, type_):
