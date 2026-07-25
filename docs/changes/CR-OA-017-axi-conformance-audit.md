@@ -1,6 +1,6 @@
 # CR-OA-017 — AXI conformance audit + gap-closure across the full verb surface
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-26 on feature/CR-OA-017-axi-conformance-audit)
 **Type:** maintenance
 **Priority:** High
 **Depends on:** 009, 010, 014
@@ -64,15 +64,15 @@ Incidental (out of AXI scope — noted for a follow-up, **not** fixed here): `se
 ## Acceptance criteria
 
 ### §S1
-- [ ] A `### §S1 Findings` matrix in this spec covers **every** verb above × each applicable principle, each row PASS or GAP with a one-line evidence pointer (command + observed output).
+- [x] A `### §S1 Findings` matrix in this spec covers **every** verb above × each applicable principle, each row PASS or GAP with a one-line evidence pointer (command + observed output).
 
 ### §S2
-- [ ] Every read verb (`query`, `get`, `attention`, `stats`) emits a TOON envelope carrying `results[N]` (or the single object), `tally:`, and `next[N]`; a test parses each and asserts all three present.
-- [ ] `--json` on every verb returns valid JSON — a **bare array** for list reads, a single object for `get`/status/writes — and contains **no** `tally` key (decision-B); a test asserts `json_type` + key absence per verb.
-- [ ] A structured error (e.g. `get`/`event`/`update` on a missing id, and an unknown flag) is written to **STDOUT** with an `error` key and **no** `Traceback`; missing-target → exit `1`, unknown flag → exit `2`; a test asserts stream, key, and exit code.
-- [ ] Bare `voa` (no verb) prints live data (the `attention` worklist) and never the string `usage:`.
-- [ ] `voa <verb> --help` prints a per-subcommand reference for every verb (exit 0, names the verb).
-- [ ] The `.skill-release.toml` AXI conformance gate is expanded to exercise the read verbs beyond `query` and the write/error verbs enumerated above, and the full gate passes.
+- [x] Every read verb (`query`, `get`, `attention`, `stats`) emits a TOON envelope carrying `results[N]` (or the single object), `tally:`, and `next[N]`; a test parses each and asserts all three present.
+- [x] `--json` on every verb returns valid JSON — a **bare array** for list reads, a single object for `get`/status/writes — and contains **no** `tally` key (decision-B); a test asserts `json_type` + key absence per verb.
+- [x] A structured error (e.g. `get`/`event`/`update` on a missing id, and an unknown flag) is written to **STDOUT** with an `error` key and **no** `Traceback`; missing-target → exit `1`, unknown flag → exit `2`; a test asserts stream, key, and exit code.
+- [x] Bare `voa` (no verb) prints live data (the `attention` worklist) and never the string `usage:`.
+- [x] `voa <verb> --help` prints a per-subcommand reference for every verb (exit 0, names the verb).
+- [x] The `.skill-release.toml` AXI conformance gate is expanded to exercise the read verbs beyond `query` and the write/error verbs enumerated above, and the full gate passes.
 
 ## Estimated size
 S–M — an audit pass plus targeted envelope/error/exit-code fixes; no new domain behaviour, no store or
