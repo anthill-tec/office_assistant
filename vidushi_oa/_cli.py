@@ -535,6 +535,8 @@ def _apply_transition(coll, doc, tr):
         elif op == "require-doc":
             pushes.append({"action": "archive-doc", "status": "OPEN", "opened": now,
                            "detail": f"archive {effect.get('type')} document"})
+        elif op == "set-stage":
+            set_fields["stage"] = effect.get("stage")
         elif op == "resolve-action":
             resolves.append(effect.get("action"))
     update = {"$set": set_fields}
