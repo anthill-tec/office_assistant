@@ -7,6 +7,8 @@ name = "vidushi-oa"
 version = "0.1.0"
 description = "Vidushi office-assistant data CLI and shared store (MongoDB-backed)."
 requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = [
     "jsonschema>=4",
     "python-toon>=0.1.3,<0.2",

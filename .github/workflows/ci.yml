@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+
+jobs:
+  test:
+    name: Build wheel, run tests, release gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project + build/test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build pytest
+          python -m pip install -e ".[mongo,sqlite]"
+
+      - name: Build wheel
+        run: python -m build --wheel
+
+      - name: Run pytest
+        run: python -m pytest
+
+      - name: Model-B release gate
+        run: python3 ~/.claude/scripts/skill-release-gate.py --project-dir .
+
+  publish:
+    name: Publish to PyPI
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build distributions
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
