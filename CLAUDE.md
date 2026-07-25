@@ -76,30 +76,48 @@ case (claim/RMA) ── invoice_id / warranty_id / product_id / contact_id ─�
 
 **Data sources:** the skills search **two mailboxes** — Fastmail (FastmailMCP) and Gmail `antojk@gmail.com` (claude.ai connector) — and write findings here.
 
-## Vidushi OA toolkit — roles (skills in `~/.claude/skills/`, agents in `~/.claude/agents/`)
+## Vidushi OA toolkit — roles
 
-Invoke the skill whose **role** matches the request, and load `mail-tracking-core` alongside it. Quick map:
-subscriptions→`subscription-watch` · deliveries/customs→`purchase-tracker` · invoices/receipts/POs→`invoice-tracker` · warranty/expiry→`warranty-tracker` · claims/RMA/support-mail→`support-case-manager` · manuals/specs/official-warranty→`product-catalogue`.
+**The canonical role is the single unified skill `skills/vidushi-oa/` (in-repo)** — a portable,
+harness-agnostic superset that **supersedes** the seven legacy standalone skills in `~/.claude/skills/`
+(`mail-tracking-core`, `subscription-watch`, `purchase-tracker`, `invoice-tracker`, `warranty-tracker`,
+`product-catalogue`, `support-case-manager`) **and** the `inbox-analyst` agent (folded in as the skill's
+read-only **deep-sweep mode**). Load it for any mail/admin task; its operational detail lives in
+`skills/vidushi-oa/references/`, and the domains below are its sections.
 
-**Foundation (load with any mail task)**
-- **`mail-tracking-core`** — shared engine: dual-mailbox (Fastmail via FastmailMCP + Gmail `antojk@gmail.com` via the claude.ai connector) search & merge with `[FM]`/`[GM]` source tagging, the phishing/customs **safety contract**, this data store (`voa`, MongoDB-backed), and calendar-reminder creation. Not run alone.
+**Coverage / fidelity — every legacy capability maps into the unified skill:**
 
-**Interactive trackers — run in the main thread, the user steers them**
-- **`subscription-watch`** — recurring billing/subscriptions: classify by type, surface actions + deadlines up front, hold a per-item **KEEP/TOMBSTONE disposition** (flips advice: protect KEEP, warn-to-cancel TOMBSTONE before a charge).
-- **`purchase-tracker`** — order → delivery lifecycle; leads with **not-yet-delivered** orders; first-class **international/customs** handling (duty/IGST/KYC/clearance), surfaced even when Customs/India Post emails the user directly.
-- **`invoice-tracker`** — purchase **documents** (PO/invoice/receipt) → proof-of-purchase backbone; saves PDF copies to `documents/<acct>/<vendor>/`; splits **personal vs business/GST**. Store type `invoices`.
-- **`warranty-tracker`** — coverage / term / **expiry** + registration; links `invoice_id`; proposes expiry calendar reminders. Store type `warranties`. **Never invents terms.**
-- **`product-catalogue`** — manufacturer-**OFFICIAL** references per owned product (product page, manual, datasheet, support, drivers/firmware, official warranty policy) + key specs; WebFetch to answer "how do I / specs / driver". Store type `products`, keyed on **manufacturer** (not reseller).
-- **`support-case-manager`** — stateful **claims / RMA / returns / service** cases; **DRAFTS** mail to the verified support contact (**draft-then-confirm, never auto-send**), cites invoice + warranty, logs each exchange. Store type `cases`.
+| Legacy skill / agent | → Unified skill location |
+|---|---|
+| `mail-tracking-core` | SKILL.md "Mailboxes & search" + "Safety contract" + `references/search-recipes.md`, `references/calendar-reminders.md` |
+| `subscription-watch` | Domain "Subscription" + `references/subscription-taxonomy.md` |
+| `purchase-tracker` | Domain "Purchase" (store `orders`) + `references/carriers-and-customs.md` |
+| `invoice-tracker` | Domain "Invoice" + `references/report-templates.md` (retrieval tiers, expense/tax) |
+| `warranty-tracker` | Domain "Warranty" |
+| `product-catalogue` | Domain "Product" |
+| `support-case-manager` | Domain "Support" (store `cases`, shared lifecycle) |
+| `inbox-analyst` (agent) | "Deep-sweep mode (read-only)" |
 
-**Agent — delegated, read-only**
-- **`inbox-analyst`** (subagent) — heavy autonomous sweep across **both** mailboxes for a full pass (subscriptions / purchases / customs / invoices / warranties / general triage). Returns **structured findings + recommended actions** and **mutates nothing** — the main thread executes side effects (persist via `voa`, create reminders, send mail). Dispatch it when a comprehensive scan would otherwise flood the conversation.
+**Replacement path (a one-time swap; pruning the legacy files is the user's, outside this repo):**
+1. **Install** the bundle (see `README.md` / `scripts/README.md` install section): `npx skills add ./skills/vidushi-oa` for the skill + the engine (`pip install -e .` in-repo, then `voa setup`).
+2. **Verify** it: `agentskills validate skills/vidushi-oa` exits 0 (or run the release gate `~/.claude/scripts/skill-release-gate.py`).
+3. **Remove** the seven legacy `~/.claude/skills/` skills + the `inbox-analyst` agent — the unified skill now covers them all.
 
-**Supporting capabilities — a skill's documented fallback, not the default**
-- **`claude-in-chrome`** (browser) — drive the user's logged-in browser for **login-gated data** (Amazon/portal invoices, Dell service tags, carrier tracking). The user logs in; the agent navigates/downloads; **never enters credentials**.
-- **`read-the-damn-docs`** / `WebSearch` + `WebFetch` — confirm official manufacturer/third-party terms (e.g. a warranty policy) from primary sources instead of assuming.
+**Domains of the unified skill** (each writes through `voa`; load `references/*` for specifics):
+- **Subscription** — recurring billing: classify by type, surface actions + deadlines up front, hold a per-item **KEEP/TOMBSTONE disposition** (protect KEEP, warn-to-cancel TOMBSTONE before a charge). Store `subscriptions`.
+- **Purchase** — order → delivery lifecycle on the **`orders`** store; leads with **not-yet-delivered**; **international/customs** (duty/IGST/KYC/clearance) as OPEN actions; STUCK via `voa delivery-sweep`.
+- **Invoice** — purchase **documents** (PO/invoice/receipt) → proof-of-purchase; saves PDF copies to `documents/<acct>/<vendor>/`; splits **personal vs business/GST**. Store `invoices`.
+- **Warranty** — coverage / term / **expiry** + registration; links `invoice_id`; expiry reminders. Store `warranties`. **Never invents terms.**
+- **Product** — manufacturer-**OFFICIAL** references per owned product + key specs. Store `products`, keyed on **manufacturer**.
+- **Support** — stateful **claims / RMA / returns / service** cases on the **shared lifecycle**; **DRAFTS** mail to the verified support contact (**draft-then-confirm, never auto-send**), cites invoice + warranty. Store `cases`.
+- **Insurance** — policies + **regulatory renewals** (RC re-registration / fitness) riding `DUE` via `voa due-sweep`. Store `insurance`.
+- **Deep-sweep mode** (read-only) — heavy cross-mailbox triage returning structured findings; mutates nothing (the folded-in `inbox-analyst`).
 
-**Orchestration model:** interactive decisions (dispositions, reminders, drafting/sending, deletions) → run the trackers in the main thread; a big independent read pass → dispatch `inbox-analyst`, then act on its findings.
+**Supporting capabilities — a documented fallback, not the default**
+- **`claude-in-chrome`** (browser) — login-gated data (Amazon/portal invoices, Dell service tags, carrier tracking): the user logs in; the agent navigates/downloads; **never enters credentials**.
+- **`read-the-damn-docs`** / `WebSearch` + `WebFetch` — confirm official manufacturer/third-party terms from primary sources instead of assuming.
+
+**Orchestration model:** interactive decisions (dispositions, reminders, drafting/sending, deletions) run in the main thread; a big independent read pass uses the deep-sweep mode, then the main thread acts on its findings.
 
 ## Conventions that aren't obvious from the code
 

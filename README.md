@@ -15,6 +15,10 @@ in the roles. Get started: `pip install vidushi-oa` (or, in-repo, `python -m ven
 
 ## The roles
 
+> These roles are now unified into the single portable skill **`skills/vidushi-oa/`** (see **Install**
+> below); the descriptions here map 1:1 to its domains, and the legacy standalone skills + the
+> `inbox-analyst` agent are **superseded** by it.
+
 ### Foundation
 | Role | Job |
 |---|---|
@@ -38,6 +42,35 @@ in the roles. Get started: `pip install vidushi-oa` (or, in-repo, `python -m ven
 ### Fallbacks
 - **Browser (Claude-in-Chrome)** — for anything behind a login (Amazon/portal invoices, Dell service tags, carrier tracking): **you log in**, the assistant reads/downloads. It never enters your credentials.
 - **Web search/fetch** — to confirm official manufacturer/vendor terms (e.g. a warranty policy) from the source.
+
+---
+
+## Install (skill + engine)
+
+Vidushi OA ships as two pieces: the **skill** (`skills/vidushi-oa/` — a portable vercel/skills
+flat-layout bundle with its `references/`) and the **engine** (the `vidushi-oa` pip package that
+provides the `voa` CLI). Install both, then `voa setup`.
+
+**Local / dev (works today):**
+```bash
+npx skills add ./skills/vidushi-oa                    # add the skill from this repo
+python -m venv .venv && .venv/bin/pip install -e .    # the engine (voa), editable/in-repo
+voa setup                                             # verify/provision the local MongoDB
+agentskills validate skills/vidushi-oa                # confirm the bundle shape (exits 0)
+```
+
+**Public (one-liner, once published):**
+```bash
+pip install vidushi-oa
+npx skills add github.com/antojk/office_assistant//skills/vidushi-oa
+voa setup
+```
+> The public path is **gated on the OSS-license decision + PyPI publish**: `pip install vidushi-oa`
+> is not yet on PyPI and the repo is not yet public. Until then, use the local/dev path above.
+
+The unified `skills/vidushi-oa/` skill **supersedes** the seven legacy `~/.claude/skills/` skills +
+the `inbox-analyst` agent; after installing and verifying it, remove those legacy files (see
+`CLAUDE.md` → "Vidushi OA toolkit — roles" for the coverage matrix + replacement steps).
 
 ---
 

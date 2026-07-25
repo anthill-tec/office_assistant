@@ -94,19 +94,39 @@ payment / expiry is 🔴 urgent, a renewal is 🟢 expected); **TOMBSTONE** → 
 upcoming renewal becomes 🔴 "cancel before <date> so you're NOT charged"). Disposition is
 user-owned — surface UNDECIDED items under a "Decide: keep or tombstone?" prompt and record the
 answer. Never propose tombstoning a `finance/bank` or `security/password-manager` item. Recurring
-domains ride the `DUE` status via `voa due-sweep`; `insurance` (store type `insurance`) renews too.
+domains ride the `DUE` status via `voa due-sweep` (see the **Insurance** domain below for policies &
+statutory renewals, which ride `DUE` the same way).
 
-### Purchase — orders, deliveries & customs (store type via order tracking)
+### Insurance — policies & regulatory renewals (store type `insurance`)
 
-Reconstruct each order's lifecycle (Ordered → Paid → Shipped → In transit → [Customs clearance]
-→ Out for delivery → Delivered) from confirmation, dispatch, and tracking mail across both
-mailboxes (Fastmail `Shipping`/`Purchases`; Gmail `category:purchases`). **Lead with what is NOT
-yet delivered** (open orders), newest activity first, with carrier + tracking/AWB + ETA. Flag
-**STUCK** orders (no event >7 days). First-class **international / customs** handling: a
-`Clarification / documents requested`, `KYC required`, or `Duty/IGST payable` sub-state is
-**action-needed**, time-sensitive, and surfaced even when the customs/broker/India-Post mail
-matches no known order (match on AWB, not just merchant). Pay/clear only via the carrier's
-official portal or **ICEGATE**, never the email link.
+Track recurring **insurance policies** (motor, health) and **statutory vehicle renewals** (RC
+re-registration, fitness certification) — the domains that renew on a fixed term and lapse if missed.
+Each row rides the **`DUE`** status via **`voa due-sweep`**, which flags policies/renewals inside the
+renewal window (keying on `renews`/`expiry`) and opens the domain action. The insurance action set is
+`renew-policy · pay-premium · renew-registration · fitness-test · kyc`, each running OPEN → RESOLVED.
+Link the insured asset with a **`product_id`** FK (e.g. a motor policy → the vehicle in `products`), so
+`voa get insurance <id> --expand product_id` resolves it inline. Lead with what is inside its renewal
+window and by when; propose a calendar reminder ahead of each premium / registration / fitness deadline.
+Never invent a premium or term — record what the notice states and confirm from the insurer or RTO.
+
+### Purchase — orders, deliveries & customs (store type `orders`)
+
+The delivery lifecycle is the **order's own `status` + `actions[]`** in the `orders` store (one row
+per order; the proof-of-purchase document lives separately in `invoices`, linked by `invoice_id`).
+Reconstruct each order's lifecycle (Ordered → Paid → Shipped → In transit → [Customs clearance] →
+Out for delivery → Delivered — the fine detail rides the order's `stage` field while `status` stays
+`NEW → IN_PROGRESS → COMPLETED`, delivered/cancelled/returned/refunded being terminal) from
+confirmation, dispatch, and tracking mail across both mailboxes (Fastmail `Shipping`/`Purchases`;
+Gmail `category:purchases`), firing events with `voa event orders <id> <event>`. **Lead with what is
+NOT yet delivered** (open orders), newest activity first, with carrier + tracking/AWB + ETA. Detect
+**STUCK** orders with **`voa delivery-sweep`** — it opens a `stuck-chase` action on any in-flight order
+with no event in >7 days or a past ETA, so `voa attention` surfaces it. First-class **international /
+customs** handling: `customs-clearance`, `kyc`, `duty-payment`, and `clarification` are **OPEN actions
+on the order** (not statuses) — action-needed and time-sensitive, surfaced even when the customs /
+broker / India-Post (FPO) mail matches no known order: **match on AWB**, and a bare-AWB customs mail
+annotates the matching order or **creates a minimal `orders` row** (`status: IN_PROGRESS` + the open
+customs action) so a duty/KYC demand is never missed. Pay/clear only via the carrier's official portal
+or **ICEGATE**, never the email link.
 
 ### Invoice — purchase documents (store type `invoices`)
 
@@ -140,14 +160,26 @@ link to act on themselves. Ties back to proof-of-purchase / coverage via `invoic
 
 ### Support — claims, RMA & service cases (store type `cases`)
 
-Run each support issue as a tracked **case** (`open → awaiting_support → awaiting_user → rma_issued
-→ in_repair → resolved → closed`), citing the linked `invoice_id` (proof) and `warranty_id`
-(coverage) and pulling the support address from `contacts`. **DRAFT** correspondence to the
-vendor's **verified** support address (reply from the buying alias the vendor knows), including
-order/invoice number, product, model/serial, purchase date, warranty status, and a clear ask.
-**Draft-then-confirm — never auto-send.** Minimise PII; let the user supply anything sensitive.
-Log each exchange with `--append-log`, and surface stalled cases (awaiting-you, support gone
-silent, warranty-window risk). An RMA parcel in transit hands to the purchase domain (reverse delivery).
+Run each support issue as a tracked **case** on the **shared lifecycle** — a case's `status` is one
+of `{NEW, UNKNOWN, IN_PROGRESS, COMPLETED, EXPIRED, DUE}` and runs `NEW → IN_PROGRESS → COMPLETED`.
+The RMA/service **stages live in `actions[]`, never in the status**: the case action set is
+`raise-ticket · rma-issue · ship-back · repair · replace · resolution-confirm`, each running
+OPEN → RESOLVED — drive them with `voa action-add` / `voa action-resolve`, and move the coarse state
+with `voa set-status`. Cite the linked `invoice_id` (proof) and `warranty_id` (coverage) and pull the
+support address from `contacts`. **DRAFT** correspondence to the vendor's **verified** support address
+(reply from the buying alias the vendor knows), including order/invoice number, product, model/serial,
+purchase date, warranty coverage, and a clear ask. **Draft-then-confirm — never auto-send.** Minimise
+PII; let the user supply anything sensitive. Log each exchange with `--append-log`, and surface stalled
+cases (awaiting-you, support gone silent, warranty-window risk). An RMA parcel in transit hands to the
+purchase domain (reverse delivery).
+
+Open a case with a valid shared status, then advance its stages as `actions[]`:
+
+```bash
+voa add cases --json '{"vendor":"Dell","acct":"business","status":"IN_PROGRESS","invoice_id":"doc_dell_inv-2231","warranty_id":"war_dell_xps13","product":"XPS 13 9310"}'
+voa action-add cases case_dell raise-ticket --owner user   # open the first stage (auto OPEN)
+voa action-resolve cases case_dell raise-ticket            # resolve it as the case moves on
+```
 
 ## Deep-sweep mode (read-only)
 
@@ -173,10 +205,31 @@ for the main thread to execute) → **Flags** (suspected phishing/scam — never
 - **Persistence is the `voa` store**, not ad-hoc notes — every domain writes through the CLI so
   ids, dedupe, validators, and `voa event`/`voa set-status` transitions stay authoritative. Use
   `voa attention` to surface rows with an OPEN action or a status needing attention, and the
-  `voa warranty-sweep` / `voa due-sweep` sweeps for expiry and renewal windows.
+  `voa warranty-sweep` / `voa due-sweep` / `voa delivery-sweep` sweeps for expiry, renewal windows,
+  and stalled orders.
 - **Calendar reminders:** on request, create renewal/expiry/delivery events on the default calendar
   (`Asia/Kolkata`, all-day), tagged `[sub-watch]` (subscriptions) or `[buy-watch]` (purchases/
-  warranties) so they're findable later, matching recurrence to cadence; verify after writing.
+  warranties) so they're findable later, matching recurrence to cadence; verify after writing — full
+  recipe (incl. the `create_event`-not-`compose_event` headless caveat) in
+  [`references/calendar-reminders.md`](references/calendar-reminders.md).
 - **Composition:** the six domains are the interactive brains — run them in the main thread, the
   user steers dispositions, reminders, drafting/sending, and deletions; the read-only deep-sweep
   mode is for a big independent read pass whose findings the main thread then acts on.
+
+## References (progressive disclosure)
+
+Operational detail lives in `references/` so this body stays lean — load the file for the task at hand:
+
+- [`references/search-recipes.md`](references/search-recipes.md) — per-domain Fastmail single-phrase
+  queries + Gmail rich queries for both mailboxes.
+- [`references/carriers-and-customs.md`](references/carriers-and-customs.md) — carrier roster
+  (Delhivery, DTDC, Blue Dart, India Post, Ekart, Shadowfax, FedEx, DHL, UPS, Aramex) + FPO / ICEGATE
+  customs handling.
+- [`references/subscription-taxonomy.md`](references/subscription-taxonomy.md) — the
+  `provider-kind / service-kind` category tags + the never-tombstone `finance/bank` /
+  `security/password-manager` rule.
+- [`references/calendar-reminders.md`](references/calendar-reminders.md) — the reminder recipe:
+  default calendar, `Asia/Kolkata`, all-day, `[sub-watch]` / `[buy-watch]` tags, recurrence-to-cadence,
+  verify-after-write, and the `create_event`-vs-`compose_event` headless caveat.
+- [`references/report-templates.md`](references/report-templates.md) — per-domain report skeletons +
+  urgency ladders + the invoice retrieval-tier order + the expense/tax (sum-by-`acct`/period/GST) view.
