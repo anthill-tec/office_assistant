@@ -4,6 +4,17 @@ Token-frugal helpers over the **MongoDB** stores (mirrored to `data/*.jsonl` by 
 and agents MUST go through these instead of reading whole files into context** — query for exactly the
 rows/fields needed.
 
+## Installing the skill bundle
+
+From the **repo root**, install the skill + engine together (full detail — incl. the public
+`pip install vidushi-oa` path, gated on the OSS-license/PyPI decision — in `../README.md` → **Install**):
+```bash
+npx skills add ./skills/vidushi-oa      # the vidushi-oa skill (flat-layout vercel/skills bundle)
+pip install -e .                        # the voa engine
+voa setup                               # provision the local MongoDB
+```
+The shape gate `agentskills validate skills/vidushi-oa` (see **Release gate** below) confirms the bundle.
+
 ## `voa` — data store CLI (`pymongo`, MongoDB-backed)
 
 The console command is **`voa`** (`pip install vidushi-oa`, or in-repo `python -m venv .venv && .venv/bin/pip install -e .`). The in-repo
