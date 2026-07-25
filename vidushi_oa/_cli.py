@@ -26,6 +26,7 @@ Tracking-state framework (see schema.md "Tracking state framework"):
   store.py doc-add <type> <id> <asset-type> <path> [--number N] [--date D]   # attach a domain document asset
   store.py attention [<type>]                                      # records needing attention (OPEN actions / NEW / UNKNOWN / EXPIRED)
   store.py warranty-sweep [--dry-run]                              # recompute ACTIVE->EXPIRED from expiry; auto-open renew-or-extend
+  store.py delivery-sweep [--dry-run]                              # open stuck-chase on stalled orders (last_event >7d ago or eta past)
 
 Fields support dotted paths (e.g. source.email_id). Output is compact JSON on stdout; warnings to stderr.
 """
@@ -512,6 +513,33 @@ def cmd_due_sweep(a):
     out({"due": due, "count": count, "dry_run": bool(a.dry_run)})
 
 
+def cmd_delivery_sweep(a):
+    """Open a `stuck-chase` action on every in-flight order (status NEW/UNKNOWN/IN_PROGRESS)
+    that has STALLED — `last_event_date` more than 7 days ago OR a past `eta` (< today) —
+    so `attention` surfaces it. Unlike warranty/due-sweep the status is NOT the idempotency
+    key (a stuck order stays IN_PROGRESS); instead the query excludes orders already carrying
+    an OPEN `stuck-chase`, so a repeat sweep opens none. `--dry-run` writes nothing."""
+    from vidushi_oa import mongo as oa_mongo
+    now = today()
+    cutoff = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+    coll = oa_mongo.coll("orders")
+    query = {
+        "status": {"$in": ["NEW", "UNKNOWN", "IN_PROGRESS"]},
+        "$or": [{"last_event_date": {"$lt": cutoff}}, {"eta": {"$lt": now}}],
+        "actions": {"$not": {"$elemMatch": {"action": "stuck-chase", "status": "OPEN"}}},
+    }
+    chased = []
+    for doc in coll.find(query, {"_id": 0}):
+        if not a.dry_run:
+            coll.update_one(
+                {"id": doc["id"]},
+                {"$push": {"actions": {"action": "stuck-chase", "status": "OPEN",
+                                       "owner": "user", "opened": now}},
+                 "$set": {"updated": now}})
+        chased.append(doc["id"])
+    out({"chased": chased, "count": len(chased), "dry_run": bool(a.dry_run)})
+
+
 def _apply_transition(coll, doc, tr):
     """Apply one declarative transition to a Mongo doc: set status->`tr["to"]`
     (+ updated), fire the transition's effects (open-action / require-doc pushes,
@@ -749,6 +777,8 @@ def main():
     ws.set_defaults(func=cmd_warranty_sweep)
     ds = add_parser("due-sweep"); ds.add_argument("--dry-run", action="store_true", dest="dry_run")
     ds.set_defaults(func=cmd_due_sweep)
+    dl = add_parser("delivery-sweep"); dl.add_argument("--dry-run", action="store_true", dest="dry_run")
+    dl.set_defaults(func=cmd_delivery_sweep)
     ev = add_parser("event"); with_type(ev); ev.add_argument("id"); ev.add_argument("event")
     ev.set_defaults(func=cmd_event)
     va = add_parser("validate"); va.add_argument("type", nargs="?", choices=STORES.keys()); read_json(va)
