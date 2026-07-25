@@ -42,6 +42,25 @@ Each fix is RED (a failing conformance test for the gap) → GREEN. No behaviour
 already pass; the domain logic, schemas, and store are untouched — this is envelope/error/exit-code
 conformance only.
 
+### §S1 Findings (audit 2026-07-26, Mongo backend — conformance is above the backend seam)
+Live-CLI audit against the 10 principles across the read/write/error/help surface.
+
+**Conformant:** `query` (full `count`/`tally`/`results`/`next` envelope); `query --json` (bare array, **no**
+`tally` — decision-B); `add` (TOON `added[]`/`skipped[]` status); `event` illegal transition (structured
+`error` on **stdout**, exit 1, no traceback — #6); unknown flag (exit 2 — #6); bare `voa` (live `attention`
+worklist, never `usage:` — #8); `--help` (subcommand list — #10).
+
+**Gaps (drive §S2):**
+| # | Verb | Gap | Principle |
+|---|---|---|---|
+| G1 | `get` (missing id) | returns `null` with **exit 0** — not a structured error, not exit 1 | #6 |
+| G2 | `get` (success) | no `next[]` contextual disclosure | #9 |
+| G3 | `attention` | bare `[0]:`/list — no `results`/`tally`/`next` envelope, no next-step | #4 / #9 |
+| G4 | `stats` | bare object — no `next[]` | #9 |
+
+Incidental (out of AXI scope — noted for a follow-up, **not** fixed here): `set-status`'s CLI signature is
+`<type> <STATUS> --id …`, but `CLAUDE.md` documents `<type> <id> <STATUS>` — a doc drift.
+
 ## Acceptance criteria
 
 ### §S1
