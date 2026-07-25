@@ -623,24 +623,16 @@ def _load_schema(t):
 
 
 def _apply_validators():
-    """Attach each store's `$jsonSchema` validator to its collection (idempotent)."""
-    from vidushi_oa import mongo as oa_mongo
-    db = oa_mongo.db()
-    existing = set(db.list_collection_names())
-    for t in STORES:
-        if t not in existing:
-            db.create_collection(t)
-            existing.add(t)
-        db.command("collMod", t, validator={"$jsonSchema": _load_schema(t)},
-                   validationLevel="moderate", validationAction="error")
-    return list(STORES)
+    """Provision each store's collection + `$jsonSchema` validator via the active backend."""
+    from vidushi_oa.backends import get_backend
+    return get_backend().provision({t: _load_schema(t) for t in STORES})
 
 
 def cmd_apply_validators(a):
-    """Attach each store's `$jsonSchema` validator to its MongoDB collection (idempotent)."""
-    from vidushi_oa import mongo as oa_mongo
+    """Attach each store's `$jsonSchema` validator to its collection (idempotent)."""
+    from vidushi_oa.backends import get_backend
     done = _apply_validators()
-    out({"validated": done, "db": oa_mongo.db().name})
+    out({"validated": done, "db": get_backend().db_name()})
 
 
 def _nonconforming_ids(t):
@@ -676,15 +668,16 @@ def cmd_import(a):
 
 
 def cmd_init(a):
-    """Create each store's MongoDB collection + a unique index on `id`, then attach
-    the `$jsonSchema` validators (idempotent)."""
+    """Create each store's collection + a unique index on `id`, then attach the
+    `$jsonSchema` validators (idempotent)."""
     from vidushi_oa import mongo as oa_mongo
+    from vidushi_oa.backends import get_backend
     done = []
     for t in STORES:
         oa_mongo.coll(t).create_index("id", unique=True)
         done.append(t)
     _apply_validators()
-    out({"initialized": done, "db": oa_mongo.db().name})
+    out({"initialized": done, "db": get_backend().db_name()})
 
 
 def cmd_setup(a):
