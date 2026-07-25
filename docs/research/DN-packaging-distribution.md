@@ -92,6 +92,23 @@ right one.
 - **CI/CD + PyPI:** GitHub Actions builds/tests and publishes the wheel to PyPI on tag; the release
   gate (`.skill-release.toml` / `skill-release-gate.py`) remains the pre-publish quality bar.
 
+## Decision 8 — mail-access MCP services are DECLARED skill prerequisites, not bundled deps (2026-07-25)
+
+The skill reads mail through **MCP services**, not the engine — `voa` is mail-agnostic, so these are
+**skill-level prerequisites, not engine pip-deps**. They also cannot all be "installed": **FastmailMCP**
+is an installable MCP server, but **Gmail** is reached via the **claude.ai connector** — a harness-specific
+OAuth connector authorized inside claude.ai, not a package. The Agent Skills format has **no dependency
+field** (verified against the `gh-axi` skill, which declares its `gh` prerequisite in prose and tells the
+agent to ask the user to authenticate).
+
+**Model: declared + orchestrated prerequisites.** The skill (a) **declares** the mail-access prerequisites
+in `SKILL.md` (FastmailMCP install + auth; a Gmail provider) the way gh-axi declares `gh`; (b) ships a
+**machine-readable MCP manifest** (e.g. `.mcp.json`) for harnesses that consume one (Claude Code), as a
+convenience, not a portability requirement; and (c) **documents per-harness setup**, honest that the
+claude.ai Gmail connector is claude.ai-specific and a different Gmail MCP is needed elsewhere. If a mail
+capability is missing at run time the skill says so and continues with whatever mailbox it can reach
+(the existing Fastmail-only fallback). This is realized in CR-OA-019.
+
 ## Consequences
 
 - No PII ships in any package — `data/*.jsonl` + `documents/` stay local/chezmoi.

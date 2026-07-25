@@ -41,6 +41,7 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-016](CR-OA-016-unified-skill-parity.md) | Complete unified skill (supersede legacy) | docs | COMPLETED | 012, 015 | 7 |
 | [CR-OA-017](CR-OA-017-axi-conformance-audit.md) | AXI conformance audit + gap-closure (full verb surface) | maintenance | PENDING | 009, 010, 014 | 8 |
 | [CR-OA-018](CR-OA-018-pluggable-backend-and-packaging.md) | Pluggable backend (SQLite default) + GPL-v3 `uv`/PyPI packaging | feature | PENDING | 016, 017 | 8 |
+| [CR-OA-019](CR-OA-019-skill-mail-prerequisites.md) | Skill mail-access prerequisites (declared + orchestrated) | docs | PENDING | 016 | 8 |
 
 ## v0.1.0 milestone — Wave 6
 
@@ -93,8 +94,18 @@ vidushi-oa`** / PyPI distribution + CI/CD. Design in
 [`../research/DN-persistence-mongodb.md`](../research/DN-persistence-mongodb.md) (2026-07-25) +
 [`../research/DN-packaging-distribution.md`](../research/DN-packaging-distribution.md) (Decisions 6–7).
 
-**Order:** 017 → 018 (packaging ships on the audited, conformant CLI). The first PyPI publish + the
-repo-public flip are release-time ops guarded by the release gate, not inside 018.
+**019** makes the skill's **mail-access MCP prerequisites** explicit (declared + orchestrated, per
+DN-packaging-distribution Decision 8): FastmailMCP + a Gmail provider are declared in `SKILL.md` (the
+engine is mail-agnostic, so these are skill prereqs, not pip-deps), with a machine-readable MCP manifest
+where a harness supports one and per-harness setup docs — honest that the claude.ai Gmail connector is
+harness-specific and not installable.
+
+**Order:** 017 → 018 (packaging ships on the audited, conformant CLI); **019 is independent** (depends
+only on 016) and can run in parallel. §S6/§S4 note: the first PyPI publish, the repo-public flip, and the
+GPL-license/CI packaging-deploy test are **release-branch** ops during `git flow release` (guarded by the
+release gate), not inside 018. CR-OA-018 §S4 performs the **live `vidushi_oa`→SQLite data migration** with
+field-level fidelity (in-record `actions[]`/logs/`documents[]` preserved) + JSONL-snapshot rollback,
+leaving the old Mongo DB intact.
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the

@@ -42,10 +42,17 @@ malformed record with no row written.
 path. `pymongo` becomes an **optional extra** (`vidushi-oa[mongo]`) imported only by the Mongo backend;
 the default install has no server dependency. `voa setup --check` diagnoses the active backend.
 
-### §S4 `snapshot`/`import` parity + backend migration
+### §S4 `snapshot`/`import` parity + live-data migration (field-level fidelity)
 `snapshot` and `import` work identically on both backends (they already speak `data/*.jsonl`), so they
-double as the migration path: `VIDUSHI_BACKEND=mongo voa snapshot` → `VIDUSHI_BACKEND=sqlite voa import`
-moves the live store to SQLite with row-count + `validate` verification.
+are the migration path: `VIDUSHI_BACKEND=mongo voa snapshot` → `VIDUSHI_BACKEND=sqlite voa import`.
+Beyond a round-trip test, this CR performs the **actual cutover of the existing live `vidushi_oa` Mongo
+store** to SQLite (mirroring CR-OA-011 §S4's live migration), with **field-level fidelity** — every
+record's nested `actions[]` history (opened/resolved), `--append-log` case-log entries, `documents[]`,
+FKs, `source`, and lifecycle fields survive byte-for-byte (deep-equal per record, not just row counts).
+The chezmoi-versioned `data/*.jsonl` snapshots are the **rollback path** and stay the plain-text journal;
+Mongo is retained as the opt-in backend, so the cutover is reversible (re-`import` under
+`VIDUSHI_BACKEND=mongo`). No live data is dropped by this CR — the cutover is verified, and pruning the
+old Mongo DB is a later, separate step (as in CR-OA-011).
 
 ### §S5 GPL-3.0 licensing
 Add a top-level `LICENSE` (GPL-3.0-or-later text) and set `license`/classifier metadata in
@@ -54,8 +61,11 @@ Add a top-level `LICENSE` (GPL-3.0-or-later text) and set `license`/classifier m
 ### §S6 `uv tool` / PyPI publish path + CI/CD
 Make `pyproject.toml` PyPI-ready (metadata, classifiers, long-description) and document `uv tool install
 vidushi-oa`. Add a GitHub Actions workflow that builds + runs the suite + the release gate on push, and
-publishes the wheel to **PyPI on a version tag**. (The actual first publish + repo-public flip are
-release-time ops, not this CR.)
+publishes the wheel to **PyPI on a version tag**. This CR **authors and parse-validates** the workflow +
+lands the packaging; the workflow is **first exercised at release time on the release branch** — during
+`git flow release` the repo is flipped public, the public license is confirmed, and the remote push runs
+the CI packaging/deploy for real (user-directed 2026-07-25). No live publish or public-flip happens
+inside this CR.
 
 ### §S7 Skill + docs wiring
 Repoint the engine-install instructions in `skills/vidushi-oa/SKILL.md`, `README.md`, and
@@ -80,7 +90,8 @@ are updated.
 
 ### §S4
 - [ ] `snapshot` then `import` round-trips on SQLite (row counts + `validate [0]:` preserved).
-- [ ] Migration: seed on Mongo → `snapshot` → `import` under SQLite yields identical row counts per store and `validate` clean on the SQLite side; a test performs the cross-backend move.
+- [ ] **Field-level fidelity:** a cross-backend move (Mongo → `snapshot` → SQLite `import`) yields records that are **deep-equal** to the source per `id` — including nested `actions[]` (with `opened`/`resolved`/log entries), `documents[]`, `source`, and every FK/lifecycle field — asserted by a test that deep-compares the full record set, not just counts.
+- [ ] **Live cutover verified:** running the migration against a copy of the live `vidushi_oa` Mongo store reproduces every store's row count and a clean `validate` on the SQLite side, and the old Mongo DB is **left intact** (rollback available via re-`import` under `VIDUSHI_BACKEND=mongo`); the CR does not drop live data.
 
 ### §S5
 - [ ] A top-level `LICENSE` file contains the GPL-3.0 text; the **built wheel's** metadata declares `License: GPL-3.0-or-later` (verified by inspecting the wheel's METADATA, not by reading `pyproject.toml`).
