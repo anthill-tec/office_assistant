@@ -20,21 +20,25 @@ goes **GPL-3.0-or-later**, unblocking a public **PyPI** publish + CI/CD, install
 
 ## Scope
 
-### §S1 Pluggable persistence seam
-Introduce a backend interface (e.g. `vidushi_oa/backends/base.py`) — the minimal store surface the CLI
-needs (`insert_many` with dedupe, `find`/`find_one` with the existing filter/projection/sort/limit,
-`update_one` shallow-merge + array pushes, `delete_one`, `count`, `distinct`, and validator/index
-provisioning). A factory selects the implementation from **`VIDUSHI_BACKEND`** ∈ {`sqlite` (default),
-`mongo`}. `gen_id`, `transitions.py`, the sweeps, `attention`, and TOON output sit **above** the seam
-and are untouched; the CLI verbs call the seam, never a backend driver directly.
+### §S1 Pluggable persistence seam + neutral query model
+Introduce a backend interface (`vidushi_oa/backends/`) with a **neutral, backend-agnostic query/update
+model** (design 2026-07-26): conditions `(field, op, value)` — `op ∈ {eq, ne, in, lt, lte, gt, gte,
+exists, elem_match}` — combined with `all`/`any`/`none` and dotted paths; updates as `{set, push,
+resolve-in-array}`; plus `count_by(field)` and validator/index provisioning. The CLI expresses each
+query in this neutral model, and **each backend compiles it to its OWN native query** — no backend's
+dialect is privileged and there is no dialect-translation layer. A factory selects the implementation
+from **`VIDUSHI_BACKEND`** ∈ {`sqlite` (default), `mongo`}. `gen_id`, `transitions.py`, the sweeps,
+`attention`, and TOON output sit **above** the seam and are untouched; the CLI verbs build the neutral
+model, never a backend driver's query docs.
 
 ### §S2 SQLite backend (the default)
-Implement the SQLite backend (stdlib `sqlite3`): one row per record storing the record as a JSON
-document (+ an extracted `id` column, unique). Reads use **JSON1** (`json_extract`, `json_each`) so the
-nested-`actions[]` and cross-domain `DUE`/`attention` queries keep working; the existing dotted-path
-filters (`source.email_id`, `actions.status`) map to `json_extract`. Writes run the **same JSON
-Schemas** as an application-level validation pass (parity with Mongo's `$jsonSchema`), rejecting a
-malformed record with no row written.
+Implement the SQLite backend (stdlib `sqlite3`): one row per record `(id TEXT PRIMARY KEY, doc JSON)`.
+Its **native compiler** renders the neutral model to `SELECT … WHERE …` over **JSON1** (`json_extract`
+for scalar/dotted paths; `EXISTS (… json_each …)` for `elem_match`), so the nested-`actions[]` and
+cross-domain `DUE`/`attention` queries run natively. Writes validate against the **same packaged JSON
+Schemas** using the **`jsonschema`** package (a `[sqlite]` install extra), rejecting a malformed record
+with no row written — parity with Mongo's `$jsonSchema`. `MongoBackend` compiles the same neutral model
+to a query document.
 
 ### §S3 Backend-agnostic `setup` + optional `pymongo`
 `voa setup` provisions the **active** backend: SQLite → ensure `$XDG_DATA_HOME/vidushi-oa/oa.db`
@@ -81,7 +85,7 @@ are updated.
 
 ### §S2
 - [ ] With `VIDUSHI_BACKEND=sqlite` on a temp db file, the full lifecycle passes: `setup → add → event → due-sweep/delivery-sweep → attention → validate` — a test drives every verb and asserts the same observable outcomes as the Mongo suite.
-- [ ] A nested predicate resolves via JSON1: a `query` (or `attention`) matching on `actions.status=OPEN` returns exactly the rows whose `actions[]` contains an OPEN action; a test seeds mixed rows and asserts the match set.
+- [ ] A neutral `elem_match` condition (`actions` where `status=OPEN`), compiled by the SQLite backend to JSON1, returns exactly the rows whose `actions[]` contains an OPEN action; a test seeds mixed rows and asserts the match set. A **cross-backend parity** test runs the SAME neutral query against `mongo` and `sqlite` and asserts identical result ids.
 - [ ] The SQLite backend rejects an out-of-enum `status` using the packaged schema (no row lands), and a duplicate `id` is de-duped/rejected — parity with the Mongo validator/index ACs.
 
 ### §S3

@@ -96,10 +96,18 @@ are the same contract a future backend would use; the JSONL snapshots remain imp
   `$jsonSchema` on Mongo and by an application-level validation pass (the *same* schemas) on SQLite.
   `gen_id`, the transition engine, the sweeps, `attention`, and the TOON output all sit **above** the
   backend seam and do not change.
-- **Query expressiveness on SQLite:** the nested-`actions[]` and cross-domain `DUE` queries the
-  original Decision valued are served by SQLite's **JSON1** functions (`json_extract`, `json_each`) —
-  one JSON document per record, queried with SQL + JSON1. This clears the expressiveness bar that
-  ruled out flat JSONL, still with no server.
+- **Query architecture (refined 2026-07-26) — a neutral query model compiled NATIVELY per backend.**
+  Rather than privilege Mongo's query-doc dialect and make SQLite *translate* it, the CLI expresses each
+  query/update in a **neutral, backend-agnostic model** — conditions `(field, op, value)` with
+  `op ∈ {eq, ne, in, lt, lte, gt, gte, exists, elem_match}`, combined with `all`/`any`/`none` and dotted
+  paths; updates as `{set, push, resolve-in-array}`; plus `count_by(field)`. **Each backend compiles the
+  neutral model to its OWN native query** — `MongoBackend` → a query document; `SqliteBackend` → `SELECT …
+  WHERE …` over `json_extract`/`json_each`. No backend's dialect is privileged; each source issues native
+  queries. This clears the nested-`actions[]` + cross-domain `DUE` expressiveness bar the original
+  Decision valued, with no server and no fragile dialect-translation layer.
+- **SQLite write-time validation** uses the **`jsonschema`** package (a `[sqlite]` install extra) against
+  the *same* packaged JSON Schemas that Mongo enforces via `$jsonSchema` — one validation contract, two
+  enforcement points.
 - **Versioning unchanged:** `snapshot` still exports each store → `data/*.jsonl` for git/chezmoi
   plain-text history and `import` still loads them; the snapshot format is backend-independent, so it
   doubles as the **backend-migration path** (snapshot on Mongo → import on SQLite, or the reverse).
