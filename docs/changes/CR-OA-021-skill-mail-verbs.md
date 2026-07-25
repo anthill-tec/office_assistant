@@ -23,7 +23,10 @@ the scope + gates below are the contract.
 `SKILL.md`'s "Mailboxes & search" section drives search/fetch through `voa mail-search` / `voa mail-get`
 (across configured accounts, source-tagged, TOON) instead of FastmailMCP + the Gmail connector. The
 dual-mailbox merge + `[FM]`/`[GM]`/`[YH]` tagging move into the verb; the skill states which accounts were
-searched from the verb's output.
+searched from the verb's output. Where a harness already exposes a mail MCP (e.g. OpenClaw's `agent_mail`,
+Claude Code's FastmailMCP), the skill notes it MAY delegate to that as a documented **alternative** — but
+`voa mail-*` is the default, since it is the only path that yields the token-saving pre-processing
+(DN-mail-access Decision 1).
 
 ### §S2 Safety contract over `voa` results
 The phishing / customs safety contract is unchanged but restated over `mail-search` output (the agent

@@ -23,7 +23,9 @@ yes, that's the design — the skill is the operator layer over the engine, not 
 ## Decision 2 — Skills-based cross-harness distribution (over MCP)
 
 To reach **many** agentic harnesses, the roles ship as a **Vercel/skills-style** portable skill
-(`npx skills add …` / a `SKILL.md` bundle), **not** an MCP server. Rationale: MCP was already dropped for
+(`npx skills add …` / a `SKILL.md` bundle), **not** an MCP server. Primary target harnesses (2026-07-26):
+**Hermes, Pi, Claude Code, OpenCode** — skill-consuming, CLI-capable agent runtimes (the embedded `voa`
+CLI + the skill run uniformly across them; see [DN-mail-access.md](DN-mail-access.md) Decision 1). Rationale: MCP was already dropped for
 AXI/TOON (see [DN-agent-interface-toon.md](DN-agent-interface-toon.md)); a `SKILL.md` is a text artifact
 every harness can consume, while MCP servers + subagents are harness-specific. (An MCP wrapper remains a
 possible *later* add if a non-CLI harness ever needs one — not for v0.1.0.)

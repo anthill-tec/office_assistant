@@ -25,6 +25,18 @@ two vaults; the cited URLs are recorded per decision.
 becomes mail-aware (it was mail-agnostic before). CR-OA-019's "declare FastmailMCP + Gmail connector as
 prerequisites" is **superseded** — there is no MCP prerequisite once the client is embedded.
 
+**Harness-provided mail is a documented *alternative*, not the default (decided 2026-07-26).** The primary
+target harnesses are **Hermes, Pi, Claude Code, and OpenCode** — skill-consuming, CLI-capable agent
+runtimes that do **not** uniformly ship a mail capability. The embedded `voa` client is therefore the
+**primary** path: it is the one **uniform, portable** way to read mail across all of them (each simply runs
+the `voa` CLI + the skill), and the only path that delivers the **token-saving pre-processing** (server-
+side search + merge + de-dup + TOON, so the agent never handles raw email) and **credential ownership** (no
+dependency on a third-party mail MCP). Some harnesses *do* provide mail via **MCP** (e.g. OpenClaw's
+`agent_mail`, Claude Code's FastmailMCP) — there is no magic built-in connector, so "the harness handles
+connectivity" means "a mail MCP is configured for it." Where that's the case, the skill MAY delegate to
+that MCP as a documented alternative (CR-OA-021); the embedded client stays the default and the only path
+that yields the token win.
+
 ## Decision 2 — hybrid protocol: IMAP common denominator + JMAP for Fastmail
 
 A unified `MailClient` interface modelled on the **IMAP lowest-common-denominator** (folders + RFC 3501
@@ -164,3 +176,6 @@ the non-interactive `voa setup`, DN-packaging-distribution Decision 5):
   service-accounts) — service accounts can't read the Private vault
 - Bitwarden `bw` CLI + self-hosted/Vaultwarden: bitwarden.com/help/cli · Secrets Manager/SDK is a separate
   product: bitwarden.com/help/secrets-manager-cli
+- OpenClaw is an MCP-based agent harness — mail via MCP servers (Composio `agent_mail` / AgentMail /
+  FastmailMCP) + a skill, not a built-in connector: composio.dev/toolkits/agent_mail/framework/openclaw ·
+  agentmail.to/docs/integrations/openclaw · openclawlaunch.com/guides/openclaw-agent-harness
