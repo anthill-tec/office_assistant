@@ -9,7 +9,64 @@ import os
 from pymongo.errors import DuplicateKeyError
 
 from vidushi_oa import _mongo
+from vidushi_oa.backends import query as Q
 from vidushi_oa.backends.base import Backend
+
+_MONGO_OPS = {"ne": "$ne", "in": "$in", "lt": "$lt", "lte": "$lte",
+              "gt": "$gt", "gte": "$gte", "exists": "$exists"}
+
+
+def _cond_value(c):
+    """Native mongo value for a Cond: bare for eq, else a `{$op: value}` document."""
+    if c.op == "eq":
+        return c.value
+    return {_MONGO_OPS[c.op]: c.value}
+
+
+def _elem_doc(conds):
+    return {c.path: _cond_value(c) for c in conds}
+
+
+def compile_query(node):
+    """Compile a neutral query node to a native MongoDB query document."""
+    if isinstance(node, Q.Cond):
+        return {node.path: _cond_value(node)}
+    if isinstance(node, Q.ElemMatch):
+        return {node.path: {"$elemMatch": _elem_doc(node.conds)}}
+    if isinstance(node, Q.Group):
+        if node.kind == "all":
+            parts = [compile_query(n) for n in node.nodes]
+            merged, collide = {}, False
+            for p in parts:
+                for k, v in p.items():
+                    if k in merged:
+                        collide = True
+                    merged[k] = v
+            return {"$and": parts} if collide else merged
+        if node.kind == "any":
+            return {"$or": [compile_query(n) for n in node.nodes]}
+        if node.kind == "none":
+            if len(node.nodes) == 1 and isinstance(node.nodes[0], Q.ElemMatch):
+                em = node.nodes[0]
+                return {em.path: {"$not": {"$elemMatch": _elem_doc(em.conds)}}}
+            return {"$nor": [compile_query(n) for n in node.nodes]}
+    raise TypeError(f"not a query node: {node!r}")
+
+
+def compile_update(upd):
+    """Compile a neutral Update to a native MongoDB update document. A `resolve` also carries a
+    `_filter` (the array `$elemMatch`) the caller must AND into the update's query for the
+    positional `$` to bind."""
+    doc = {}
+    if upd.set:
+        doc["$set"] = dict(upd.set)
+    if upd.push:
+        doc["$push"] = {field: {"$each": list(items)} for field, items in upd.push.items()}
+    if upd.resolve:
+        array_path, match_conds, set_fields = upd.resolve
+        doc["_filter"] = {array_path: {"$elemMatch": _elem_doc(match_conds)}}
+        doc.setdefault("$set", {}).update({f"{array_path}.$.{k}": v for k, v in set_fields.items()})
+    return doc
 
 
 class MongoBackend(Backend):
