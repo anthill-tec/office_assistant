@@ -63,6 +63,35 @@ Whether the repo stays **private** or migrates to an **open-source license** gat
 **Decided 2026-07-12: ship v0.1.0 privately (git-install), go public later.** CI/CD and a public PyPI
 publish stay deferred until an open-source migration; v0.1.0 distributes privately (git-install).
 
+**Updated 2026-07-25 — license = GPL-3.0-or-later.** The repo goes **open-source under GPL v3**,
+which resolves the gate: GitHub Actions CI/CD is unblocked, and a **public `pip install vidushi-oa`
+on PyPI** becomes the distribution path (private git-install is no longer the ceiling). The wheel
+carries `license = "GPL-3.0-or-later"` metadata + a top-level `LICENSE` file. Copyleft is acceptable
+for a personal-admin tool the user owns; consumers of the CLI/skill are unaffected (running a GPL
+tool imposes no obligation on their data or their own code).
+
+## Decision 7 — persistent install via `uv tool` + PyPI; the skill declares it a prerequisite (2026-07-25)
+
+The engine is **published to PyPI** (unblocked by Decision 6's GPL-3.0 call) and installed as a
+**persistent local tool** with **`uv tool install vidushi-oa`** — uv gives an isolated, on-PATH `voa`
+without polluting a global environment. The operator skill (`skills/vidushi-oa/`) declares the engine
+a **prerequisite** and drives the installed `voa` (the Decision 1 layering, now with a concrete
+command).
+
+**On-demand vs persistent — persistent, deliberately.** The gh-axi precedent runs its CLI on demand
+(`npx -y gh-axi`, nothing persisted), which suits a *stateless* wrapper over `gh`. Our engine is
+**stateful** — a durable local store (default embedded SQLite; see
+[DN-persistence-mongodb.md](DN-persistence-mongodb.md) 2026-07-25). The tool and its data must live
+locally across runs, so an ephemeral per-invocation fetch is the wrong model; `uv tool install` is the
+right one.
+
+- **Skill wiring:** `SKILL.md`'s engine-prerequisite step becomes `uv tool install vidushi-oa`
+  (persistent) → `voa setup` (provisions the active backend) → the agent drives `voa`. The *skill*
+  still installs via `npx skills add …` (unchanged, CR-OA-016); the two-piece model (skill + engine)
+  stands, with the engine install now a persistent `uv tool` command rather than raw `pip`.
+- **CI/CD + PyPI:** GitHub Actions builds/tests and publishes the wheel to PyPI on tag; the release
+  gate (`.skill-release.toml` / `skill-release-gate.py`) remains the pre-publish quality bar.
+
 ## Consequences
 
 - No PII ships in any package — `data/*.jsonl` + `documents/` stay local/chezmoi.

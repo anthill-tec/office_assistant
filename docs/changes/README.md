@@ -39,6 +39,8 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-014](CR-OA-014-aggregate-tally.md) | Aggregate tally in the TOON envelope | feature | COMPLETED (2026-07-13) | 010 | 6 · v0.1.0 |
 | [CR-OA-015](CR-OA-015-orders-store.md) | `orders` delivery-lifecycle store | feature | COMPLETED | 005, 007 | 7 |
 | [CR-OA-016](CR-OA-016-unified-skill-parity.md) | Complete unified skill (supersede legacy) | docs | COMPLETED | 012, 015 | 7 |
+| [CR-OA-017](CR-OA-017-axi-conformance-audit.md) | AXI conformance audit + gap-closure (full verb surface) | maintenance | PENDING | 009, 010, 014 | 8 |
+| [CR-OA-018](CR-OA-018-pluggable-backend-and-packaging.md) | Pluggable backend (SQLite default) + GPL-v3 `uv`/PyPI packaging | feature | PENDING | 016, 017 | 8 |
 
 ## v0.1.0 milestone — Wave 6
 
@@ -78,6 +80,21 @@ detail compressed out:
 
 **Order:** 015 → 016 (the skill's purchase domain needs the store). Both run on feature branches;
 015 is a code CR (RED/GREEN/VERIFY), 016 is docs/skill (orchestrator-authored + grep/validate gates).
+
+## Wave 8 — distribution readiness (portable, publishable engine)
+
+CRs **017–018** turn the engine into a genuinely portable, publishable product. **017** audits the CLI
+against the matured AXI spec + the `gh-axi` reference across the **full** verb surface and closes any
+residual conformance gaps (envelope shape per verb, structured errors to stdout + exit codes, next-step
+coverage) — a hardened interface to ship on. **018** makes persistence **pluggable** with an **embedded
+SQLite default** (Mongo opt-in, `pymongo` optional) so the tool needs no server, licenses the repo
+**GPL-3.0-or-later** (resolving the DN §6 gate), and wires the persistent **`uv tool install
+vidushi-oa`** / PyPI distribution + CI/CD. Design in
+[`../research/DN-persistence-mongodb.md`](../research/DN-persistence-mongodb.md) (2026-07-25) +
+[`../research/DN-packaging-distribution.md`](../research/DN-packaging-distribution.md) (Decisions 6–7).
+
+**Order:** 017 → 018 (packaging ships on the audited, conformant CLI). The first PyPI publish + the
+repo-public flip are release-time ops guarded by the release gate, not inside 018.
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the

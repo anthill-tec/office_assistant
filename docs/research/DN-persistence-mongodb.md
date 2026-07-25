@@ -73,3 +73,39 @@ we do, purely as headroom — not because scale demands it.
 - Versioning = one explicit `snapshot` verb (no per-write hook).
 - Connection via env `OA_MONGO_URI` (default `mongodb://127.0.0.1:27017`) + `OA_MONGO_DB`
   (default `office_assistant`); no secrets in code.
+
+## Decision (2026-07-25) — pluggable persistence backend, embedded SQLite the default
+
+To make the engine a genuinely portable, publishable tool (see
+[DN-packaging-distribution.md](DN-packaging-distribution.md) Decision 7), the persistence layer
+becomes **pluggable behind a backend interface**, and the **default backend is embedded SQLite**
+(Python-stdlib `sqlite3`) — a persistent local file, no external server. **MongoDB stays a
+first-class opt-in** for its query/indexing headroom.
+
+**Why this reverses "a running `mongod` is required":** a `pip`/`uv`-installed CLI cannot assume a
+MongoDB is running on the target machine; requiring one defeated the portability goal. SQLite is in
+the stdlib, needs no server, and persists locally, so the store "just works" right after install.
+The original *Consequences* already anticipated this — *"No lock-in — the `$jsonSchema` validators
+are the same contract a future backend would use; the JSONL snapshots remain importable."*
+
+- **Backend selection:** env **`VIDUSHI_BACKEND`** ∈ {`sqlite` (default), `mongo`}. `sqlite`
+  reads/writes `$XDG_DATA_HOME/vidushi-oa/oa.db` (override `VIDUSHI_SQLITE_PATH`); `mongo` keeps the
+  existing `VIDUSHI_MONGO_URI` / `VIDUSHI_MONGO_DB` path.
+- **The domain contract is backend-agnostic and unchanged.** The JSON Schemas (status enum,
+  `actions[]` OPEN→RESOLVED shape, FK id patterns) stay the single validation contract — enforced by
+  `$jsonSchema` on Mongo and by an application-level validation pass (the *same* schemas) on SQLite.
+  `gen_id`, the transition engine, the sweeps, `attention`, and the TOON output all sit **above** the
+  backend seam and do not change.
+- **Query expressiveness on SQLite:** the nested-`actions[]` and cross-domain `DUE` queries the
+  original Decision valued are served by SQLite's **JSON1** functions (`json_extract`, `json_each`) —
+  one JSON document per record, queried with SQL + JSON1. This clears the expressiveness bar that
+  ruled out flat JSONL, still with no server.
+- **Versioning unchanged:** `snapshot` still exports each store → `data/*.jsonl` for git/chezmoi
+  plain-text history and `import` still loads them; the snapshot format is backend-independent, so it
+  doubles as the **backend-migration path** (snapshot on Mongo → import on SQLite, or the reverse).
+- **`pymongo` becomes an optional dependency** (extra: `pip install vidushi-oa[mongo]`); the default
+  install carries no server dependency. `setup` provisions the *active* backend (SQLite: ensure the
+  data dir + db file + schema; Mongo: the existing connection/init path).
+
+This supersedes the *Fixed choices* port/DB-name lines **for the default path only** — those remain
+accurate for the opt-in Mongo backend.
