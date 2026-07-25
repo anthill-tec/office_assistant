@@ -73,8 +73,9 @@ OS keyring                                              ← fallback (graceful, 
 ```
 
 - **`VIDUSHI_SECRET_BACKEND`** names the primary vault; keyring catches the not-set-up case instead of
-  hard-failing. The vault is the intended home (it's where the user already keeps secrets); keyring exists
-  so `voa` still works before a vault is configured.
+  hard-failing. The vault is a **dedicated, read-only** store the user hosts on 1Password/Bitwarden
+  (provisioned during `voa setup` — Decision 6); `voa` connects to it, it does not create it. Keyring
+  exists so `voa` still works before a vault is configured.
 - **1Password** — `op read "op://voa-secrets/<item>/<field>"` via the `op` CLI (**zero Python deps**),
   authenticated by a **service-account token** (`OP_SERVICE_ACCOUNT_TOKEN`), read-only, scoped to a
   **dedicated vault** (service accounts *cannot* read the built-in Private vault — the user puts `voa`'s
@@ -98,6 +99,28 @@ The engine exposes `mail-*` verbs that run **server-side search per provider**, 
 pre-filtered, pre-merged, token-frugal rows — never raw email JSON. Verbs are AXI-conformant (CR-OA-017)
 like every other `voa` verb. The `mail-*` surface feeds the existing domain flow (findings persisted via
 the store), so mail becomes another deterministic tool, not an in-context chore.
+
+## Decision 6 — `voa setup` provisions credentials with guided per-provider steps
+
+Credential provisioning is a first-class part of **`voa setup`**, not a hidden side-task:
+
+- **Vault backend:** setup detects/configures the chosen vault backend — a **dedicated, read-only** vault
+  the user hosts on **1Password** (a service-account token scoped to that vault) or **Bitwarden**
+  (session / self-hosted). `voa` connects to it; it never creates the vault (that lives in the user's
+  password manager). **If no vault is provisioned during setup, `voa` defaults to the local OS keyring
+  workflow** (Decision 4's fallback).
+- **Per-provider credential steps — user intervention is required.** Generating each provider credential
+  is a manual action on the provider's own site, so setup **presents the concrete steps** per configured
+  provider; the *kind* differs by provider:
+  - **Fastmail** → **token-based API access** (a read-only JMAP API token).
+  - **Gmail** → **login access** (an IMAP app password; or XOAUTH2 for a Workspace account whose admin has
+    disabled app passwords).
+  - **Yahoo** → **login access** (an IMAP app password).
+  The user generates each in the provider's settings and hands it to setup, which stores only the
+  **reference** in the active backend (vault or keyring) via `mail-auth`. `voa` never types a credential
+  into a provider site.
+- **Inspectable, secret-free:** `voa setup --check` reports which providers are configured, which backend
+  holds each reference, and the credential kind (token / login) — **without** revealing any secret value.
 
 ## Consequences
 

@@ -59,6 +59,15 @@ For Workspace accounts with app passwords disabled, an IMAP **XOAUTH2** auth pat
 `XOAUTH2` string from an OAuth access token refreshed via a minimal `httpx` call — **no**
 `google-api-python-client`). Selected per-account when configured.
 
+### §S7 `voa setup` — guided mail-credential provisioning
+Extend `voa setup` with a credential-provisioning phase (DN-mail-access Decision 6): detect/configure the
+vault backend for a **dedicated read-only** vault (1Password service-account token / Bitwarden session),
+and **default to keyring** when no vault is provisioned. Then, per configured provider, present the manual
+credential-generation steps — **Fastmail** read-only JMAP **token**, **Gmail**/**Yahoo** IMAP app-password
+**login** (Gmail-Workspace XOAUTH2) — and register the resulting **reference** via `mail-auth` in the
+active backend. `voa setup --check` reports configured providers + backend + credential kind **without**
+revealing secrets.
+
 ## Acceptance criteria
 
 Adapter/verb tests run against **fakes** (an in-process fake IMAP server / a fake JMAP HTTP endpoint / a
@@ -84,6 +93,10 @@ fake `op`/`bw` on `PATH`) — no live credentials in the suite. Live-account ver
 
 ### §S6
 - [ ] Given an access token, the XOAUTH2 adapter builds the correct base64 `user=…\x01auth=Bearer …\x01\x01` SASL string and authenticates against the fake IMAP server via `AUTHENTICATE XOAUTH2`; a unit test asserts the encoded string.
+
+### §S7
+- [ ] `voa setup` runs a credential phase that configures the vault backend when provisioned and **falls back to keyring** when it is not; a test (fake vault CLI absent) asserts the keyring backend is selected and a warning is emitted — not a crash.
+- [ ] `voa setup --check` lists each configured provider with its backend and credential kind (`token`/`login`) and **prints no secret value**; a test seeds a sentinel secret and greps the `--check` output for it → 0 matches.
 
 ## Estimated size
 L–XL — a mail subsystem (unified interface + three provider adapters over two protocols), a four-backend
