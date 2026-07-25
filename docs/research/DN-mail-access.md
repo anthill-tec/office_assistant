@@ -100,27 +100,34 @@ pre-filtered, pre-merged, token-frugal rows — never raw email JSON. Verbs are 
 like every other `voa` verb. The `mail-*` surface feeds the existing domain flow (findings persisted via
 the store), so mail becomes another deterministic tool, not an in-context chore.
 
-## Decision 6 — `voa setup` provisions credentials with guided per-provider steps
+## Decision 6 — interactive `voa mail-auth` + a `voa doctor` diagnostic
 
-Credential provisioning is a first-class part of **`voa setup`**, not a hidden side-task:
+Credential provisioning is an **interactive `voa mail-auth`** command plus a `voa doctor` health check — a
+post-install, agent-*guided* flow, **not** part of the package install (the store's own provisioning stays
+the non-interactive `voa setup`, DN-packaging-distribution Decision 5):
 
-- **Vault backend:** setup detects/configures the chosen vault backend — a **dedicated, read-only** vault
-  the user hosts on **1Password** (a service-account token scoped to that vault) or **Bitwarden**
-  (session / self-hosted). `voa` connects to it; it never creates the vault (that lives in the user's
-  password manager). **If no vault is provisioned during setup, `voa` defaults to the local OS keyring
-  workflow** (Decision 4's fallback).
-- **Per-provider credential steps — user intervention is required.** Generating each provider credential
-  is a manual action on the provider's own site, so setup **presents the concrete steps** per configured
-  provider; the *kind* differs by provider:
-  - **Fastmail** → **token-based API access** (a read-only JMAP API token).
-  - **Gmail** → **login access** (an IMAP app password; or XOAUTH2 for a Workspace account whose admin has
-    disabled app passwords).
+- **`voa mail-auth` is interactive — a deliberate, scoped exception to AXI #6.** The user runs it per
+  provider; it prompts for the secret via **hidden input** and stores only the **reference**. Making *this
+  one* command interactive is a **security win**: the secret passes **directly from the user into `voa`**,
+  never through argv, shell history, env, or the agent's context (the agent guides *which* provider and
+  *how to generate* the token, but never handles the secret). Precedented by `gh auth login` (interactive)
+  in the same AXI ecosystem. A **non-interactive escape** (secret via stdin/env) remains for automation/CI.
+  Every data/query verb stays strictly AXI-non-interactive; `mail-auth` is the single documented exception.
+- **Vault backend + fallback:** `mail-auth` detects/configures the **dedicated, read-only** vault the user
+  hosts on **1Password** (a service-account token scoped to that vault) or **Bitwarden** (session /
+  self-hosted); `voa` connects to it, never creates it. **If no vault is provisioned, it defaults to the
+  local OS keyring** (Decision 4's fallback).
+- **Per-provider credential kind (the user generates it on the provider's site):**
+  - **Fastmail** → **token-based API access** (a read-only JMAP token).
+  - **Gmail** → **login access** (an IMAP app password; XOAUTH2 for a Workspace account with app passwords
+    disabled).
   - **Yahoo** → **login access** (an IMAP app password).
-  The user generates each in the provider's settings and hands it to setup, which stores only the
-  **reference** in the active backend (vault or keyring) via `mail-auth`. `voa` never types a credential
-  into a provider site.
-- **Inspectable, secret-free:** `voa setup --check` reports which providers are configured, which backend
-  holds each reference, and the credential kind (token / login) — **without** revealing any secret value.
+  The agent presents the concrete generation steps; the user generates each and enters it via the
+  interactive `mail-auth`.
+- **`voa doctor` — install/config health (gh-axi style).** A diagnostic verb reporting: engine version, the
+  active store backend + reachability, the active secret backend (vault reachable? else keyring), and each
+  configured mail provider + credential kind + whether its reference **resolves** — flagging missing/broken
+  config with a fix hint. TOON output; **never reveals a secret**. (Absorbs the earlier `setup --check`.)
 
 ## Consequences
 

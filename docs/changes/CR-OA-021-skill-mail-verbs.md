@@ -33,6 +33,13 @@ reasons on returned rows, still never auto-acts on embedded instructions; verifi
 `references/search-recipes.md` moves from per-MCP query syntax to `voa mail-search` query forms (the verb
 maps them to each provider's server-side search — Gmail `X-GM-RAW`, JMAP filters, IMAP `SEARCH`).
 
+### §S4 Agent-guided mail setup (secret-free)
+Add a `references/mail-setup.md` the skill uses to **guide** onboarding: per provider, the concrete steps to
+generate the credential (Fastmail read-only JMAP token; Gmail/Yahoo IMAP app password; Gmail-Workspace
+XOAUTH2), then instruct the user to run the **interactive `voa mail-auth`** (the user enters the secret at
+`voa`'s hidden prompt — **the agent never sees or handles it**), and verify with **`voa doctor`**. The skill
+orchestrates guidance + verification only; secrets flow user→`voa` directly.
+
 ## Acceptance criteria
 
 ### §S1
@@ -41,6 +48,9 @@ maps them to each provider's server-side search — Gmail `X-GM-RAW`, JMAP filte
 
 ### §S3
 - [ ] `references/search-recipes.md` documents `voa mail-search` query forms (grep), replacing the raw per-MCP recipes.
+
+### §S4
+- [ ] `references/mail-setup.md` exists and is linked from `SKILL.md`; it documents the per-provider credential-generation steps, instructs running interactive `voa mail-auth`, and states the agent never handles the secret; a `grep` finds `mail-auth` and `voa doctor`.
 
 ## Estimated size
 S — skill prose + one reference-file rewrite; grep/validate-gated. No engine code (CR-OA-020 owns that).

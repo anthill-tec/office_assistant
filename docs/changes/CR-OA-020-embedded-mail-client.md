@@ -59,14 +59,18 @@ For Workspace accounts with app passwords disabled, an IMAP **XOAUTH2** auth pat
 `XOAUTH2` string from an OAuth access token refreshed via a minimal `httpx` call — **no**
 `google-api-python-client`). Selected per-account when configured.
 
-### §S7 `voa setup` — guided mail-credential provisioning
-Extend `voa setup` with a credential-provisioning phase (DN-mail-access Decision 6): detect/configure the
-vault backend for a **dedicated read-only** vault (1Password service-account token / Bitwarden session),
-and **default to keyring** when no vault is provisioned. Then, per configured provider, present the manual
-credential-generation steps — **Fastmail** read-only JMAP **token**, **Gmail**/**Yahoo** IMAP app-password
-**login** (Gmail-Workspace XOAUTH2) — and register the resulting **reference** via `mail-auth` in the
-active backend. `voa setup --check` reports configured providers + backend + credential kind **without**
-revealing secrets.
+### §S7 Interactive `voa mail-auth` + `voa doctor`
+`voa mail-auth` (DN-mail-access Decision 6) registers a provider credential: it prompts for the secret via
+**hidden input** and stores only a **reference** in the active backend (vault or keyring), detecting/
+configuring the dedicated read-only vault (1Password service-account token / Bitwarden session) and
+**defaulting to keyring** when none is provisioned. Its **interactive secret prompt is the single documented
+exception to AXI #6** (secure entry — the secret never enters argv/history/env/agent context); it still
+emits an **AXI TOON** status object, honours `--json`, and provides a **non-interactive escape** (secret via
+stdin/env) for automation/CI. `voa doctor` is a gh-axi-style diagnostic — engine, active store + secret
+backends + reachability, each configured provider (credential kind + whether its reference resolves) with a
+fix hint — as a **full AXI/TOON** read (absorbs `setup --check`), never revealing secrets. Non-interactive
+store provisioning stays in `voa setup` (§S3, CR-018). All other `mail-*` verbs are AXI-conformant per
+CR-OA-017.
 
 ## Acceptance criteria
 
@@ -89,14 +93,15 @@ fake `op`/`bw` on `PATH`) — no live credentials in the suite. Live-account ver
 
 ### §S5
 - [ ] `mail-search` across fake FM+GM+YH accounts returns a TOON envelope with `results[N]` + `tally:` + `next[N]`; each row is `[FM]`/`[GM]`/`[YH]` source-tagged; two accounts returning the same `Message-ID` de-dup to one row; `--json` yields a bare array with no `tally`.
-- [ ] **Caller-existence:** `voa --help` lists `mail-search`/`mail-auth`/`mail-accounts`/`mail-get`, and each verb is wired via a non-test `set_defaults` caller (grep ≥1).
+- [ ] **Caller-existence:** `voa --help` lists `mail-search`/`mail-auth`/`mail-accounts`/`mail-get`/`doctor`, and each verb is wired via a non-test `set_defaults` caller (grep ≥1).
 
 ### §S6
 - [ ] Given an access token, the XOAUTH2 adapter builds the correct base64 `user=…\x01auth=Bearer …\x01\x01` SASL string and authenticates against the fake IMAP server via `AUTHENTICATE XOAUTH2`; a unit test asserts the encoded string.
 
 ### §S7
-- [ ] `voa setup` runs a credential phase that configures the vault backend when provisioned and **falls back to keyring** when it is not; a test (fake vault CLI absent) asserts the keyring backend is selected and a warning is emitted — not a crash.
-- [ ] `voa setup --check` lists each configured provider with its backend and credential kind (`token`/`login`) and **prints no secret value**; a test seeds a sentinel secret and greps the `--check` output for it → 0 matches.
+- [ ] `voa mail-auth` registers a provider credential storing only a **reference** (never the secret in argv/store/config/logs), emits an AXI TOON status object, and honours `--json`; its **non-interactive** mode (secret via stdin) registers the same reference headlessly — a test drives the stdin path and greps every artifact for the sentinel secret → 0 matches.
+- [ ] With no vault provisioned, `mail-auth` **falls back to keyring** with a warning (fake vault CLI absent) — not a crash.
+- [ ] `voa doctor` emits a TOON envelope reporting engine + active store backend + active secret backend + each configured provider (credential kind + whether the reference resolves), flags a missing/broken config with a fix hint, exits non-zero when a checked item fails, `--json` yields clean JSON, and it **prints no secret value** (a test seeds a sentinel + greps `doctor` output → 0 matches).
 
 ## Estimated size
 L–XL — a mail subsystem (unified interface + three provider adapters over two protocols), a four-backend
