@@ -140,14 +140,26 @@ link to act on themselves. Ties back to proof-of-purchase / coverage via `invoic
 
 ### Support — claims, RMA & service cases (store type `cases`)
 
-Run each support issue as a tracked **case** (`open → awaiting_support → awaiting_user → rma_issued
-→ in_repair → resolved → closed`), citing the linked `invoice_id` (proof) and `warranty_id`
-(coverage) and pulling the support address from `contacts`. **DRAFT** correspondence to the
-vendor's **verified** support address (reply from the buying alias the vendor knows), including
-order/invoice number, product, model/serial, purchase date, warranty status, and a clear ask.
-**Draft-then-confirm — never auto-send.** Minimise PII; let the user supply anything sensitive.
-Log each exchange with `--append-log`, and surface stalled cases (awaiting-you, support gone
-silent, warranty-window risk). An RMA parcel in transit hands to the purchase domain (reverse delivery).
+Run each support issue as a tracked **case** on the **shared lifecycle** — a case's `status` is one
+of `{NEW, UNKNOWN, IN_PROGRESS, COMPLETED, EXPIRED, DUE}` and runs `NEW → IN_PROGRESS → COMPLETED`.
+The RMA/service **stages live in `actions[]`, never in the status**: the case action set is
+`raise-ticket · rma-issue · ship-back · repair · replace · resolution-confirm`, each running
+OPEN → RESOLVED — drive them with `voa action-add` / `voa action-resolve`, and move the coarse state
+with `voa set-status`. Cite the linked `invoice_id` (proof) and `warranty_id` (coverage) and pull the
+support address from `contacts`. **DRAFT** correspondence to the vendor's **verified** support address
+(reply from the buying alias the vendor knows), including order/invoice number, product, model/serial,
+purchase date, warranty coverage, and a clear ask. **Draft-then-confirm — never auto-send.** Minimise
+PII; let the user supply anything sensitive. Log each exchange with `--append-log`, and surface stalled
+cases (awaiting-you, support gone silent, warranty-window risk). An RMA parcel in transit hands to the
+purchase domain (reverse delivery).
+
+Open a case with a valid shared status, then advance its stages as `actions[]`:
+
+```bash
+voa add cases --json '{"vendor":"Dell","acct":"business","status":"IN_PROGRESS","invoice_id":"doc_dell_inv-2231","warranty_id":"war_dell_xps13","product":"XPS 13 9310"}'
+voa action-add cases case_dell raise-ticket --owner user   # open the first stage (auto OPEN)
+voa action-resolve cases case_dell raise-ticket            # resolve it as the case moves on
+```
 
 ## Deep-sweep mode (read-only)
 
