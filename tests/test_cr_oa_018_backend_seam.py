@@ -53,6 +53,21 @@ class BackendSeamTest(unittest.TestCase):
         os.environ["VIDUSHI_BACKEND"] = "mongo"
         self.assertEqual(get_backend().name, "mongo")
 
+    def test_backend_exposes_dup_error_and_check(self):
+        from vidushi_oa.backends import get_backend
+
+        be = get_backend("mongo")
+        self.assertTrue(hasattr(be, "dup_error"), "backend must expose its duplicate-key error type")
+        self.assertTrue(callable(getattr(be, "check", None)), "backend must expose a check() readiness probe")
+
+    def test_cli_has_no_direct_pymongo(self):
+        # §S1 caller-existence: pymongo lives ONLY under the mongo backend module, never _cli.py
+        import vidushi_oa
+
+        cli = os.path.join(os.path.dirname(vidushi_oa.__file__), "_cli.py")
+        with open(cli, encoding="utf-8") as f:
+            self.assertNotIn("pymongo", f.read(), "_cli.py must not reference pymongo directly")
+
 
 if __name__ == "__main__":
     unittest.main()
