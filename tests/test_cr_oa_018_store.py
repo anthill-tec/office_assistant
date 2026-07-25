@@ -144,10 +144,10 @@ class FindOneTest(MongoStoreTestBase):
 class FindOperatorTest(MongoStoreTestBase):
     def setUp(self):
         super().setUp()
-        self.store.insert({"id": "sub_new", "provider": "NewCo", "status": "NEW", "renews": "2026-06-01"})
-        self.store.insert({"id": "sub_due", "provider": "DueCo", "status": "DUE", "renews": "2026-07-15"})
-        self.store.insert({"id": "sub_ip", "provider": "IpCo", "status": "IN_PROGRESS", "renews": "2026-08-20"})
-        self.store.insert({"id": "sub_done", "provider": "DoneCo", "status": "COMPLETED", "renews": "2026-09-01"})
+        self.store.insert({"id": "sub_new", "provider": "NewCo", "status": "NEW", "renews": "2026-06-01", "disposition": "KEEP"})
+        self.store.insert({"id": "sub_due", "provider": "DueCo", "status": "DUE", "renews": "2026-07-15", "disposition": "KEEP"})
+        self.store.insert({"id": "sub_ip", "provider": "IpCo", "status": "IN_PROGRESS", "renews": "2026-08-20", "disposition": "KEEP"})
+        self.store.insert({"id": "sub_done", "provider": "DoneCo", "status": "COMPLETED", "renews": "2026-09-01", "disposition": "KEEP"})
 
     def test_cond_in_matches_only_listed_statuses(self):
         docs = self.store.find(cond("status", "in", ["NEW", "DUE"]))
@@ -326,6 +326,11 @@ class EnsureIdIndexTest(MongoStoreTestBase):
         # before ensure_id_index(): no unique constraint, a duplicate id is accepted
         cases_store.insert({"id": "case_a", "status": "NEW"})
         self.assertEqual(cases_store.count(cond("id", "eq", "case_a")), 2)
+
+        # clear the pre-index duplicates so the unique index can build
+        cases_store.delete(cond("id", "eq", "case_a"))
+        cases_store.delete(cond("id", "eq", "case_a"))
+        self.assertEqual(cases_store.count(cond("id", "eq", "case_a")), 0)
 
         cases_store.ensure_id_index()
 

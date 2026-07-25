@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Tuple
 
 #: scalar comparison operators a `Cond` may use
-OPS = frozenset({"eq", "ne", "in", "lt", "lte", "gt", "gte", "exists"})
+OPS = frozenset({"eq", "ne", "in", "lt", "lte", "gt", "gte", "exists", "contains"})
 
 
 @dataclass(frozen=True)
