@@ -106,7 +106,8 @@ Example: `store.py get products prod_fnirsi_tmp-610s --expand contact_id,invoice
 | stage | str\|null | human-readable fine detail, distinct from `status`: `Ordered · Paid · Processing · Shipped · In transit · Customs clearance · Out for delivery · Delivered`, plus terminal side-states `Cancelled · Returned · Refunded · Delivery-failed` |
 | last_event | str\|null | latest tracking-event text |
 | last_event_date | str\|null | YYYY-MM-DD of the last event (>7 days ago ⇒ `delivery-sweep` chases) |
-| alias | enum\|null | personal \| business — the buying context |
+| alias | str\|null | masked buying alias / billing email |
+| acct | enum | personal \| business |
 | invoice_id | str\|null | FK→invoices (proof of purchase) |
 | product_id | str\|null | FK→products |
 | source | obj | mail pin (see above) |

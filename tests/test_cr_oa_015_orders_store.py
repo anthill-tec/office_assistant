@@ -142,6 +142,16 @@ class OrdersSchemaTest(unittest.TestCase):
         self.assertNotIn("EXPIRED", schema["properties"]["status"]["enum"])
         self.assertNotIn("DUE", schema["properties"]["status"]["enum"])
 
+    def test_alias_is_free_string_and_acct_is_personal_business_enum(self):
+        # Guard the alias/acct split (DN-purchases-persistence): `alias` is the masked
+        # buying alias (a free string), `acct` is the personal|business ledger split --
+        # they are distinct fields and must not be conflated.
+        schema = _load_packaged_schema("orders")
+        props = schema["properties"]
+        self.assertEqual(props["alias"].get("bsonType"), "string")
+        self.assertNotIn("enum", props["alias"], "alias is a free string, not an enum")
+        self.assertEqual(props["acct"].get("enum"), ["personal", "business"])
+
     def test_actions_item_status_enum_is_open_resolved_only(self):
         schema = _load_packaged_schema("orders")
         self.assertEqual(
