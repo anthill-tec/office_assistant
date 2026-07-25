@@ -205,10 +205,31 @@ for the main thread to execute) → **Flags** (suspected phishing/scam — never
 - **Persistence is the `voa` store**, not ad-hoc notes — every domain writes through the CLI so
   ids, dedupe, validators, and `voa event`/`voa set-status` transitions stay authoritative. Use
   `voa attention` to surface rows with an OPEN action or a status needing attention, and the
-  `voa warranty-sweep` / `voa due-sweep` sweeps for expiry and renewal windows.
+  `voa warranty-sweep` / `voa due-sweep` / `voa delivery-sweep` sweeps for expiry, renewal windows,
+  and stalled orders.
 - **Calendar reminders:** on request, create renewal/expiry/delivery events on the default calendar
   (`Asia/Kolkata`, all-day), tagged `[sub-watch]` (subscriptions) or `[buy-watch]` (purchases/
-  warranties) so they're findable later, matching recurrence to cadence; verify after writing.
+  warranties) so they're findable later, matching recurrence to cadence; verify after writing — full
+  recipe (incl. the `create_event`-not-`compose_event` headless caveat) in
+  [`references/calendar-reminders.md`](references/calendar-reminders.md).
 - **Composition:** the six domains are the interactive brains — run them in the main thread, the
   user steers dispositions, reminders, drafting/sending, and deletions; the read-only deep-sweep
   mode is for a big independent read pass whose findings the main thread then acts on.
+
+## References (progressive disclosure)
+
+Operational detail lives in `references/` so this body stays lean — load the file for the task at hand:
+
+- [`references/search-recipes.md`](references/search-recipes.md) — per-domain Fastmail single-phrase
+  queries + Gmail rich queries for both mailboxes.
+- [`references/carriers-and-customs.md`](references/carriers-and-customs.md) — carrier roster
+  (Delhivery, DTDC, Blue Dart, India Post, Ekart, Shadowfax, FedEx, DHL, UPS, Aramex) + FPO / ICEGATE
+  customs handling.
+- [`references/subscription-taxonomy.md`](references/subscription-taxonomy.md) — the
+  `provider-kind / service-kind` category tags + the never-tombstone `finance/bank` /
+  `security/password-manager` rule.
+- [`references/calendar-reminders.md`](references/calendar-reminders.md) — the reminder recipe:
+  default calendar, `Asia/Kolkata`, all-day, `[sub-watch]` / `[buy-watch]` tags, recurrence-to-cadence,
+  verify-after-write, and the `create_event`-vs-`compose_event` headless caveat.
+- [`references/report-templates.md`](references/report-templates.md) — per-domain report skeletons +
+  urgency ladders + the invoice retrieval-tier order + the expense/tax (sum-by-`acct`/period/GST) view.
