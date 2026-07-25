@@ -37,7 +37,7 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-012](CR-OA-012-unified-skill.md) | Unified `vidushi-oa` skill (cross-harness) | feature | COMPLETED (2026-07-13) | 011 | 6 · v0.1.0 |
 | [CR-OA-013](CR-OA-013-disposition-aware-sweep.md) | Disposition-aware `due-sweep` | feature | COMPLETED (2026-07-13) | 007 | 6 · v0.1.0 |
 | [CR-OA-014](CR-OA-014-aggregate-tally.md) | Aggregate tally in the TOON envelope | feature | COMPLETED (2026-07-13) | 010 | 6 · v0.1.0 |
-| [CR-OA-015](CR-OA-015-orders-store.md) | `orders` delivery-lifecycle store | feature | PENDING | 005, 007 | 7 |
+| [CR-OA-015](CR-OA-015-orders-store.md) | `orders` delivery-lifecycle store | feature | COMPLETED | 005, 007 | 7 |
 | [CR-OA-016](CR-OA-016-unified-skill-parity.md) | Complete unified skill (supersede legacy) | docs | PENDING | 012, 015 | 7 |
 
 ## v0.1.0 milestone — Wave 6

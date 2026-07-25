@@ -1,6 +1,6 @@
 # CR-OA-015 — `orders` delivery-lifecycle store
 
-**Status:** DONE (2026-07-25)
+**Status:** COMPLETED (shipped 2026-07-25 on feature/CR-OA-015-orders-store)
 **Type:** feature
 **Priority:** High
 **Depends on:** 005, 007
