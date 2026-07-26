@@ -38,7 +38,7 @@ class TestConnection(unittest.TestCase):
         self.assertEqual(
             set(store.STORES),
             {"contacts", "invoices", "warranties", "cases", "products",
-             "subscriptions", "insurance"},
+             "subscriptions", "insurance", "orders"},
         )
 
     def test_coll_targets_named_collection(self):

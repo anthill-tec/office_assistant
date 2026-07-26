@@ -1,6 +1,6 @@
 # Vidushi OA
 
-**Version 0.1.0** · engine `pip install vidushi-oa` (console `voa`) + the portable `vidushi-oa` skill.
+Engine `uv tool install vidushi-oa` (console `voa`) + the portable `vidushi-oa` skill. Install the skill with `npx skills add anthill-tec/office_assistant/skills/vidushi-oa`.
 
 **Vidushi OA** is a personal office assistant that reads your mail (Fastmail + Gmail) and runs the
 everyday admin lifecycle around the things you buy and pay for — subscriptions, purchases & deliveries,
@@ -9,11 +9,15 @@ invoices, warranties, support cases, and product references.
 It is **a set of defined roles, not just code.** Each role is a Claude *skill* (or *agent*) with a
 clear job; they all read and write one shared **data + document store** that lives in this folder.
 The only program here is the **`voa`** CLI (the installable `vidushi-oa` package) — the behaviour lives
-in the roles. Get started: `pip install vidushi-oa` (or `pip install -e .` in-repo), then `voa setup`.
+in the roles. Get started: `uv tool install vidushi-oa` (or, in-repo, `uv tool install --editable .`), then `voa setup`.
 
 ---
 
 ## The roles
+
+> These roles are now unified into the single portable skill **`skills/vidushi-oa/`** (see **Install**
+> below); the descriptions here map 1:1 to its domains, and the legacy standalone skills + the
+> `inbox-analyst` agent are **superseded** by it.
 
 ### Foundation
 | Role | Job |
@@ -41,12 +45,46 @@ in the roles. Get started: `pip install vidushi-oa` (or `pip install -e .` in-re
 
 ---
 
+## Install (skill + engine)
+
+Vidushi OA ships as two pieces: the **skill** (`skills/vidushi-oa/` — a portable vercel/skills
+flat-layout bundle with its `references/`) and the **engine** (the `vidushi-oa` pip package that
+provides the `voa` CLI). Install both, then `voa setup`.
+
+**Local / dev (works today):**
+```bash
+npx skills add ./skills/vidushi-oa                    # add the skill from this repo
+uv tool install --editable .                          # the engine (voa), editable/in-repo
+voa setup                                             # provision the active backend (SQLite by default)
+agentskills validate skills/vidushi-oa                # confirm the bundle shape (exits 0)
+```
+
+**Public (one-liner, once published):**
+```bash
+uv tool install vidushi-oa
+npx skills add github.com/antojk/office_assistant//skills/vidushi-oa
+voa setup
+```
+> The public path is **gated on the OSS-license decision + PyPI publish**: `uv tool install vidushi-oa`
+> is not yet on PyPI and the repo is not yet public. Until then, use the local/dev path above.
+
+> **Backend.** SQLite is the default backend — zero-config, no server, nothing to provision. MongoDB is
+> opt-in: install the extra with `uv tool install "vidushi-oa[mongo]"` and select it with
+> `VIDUSHI_BACKEND=mongo`.
+
+The unified `skills/vidushi-oa/` skill **supersedes** the seven legacy `~/.claude/skills/` skills +
+the `inbox-analyst` agent; after installing and verifying it, remove those legacy files (see
+`CLAUDE.md` → "Vidushi OA toolkit — roles" for the coverage matrix + replacement steps).
+
+---
+
 ## The data store
 
-Everything the roles learn is kept in **MongoDB** (db `vidushi_oa`) and accessed through the
-**`voa`** CLI — never directly. `voa snapshot` mirrors it to `data/*.jsonl` for versioning.
+Everything the roles learn is kept in the **active backend** — SQLite by default (db `vidushi_oa`,
+zero-config), or MongoDB opt-in (`VIDUSHI_BACKEND=mongo`) — and accessed through the **`voa`** CLI,
+never directly. `voa snapshot` mirrors the store to `data/*.jsonl` for versioning.
 
-Seven stores form a small **relational model**, joined by foreign keys:
+Eight stores form a small **relational model**, joined by foreign keys:
 
 ```
 invoice (proof of purchase) → warranty (coverage/expiry) → product (manual/specs)
@@ -56,6 +94,7 @@ invoice (proof of purchase) → warranty (coverage/expiry) → product (manual/s
 
 - **contacts** — verified vendor/manufacturer support directory
 - **invoices** — purchase documents (PO / invoice / receipt), with the originating email pinned and any saved PDF
+- **orders** — the purchase **fulfilment / delivery** lifecycle (ordered → shipped → delivered, including international customs), linked to its invoice
 - **warranties** — coverage, term, expiry, registration
 - **products** — owned products keyed on the **manufacturer**, with official reference links + specs
 - **cases** — support / claim / RMA / service cases
@@ -78,6 +117,14 @@ voa query warranties --fields product,expiry --sort expiry
 ```
 The in-repo `scripts/store.py` remains a path-compat shim (`python3 scripts/store.py <verb>`).
 Full field reference: `data/schema.md`. CLI details: `scripts/README.md`.
+
+> **Local `.venv` dependency.** The primary install path is `uv tool install vidushi-oa` (persistent,
+> isolated). On externally-managed Pythons (Arch/PEP 668) an in-repo editable install can instead live in
+> a repo `.venv` (`python -m venv .venv && .venv/bin/pip install -e .`). The Claude Code
+> **SessionStart** hook in `.claude/settings.json` prefers `"$CLAUDE_PROJECT_DIR/.venv/bin/python"` when
+> that venv exists (the system `python3` can't see the editable install) and otherwise falls back to
+> system `python3` — so a `uv tool install vidushi-oa` on PATH still works and a missing `.venv` no longer
+> breaks session start.
 
 ---
 

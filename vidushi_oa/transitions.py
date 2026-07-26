@@ -12,6 +12,8 @@ An effect is one of:
                              "by_disposition"?: {<UPPER-CASE disposition>: <slug>}}
     {"op": "resolve-action", "action": <slug>}
     {"op": "require-doc",    "type": <slug>}
+    {"op": "set-stage",      "stage": <str>}   # set the human-readable `stage` field
+                                               # (CR-OA-015 orders; distinct from `status`)
 
 `by_disposition` (optional, open-action only) overrides the opened action's slug
 when the doc's `disposition` (upper-cased) matches a key — e.g. a subscriptions
@@ -23,6 +25,34 @@ and firing its effects) and rejects any event with no matching `(from, event)`
 pair. subscriptions/insurance are declared here for CR-OA-007's due-sweep; only
 invoices/warranties are exercised by CR-OA-005's tests.
 """
+
+# orders (CR-OA-015): fulfilment lifecycle, grounded in DN-purchases-persistence. The
+# coarse `status` stays the 4-value tracker; the human-readable `stage` carries the fine
+# detail. Stage advances hold IN_PROGRESS; customs sub-states open an OPEN action and hold
+# IN_PROGRESS (so `attention` surfaces the parcel); delivered + the side-states land
+# COMPLETED with the flavour recorded in `stage`. Every event fires from NEW or a live
+# IN_PROGRESS order (an order may be NEW when customs first hits, e.g. a bare-AWB row).
+_ORD_STAGE_ADVANCE = {"shipped": "Shipped", "out-for-delivery": "Out for delivery"}
+_ORD_CUSTOMS = {"held-at-customs": "customs-clearance", "duty-demanded": "duty-payment",
+                "kyc-requested": "kyc", "clarification-requested": "clarification"}
+_ORD_TERMINAL = {"delivered": "Delivered", "cancelled": "Cancelled", "returned": "Returned",
+                 "refunded": "Refunded", "delivery-failed": "Delivery-failed"}
+
+
+def _build_orders_table():
+    rows = []
+    for frm in ("NEW", "IN_PROGRESS"):
+        for event, stage in _ORD_STAGE_ADVANCE.items():
+            rows.append({"from": frm, "event": event, "to": "IN_PROGRESS", "owner": "agent",
+                         "effects": [{"op": "set-stage", "stage": stage}]})
+        for event, action in _ORD_CUSTOMS.items():
+            rows.append({"from": frm, "event": event, "to": "IN_PROGRESS", "owner": "agent",
+                         "effects": [{"op": "open-action", "action": action, "owner": "user"}]})
+        for event, stage in _ORD_TERMINAL.items():
+            rows.append({"from": frm, "event": event, "to": "COMPLETED", "owner": "agent",
+                         "effects": [{"op": "set-stage", "stage": stage}]})
+    return rows
+
 
 TRANSITIONS = {
     "invoices": [
@@ -49,6 +79,7 @@ TRANSITIONS = {
         {"from": "DUE", "event": "renewed", "to": "IN_PROGRESS", "owner": "agent", "effects": []},
         {"from": "DUE", "event": "lapsed", "to": "COMPLETED", "owner": "agent", "effects": []},
     ],
+    "orders": _build_orders_table(),
 }
 
 

@@ -1,0 +1,150 @@
+# Release-gate config, consumed by the generic ecosystem tool
+#   python3 ~/.claude/scripts/skill-release-gate.py --project-dir .
+# It declares this project's engine + lifecycle so the cross-project gate can
+# validate the shipped artifacts (skill bundle + wheel + AXI conformance) before a
+# `git flow release finish`. Kept out of pyproject.toml so the package manifest stays
+# purely about the package.
+
+[engine]
+build = true
+console = "voa"
+entry_point = "voa = vidushi_oa.cli:main"
+forbid_entry_points = ["oa"]
+import_check = "vidushi_oa"
+
+[engine.wheel_glob_counts]
+"vidushi_oa/schema/*.json" = 8
+
+[skills]
+paths = ["skills/vidushi-oa"]
+
+[env]
+VIDUSHI_MONGO_DB = "$THROWAWAY_DB"
+VIDUSHI_DATA_DIR = "$TMP/data"
+
+[teardown]
+drop_mongo_db = "$THROWAWAY_DB"
+
+# ---- functional lifecycle (installed voa, throwaway DB) ----
+[[check]]
+name = "setup provisions 8 collections"
+argv = ["setup"]
+expect = ["initialized[8]"]
+
+[[check]]
+name = "add a KEEP subscription (renews in-window)"
+argv = ["add", "subscriptions", "--json", "{\"provider\":\"Rel E2E\",\"category\":\"saas\",\"disposition\":\"KEEP\",\"status\":\"IN_PROGRESS\",\"renews\":\"$SOON\"}"]
+expect = ["added["]
+
+[[check]]
+name = "due-sweep marks it DUE"
+argv = ["due-sweep"]
+expect = ["count: 1"]
+
+[[check]]
+name = "attention: DUE + renewal-confirm (CR-013 disposition-aware)"
+argv = ["attention", "subscriptions"]
+expect = ["DUE", "renewal-confirm"]
+reject = ["cancel-before-charge"]
+
+[[check]]
+name = "validator-clean after the lifecycle"
+argv = ["validate", "subscriptions"]
+expect = ["[0]:"]
+
+# ---- AXI conformance (axi.md — the 10 principles + decision-B) ----
+[[check]]
+name = "AXI #1/#4/#9 TOON envelope: results + tally + next"
+argv = ["query", "subscriptions"]
+expect = ["results[", "tally:", "next["]
+
+[[check]]
+name = "seed a long-valued row (for truncation checks)"
+argv = ["add", "subscriptions", "--json", "{\"provider\":\"AXItruncHEADxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxTAILEND\",\"category\":\"saas\",\"status\":\"NEW\"}"]
+expect = ["added["]
+
+[[check]]
+name = "AXI #3 long values truncated by default"
+argv = ["query", "subscriptions", "--where", "category=saas"]
+expect_re = ["\\(\\+[0-9]+ chars\\)"]
+reject = ["TAILEND"]
+
+[[check]]
+name = "AXI #3 --full escape hatch shows the untruncated value"
+argv = ["query", "subscriptions", "--where", "category=saas", "--full"]
+expect = ["TAILEND"]
+
+[[check]]
+name = "AXI #2 minimal default fields (omits 'updated')"
+argv = ["query", "subscriptions"]
+reject = ["updated"]
+
+[[check]]
+name = "AXI #2 --full widens the projection ('updated')"
+argv = ["query", "subscriptions", "--full"]
+expect = ["updated"]
+
+[[check]]
+name = "AXI #5 definitive empty state (count: 0)"
+argv = ["query", "subscriptions", "--where", "provider=__none__"]
+expect = ["count: 0"]
+
+[[check]]
+name = "AXI #6 structured error (no traceback)"
+argv = ["event", "subscriptions", "sub_does_not_exist", "bogus-event"]
+allow_nonzero = true
+combine_stderr = true
+expect = ["error"]
+reject = ["Traceback"]
+
+[[check]]
+name = "AXI #8 no-arg live data (bare voa is not a usage dump)"
+argv = []
+combine_stderr = true
+reject = ["usage:"]
+
+[[check]]
+name = "AXI #10 discoverability: --help lists subcommands"
+argv = ["--help"]
+expect = ["query"]
+
+[[check]]
+name = "decision-B: --json stays a bare array (no tally)"
+argv = ["query", "subscriptions", "--json"]
+json_type = "list"
+reject = ["tally"]
+
+# ---- CR-OA-017: AXI conformance across the read/error surface (beyond query) ----
+[[check]]
+name = "AXI #6 (CR-017): get on a missing id is a structured error, not null"
+argv = ["get", "subscriptions", "sub_does_not_exist"]
+allow_nonzero = true
+combine_stderr = true
+expect = ["error"]
+reject = ["Traceback", "null"]
+
+[[check]]
+name = "AXI #9 (CR-017): attention carries a next[] block"
+argv = ["attention", "subscriptions"]
+expect = ["next["]
+
+[[check]]
+name = "AXI #9 (CR-017): stats carries a next[] block"
+argv = ["stats", "subscriptions"]
+expect = ["next["]
+
+[[check]]
+name = "seed a row for the get next-step check"
+argv = ["add", "subscriptions", "--json", "{\"provider\":\"GetNext\",\"category\":\"saas\",\"status\":\"NEW\"}"]
+expect = ["added["]
+
+[[check]]
+name = "AXI #9 (CR-017): get carries a next[] block"
+argv = ["get", "subscriptions", "sub_getnext"]
+expect = ["next["]
+
+[[check]]
+name = "decision-B (CR-017): get --json stays a bare object (no next/tally)"
+argv = ["get", "subscriptions", "sub_getnext", "--json"]
+json_type = "dict"
+reject = ["\"next\"", "\"tally\""]

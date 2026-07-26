@@ -7,7 +7,7 @@
 **Labels:** mongo, store, tracking
 **Phase:** Wave 2
 **Design reference:** PRD §3–§4 (status vocabulary, actions[], re-track rule)
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
 

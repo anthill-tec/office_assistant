@@ -7,7 +7,7 @@
 **Labels:** mongo, migration, versioning
 **Phase:** Wave 2
 **Design reference:** DN (snapshot versioning; mongoexport not installed → pure pymongo)
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
 

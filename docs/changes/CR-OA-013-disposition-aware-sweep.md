@@ -7,7 +7,7 @@
 **Labels:** state-machine, subscriptions, follow-up, v0.1.0
 **Phase:** Wave 6 (v0.1.0)
 **Design reference:** PRD-distribution-release §5 · PRD-lifecycle-domain-model §3 (recurring)
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
 

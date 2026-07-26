@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  workflow_dispatch:        # manual TestPyPI dry-run
+  push:
+    branches:
+      - "**"
+      - "develop"
+      - "main"
+
+jobs:
+  test:
+    name: Build wheel, run tests, release gate
+    runs-on: ubuntu-latest
+    # The suite's mongo-backed tests (CR-001..007, CR-017 AXI, import/snapshot) connect to a live
+    # mongod on 127.0.0.1:27017. SQLite is the default backend, but these exercise the Mongo path,
+    # so CI provides a mongod service container (a GitHub runner has none by default).
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # hatch-vcs derives the version from git tags (editable install + wheel build)
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project + build/test deps (repo .venv, mirrors local dev)
+        # Create + use a repo-root .venv so .venv/bin/python exists on the runner:
+        # CleanVenvPackagingTest builds a wheel via that interpreter, and it mirrors the
+        # local `.venv/bin/python -m pytest` flow exactly. The [test] extra pulls keyrings.alt
+        # (a real, storable keyring backend) so the keyring-fallback test has a working keyring.
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install build pytest
+          .venv/bin/python -m pip install -e ".[mongo,sqlite,mail,test]"
+
+      - name: Build wheel
+        run: .venv/bin/python -m build --wheel
+
+      - name: Run pytest
+        run: .venv/bin/python -m pytest
+
+      - name: Model-B release gate
+        # Vendored copy of the generic skill-release gate so remote runners (no ~/.claude) can run it.
+        run: .venv/bin/python scripts/skill-release-gate.py --project-dir .
+
+  # TestPyPI dry-run — MANUAL (workflow_dispatch), the packaging/deploy validation path (mirrors
+  # sandesh: TestPyPI is a manual dry-run, not a branch-push trigger). hatch-vcs on an untagged ref
+  # builds a dev version (e.g. 0.1.1.devN) which TestPyPI accepts; skip-existing makes re-dispatches
+  # idempotent. Trigger with: gh workflow run ci.yml --ref <branch>.
+  test-publish:
+    name: Publish to TestPyPI (manual)
+    needs: test
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/vidushi-oa
+    permissions:
+      id-token: write   # OIDC trusted publishing
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # hatch-vcs needs tags to derive the version
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build + check distributions
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          twine check dist/*
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  # AUTOMATED production release. DEPLOY TRIGGER = a push to main (git-flow release-finish merges
+  # release/* → main + tags it). The SemVer tag is a SAFETY CHECK, not the trigger: the job publishes
+  # only when main HEAD carries a clean SemVer tag reachable from origin/main, and does nothing
+  # (stays green) on ordinary untagged main commits. hatch-vcs makes the built version == the tag by
+  # construction, so no version-literal comparison is needed. OIDC trusted publishing (`pypi` env).
+  publish:
+    name: Publish to PyPI
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/vidushi-oa
+    permissions:
+      id-token: write   # OIDC trusted publishing
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # hatch-vcs version + on-main ancestry guard need full history + tags
+
+      - name: Release gate — SemVer tag at HEAD + on-main ancestry (else skip)
+        id: gate
+        run: |
+          TAG=$(git tag --points-at HEAD | grep -Ex '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+          if [ -z "$TAG" ]; then
+            echo "::notice::main HEAD carries no SemVer tag — ordinary commit, nothing to publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA is not an ancestor of origin/main — refusing to publish"
+            exit 1
+          fi
+          echo "release $TAG verified — tagged commit reachable from origin/main"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build + check distributions
+        if: steps.gate.outputs.publish == 'true'
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          twine check dist/*
+
+      - name: Publish to PyPI
+        if: steps.gate.outputs.publish == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

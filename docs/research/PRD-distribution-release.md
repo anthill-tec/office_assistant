@@ -2,7 +2,7 @@
 
 **Product:** Vidushi OA (repo `office_assistant`)
 **Status:** Design contract (draft, 2026-07-12)
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 **Related:** [PRD-lifecycle-domain-model.md](PRD-lifecycle-domain-model.md) (the domain model) · [DN-packaging-distribution.md](DN-packaging-distribution.md) (the decisions) · [DN-agent-interface-toon.md](DN-agent-interface-toon.md)
 
 ## Context

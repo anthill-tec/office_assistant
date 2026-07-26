@@ -1,7 +1,7 @@
 # DN — Persistence: JSONL → MongoDB, and the backend-owned state machine
 
 > **Type:** DN (design note) · **Status:** ACCEPTED
-> **Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant) · 2026-07-11
+> **Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant) · 2026-07-11
 > **Informs:** CR-OA-001 … CR-OA-009 · **Design contract:** [`PRD-lifecycle-domain-model.md`](PRD-lifecycle-domain-model.md)
 
 Captures the design rationale behind moving the store from flat JSONL + a stdlib CLI to MongoDB,
@@ -73,3 +73,47 @@ we do, purely as headroom — not because scale demands it.
 - Versioning = one explicit `snapshot` verb (no per-write hook).
 - Connection via env `OA_MONGO_URI` (default `mongodb://127.0.0.1:27017`) + `OA_MONGO_DB`
   (default `office_assistant`); no secrets in code.
+
+## Decision (2026-07-25) — pluggable persistence backend, embedded SQLite the default
+
+To make the engine a genuinely portable, publishable tool (see
+[DN-packaging-distribution.md](DN-packaging-distribution.md) Decision 7), the persistence layer
+becomes **pluggable behind a backend interface**, and the **default backend is embedded SQLite**
+(Python-stdlib `sqlite3`) — a persistent local file, no external server. **MongoDB stays a
+first-class opt-in** for its query/indexing headroom.
+
+**Why this reverses "a running `mongod` is required":** a `pip`/`uv`-installed CLI cannot assume a
+MongoDB is running on the target machine; requiring one defeated the portability goal. SQLite is in
+the stdlib, needs no server, and persists locally, so the store "just works" right after install.
+The original *Consequences* already anticipated this — *"No lock-in — the `$jsonSchema` validators
+are the same contract a future backend would use; the JSONL snapshots remain importable."*
+
+- **Backend selection:** env **`VIDUSHI_BACKEND`** ∈ {`sqlite` (default), `mongo`}. `sqlite`
+  reads/writes `$XDG_DATA_HOME/vidushi-oa/oa.db` (override `VIDUSHI_SQLITE_PATH`); `mongo` keeps the
+  existing `VIDUSHI_MONGO_URI` / `VIDUSHI_MONGO_DB` path.
+- **The domain contract is backend-agnostic and unchanged.** The JSON Schemas (status enum,
+  `actions[]` OPEN→RESOLVED shape, FK id patterns) stay the single validation contract — enforced by
+  `$jsonSchema` on Mongo and by an application-level validation pass (the *same* schemas) on SQLite.
+  `gen_id`, the transition engine, the sweeps, `attention`, and the TOON output all sit **above** the
+  backend seam and do not change.
+- **Query architecture (refined 2026-07-26) — a neutral query model compiled NATIVELY per backend.**
+  Rather than privilege Mongo's query-doc dialect and make SQLite *translate* it, the CLI expresses each
+  query/update in a **neutral, backend-agnostic model** — conditions `(field, op, value)` with
+  `op ∈ {eq, ne, in, lt, lte, gt, gte, exists, elem_match}`, combined with `all`/`any`/`none` and dotted
+  paths; updates as `{set, push, resolve-in-array}`; plus `count_by(field)`. **Each backend compiles the
+  neutral model to its OWN native query** — `MongoBackend` → a query document; `SqliteBackend` → `SELECT …
+  WHERE …` over `json_extract`/`json_each`. No backend's dialect is privileged; each source issues native
+  queries. This clears the nested-`actions[]` + cross-domain `DUE` expressiveness bar the original
+  Decision valued, with no server and no fragile dialect-translation layer.
+- **SQLite write-time validation** uses the **`jsonschema`** package (a `[sqlite]` install extra) against
+  the *same* packaged JSON Schemas that Mongo enforces via `$jsonSchema` — one validation contract, two
+  enforcement points.
+- **Versioning unchanged:** `snapshot` still exports each store → `data/*.jsonl` for git/chezmoi
+  plain-text history and `import` still loads them; the snapshot format is backend-independent, so it
+  doubles as the **backend-migration path** (snapshot on Mongo → import on SQLite, or the reverse).
+- **`pymongo` becomes an optional dependency** (extra: `pip install vidushi-oa[mongo]`); the default
+  install carries no server dependency. `setup` provisions the *active* backend (SQLite: ensure the
+  data dir + db file + schema; Mongo: the existing connection/init path).
+
+This supersedes the *Fixed choices* port/DB-name lines **for the default path only** — those remain
+accurate for the opt-in Mongo backend.

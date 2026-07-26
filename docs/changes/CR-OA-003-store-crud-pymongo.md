@@ -7,7 +7,7 @@
 **Labels:** mongo, store, compatibility
 **Phase:** Wave 2
 **Design reference:** DN (CLI compatibility preserved; `_id` suppressed); PRD §2–§6
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
 

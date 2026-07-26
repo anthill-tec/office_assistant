@@ -5,7 +5,7 @@ ordering. Pick the next `PENDING` CR whose dependencies are all `COMPLETED`. Sta
 never inside a CR spec file.
 
 - **Design contracts:** [`PRD-lifecycle-domain-model.md`](../research/PRD-lifecycle-domain-model.md) (domain model) · [`PRD-distribution-release.md`](../research/PRD-distribution-release.md) (packaging + v0.1.0)
-- **Decision notes:** [`DN-persistence-mongodb.md`](../research/DN-persistence-mongodb.md) · [`DN-agent-interface-toon.md`](../research/DN-agent-interface-toon.md) · [`DN-packaging-distribution.md`](../research/DN-packaging-distribution.md)
+- **Decision notes:** [`DN-persistence-mongodb.md`](../research/DN-persistence-mongodb.md) · [`DN-agent-interface-toon.md`](../research/DN-agent-interface-toon.md) · [`DN-packaging-distribution.md`](../research/DN-packaging-distribution.md) · [`DN-purchases-persistence.md`](../research/DN-purchases-persistence.md)
 - **Canonical states:** `PENDING` · `IN_PROGRESS` · `COMPLETED` · `SUPERSEDED` · `DEFERRED`.
 
 ## Execution model — Solo single-orchestrator (no Mainline / parallel Tracks)
@@ -37,6 +37,13 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-012](CR-OA-012-unified-skill.md) | Unified `vidushi-oa` skill (cross-harness) | feature | COMPLETED (2026-07-13) | 011 | 6 · v0.1.0 |
 | [CR-OA-013](CR-OA-013-disposition-aware-sweep.md) | Disposition-aware `due-sweep` | feature | COMPLETED (2026-07-13) | 007 | 6 · v0.1.0 |
 | [CR-OA-014](CR-OA-014-aggregate-tally.md) | Aggregate tally in the TOON envelope | feature | COMPLETED (2026-07-13) | 010 | 6 · v0.1.0 |
+| [CR-OA-015](CR-OA-015-orders-store.md) | `orders` delivery-lifecycle store | feature | COMPLETED | 005, 007 | 7 |
+| [CR-OA-016](CR-OA-016-unified-skill-parity.md) | Complete unified skill (supersede legacy) | docs | COMPLETED | 012, 015 | 7 |
+| [CR-OA-017](CR-OA-017-axi-conformance-audit.md) | AXI conformance audit + gap-closure (full verb surface) | maintenance | COMPLETED | 009, 010, 014 | 8 |
+| [CR-OA-018](CR-OA-018-pluggable-backend-and-packaging.md) | Pluggable backend (SQLite default) + GPL-v3 `uv`/PyPI packaging | feature | COMPLETED | 016, 017 | 8 |
+| [CR-OA-019](CR-OA-019-skill-mail-prerequisites.md) | Skill mail-access prerequisites (declared + orchestrated) | docs | SUPERSEDED (by 020) | 016 | 8 |
+| [CR-OA-020](CR-OA-020-embedded-mail-client.md) | Embedded mail client in `voa` (Gmail/Fastmail/Yahoo + vault-first creds) | feature | PENDING | 017 | 9 |
+| [CR-OA-021](CR-OA-021-skill-mail-verbs.md) | Skill revision — `Mailboxes & search` uses `voa mail-*` verbs | docs | PENDING | 016, 020 | 9 |
 
 ## v0.1.0 milestone — Wave 6
 
@@ -46,14 +53,79 @@ CRs **011–014** constitute the **v0.1.0 release** (design contract:
 `due-sweep`, aggregate tally). **Order:** 011 → 012 (the skill needs the package), with 013 + 014
 (independent store refinements) runnable any time after their deps.
 
-**✅ All four merged (2026-07-13) — v0.1.0 scope is complete and ready to cut.** Remaining pre-tag steps are
-operational, not CRs: the release tag/version bump, plus the two parked data ops (drop the old
-`office_assistant` backup DB, chezmoi-commit the refreshed snapshots).
+**✅ All four merged (2026-07-13) — v0.1.0 is cut and shipped.** The operational pre-tag steps are all
+done: the release tag/version bump landed, and both parked data ops are resolved (the old
+`office_assistant` backup DB was dropped post-v0.1.0 — see **Follow-up tasks** below — and the refreshed
+snapshots were chezmoi-committed). Future releases are now guarded by a standing pre-`git flow release
+finish` gate (`~/.claude/scripts/skill-release-gate.py`, declared in `.skill-release.toml`; see
+[`../../scripts/README.md`](../../scripts/README.md)).
 
 - **Pending decision — license (DN §6):** OSS-vs-private gates CI/CD *and* a public PyPI publish. v0.1.0 can
   ship **privately** (git-install) and go public later.
 - **Beyond v0.1.0 (roadmap, not yet CRs):** reporting/export verb · 3rd mailbox (Yahoo — roll-our-own) ·
   attention TUI (needs a storyboard) · CI/CD (after OSS) · MCP wrapper (only if a non-CLI harness needs it).
+
+## Wave 7 — unified-skill parity (post-v0.1.0)
+
+CRs **015–016** make the unified `vidushi-oa` skill (CR-OA-012) a **complete drop-in** that formally
+supersedes the seven legacy `~/.claude/skills/` role-skills + the `inbox-analyst` agent (pre-0.1.0
+vestiges that live outside the repo). A gap review found the unified skill ~85% there — a correct
+conceptual + safety + backend superset — but with two functional holes and a layer of operational
+detail compressed out:
+
+- **015** adds the missing **`orders`** store (the fulfilment state machine) so the purchase domain
+  persists on the backend instead of a phantom placeholder, and revises PRD §3 to split fulfilment
+  off `invoices` — design in [`../research/DN-purchases-persistence.md`](../research/DN-purchases-persistence.md).
+- **016** corrects the invalid `cases.status` enum, wires the purchase domain to `orders`, gives
+  `insurance` a first-class domain section, restores the operational specifics via
+  `skills/vidushi-oa/references/`, and flips the roster (CLAUDE.md + README) to the unified skill.
+  Its ACs **are** the coverage matrix.
+
+**Order:** 015 → 016 (the skill's purchase domain needs the store). Both run on feature branches;
+015 is a code CR (RED/GREEN/VERIFY), 016 is docs/skill (orchestrator-authored + grep/validate gates).
+
+## Wave 8 — distribution readiness (portable, publishable engine)
+
+CRs **017–018** turn the engine into a genuinely portable, publishable product. **017** audits the CLI
+against the matured AXI spec + the `gh-axi` reference across the **full** verb surface and closes any
+residual conformance gaps (envelope shape per verb, structured errors to stdout + exit codes, next-step
+coverage) — a hardened interface to ship on. **018** makes persistence **pluggable** with an **embedded
+SQLite default** (Mongo opt-in, `pymongo` optional) so the tool needs no server, licenses the repo
+**GPL-3.0-or-later** (resolving the DN §6 gate), and wires the persistent **`uv tool install
+vidushi-oa`** / PyPI distribution + CI/CD. Design in
+[`../research/DN-persistence-mongodb.md`](../research/DN-persistence-mongodb.md) (2026-07-25) +
+[`../research/DN-packaging-distribution.md`](../research/DN-packaging-distribution.md) (Decisions 6–7).
+
+**019** makes the skill's **mail-access MCP prerequisites** explicit (declared + orchestrated, per
+DN-packaging-distribution Decision 8): FastmailMCP + a Gmail provider are declared in `SKILL.md` (the
+engine is mail-agnostic, so these are skill prereqs, not pip-deps), with a machine-readable MCP manifest
+where a harness supports one and per-harness setup docs — honest that the claude.ai Gmail connector is
+harness-specific and not installable.
+
+**Order:** 017 → 018 (packaging ships on the audited, conformant CLI). §S6/§S4 note: the first PyPI
+publish, the repo-public flip, and the GPL-license/CI packaging-deploy test are **release-branch** ops
+during `git flow release` (guarded by the release gate), not inside 018. CR-OA-018 §S4 performs the **live
+`vidushi_oa`→SQLite data migration** with field-level fidelity (in-record `actions[]`/logs/`documents[]`
+preserved) + JSONL-snapshot rollback, leaving the old Mongo DB intact. **CR-OA-019 is SUPERSEDED** — see
+Wave 9.
+
+## Wave 9 — embedded mail access (tokens into the backend)
+
+Reading mail is the last mechanical task still done by the LLM (via mail MCPs). Wave 9 **embeds** it in the
+engine so "read my mail" becomes a pre-computed, TOON-shaped tool call — the framework principle applied to
+mail. Design + primary-source research in
+[`../research/DN-mail-access.md`](../research/DN-mail-access.md).
+
+- **020** adds a **unified mail client** in `voa` over **Gmail / Fastmail / Yahoo** — IMAP common
+  denominator (Gmail via `X-GM-RAW`, Yahoo plain, stdlib `imaplib`) + thin-HTTP **JMAP** for Fastmail; a
+  **vault-first** secret resolver (1Password/Bitwarden primary, OS keyring fallback, `voa` holds only
+  references); and AXI `mail-*` verbs that server-side-search, merge, de-dup, source-tag, and emit TOON.
+  Net new deps ~0–2. This **supersedes CR-OA-019** (no MCP prerequisite once embedded).
+- **021** repoints the skill's "Mailboxes & search" from MCP calls to `voa mail-*` (spec authored at
+  wave-open, once 020's verb surface is final).
+
+**Order:** 017 (conformant CLI) → 020 → 021. Independent of the 018 packaging track; both can proceed in
+parallel after 017.
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
@@ -100,7 +172,8 @@ Small items (no design surface → tasks, not CRs) surfaced during execution:
   disposition-aware (`by_disposition {KEEP: renewal-confirm}`); a live `due-sweep` on the migrated KEEP
   subscriptions is safe to run.
 - **Drop the old `office_assistant` Mongo DB** (filed 2026-07-12, from CR-OA-011 §S4) — the live data was
-  migrated to `vidushi_oa` (118 records, count-parity + validator-clean verified) but the old
-  `office_assistant` DB is **deliberately retained as a backup**; the drop is hard to reverse and is
-  **gated on explicit user confirmation**. Drop it once the user is satisfied the `vidushi_oa` cut-over is
-  stable (`voa`/`store.py` both read `vidushi_oa` by default now).
+  migrated to `vidushi_oa` (118 records, count-parity + validator-clean verified) and the old
+  `office_assistant` DB was retained as a backup pending confirmation. **Resolved 2026-07-13 (post-v0.1.0):**
+  on explicit user confirmation the `office_assistant` DB (and a stray `office_assistant_cr009_probe` test
+  DB) were dropped after re-verifying `vidushi_oa` = 118 + validator-clean; `vidushi_oa` is now the sole
+  store. Snapshots were chezmoi-committed (local) beforehand.

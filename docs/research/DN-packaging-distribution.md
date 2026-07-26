@@ -1,7 +1,7 @@
 # DN — Packaging & cross-harness distribution (Vidushi OA)
 
 **Status:** Accepted (2026-07-12) — all decisions confirmed by the user, incl. §4 full rename + §6 license
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 **Related:** [PRD-distribution-release.md](PRD-distribution-release.md) · [DN-agent-interface-toon.md](DN-agent-interface-toon.md)
 
 ## Context
@@ -23,7 +23,9 @@ yes, that's the design — the skill is the operator layer over the engine, not 
 ## Decision 2 — Skills-based cross-harness distribution (over MCP)
 
 To reach **many** agentic harnesses, the roles ship as a **Vercel/skills-style** portable skill
-(`npx skills add …` / a `SKILL.md` bundle), **not** an MCP server. Rationale: MCP was already dropped for
+(`npx skills add …` / a `SKILL.md` bundle), **not** an MCP server. Primary target harnesses (2026-07-26):
+**Hermes, Pi, Claude Code, OpenCode** — skill-consuming, CLI-capable agent runtimes (the embedded `voa`
+CLI + the skill run uniformly across them; see [DN-mail-access.md](DN-mail-access.md) Decision 1). Rationale: MCP was already dropped for
 AXI/TOON (see [DN-agent-interface-toon.md](DN-agent-interface-toon.md)); a `SKILL.md` is a text artifact
 every harness can consume, while MCP servers + subagents are harness-specific. (An MCP wrapper remains a
 possible *later* add if a non-CLI harness ever needs one — not for v0.1.0.)
@@ -62,6 +64,52 @@ Whether the repo stays **private** or migrates to an **open-source license** gat
 
 **Decided 2026-07-12: ship v0.1.0 privately (git-install), go public later.** CI/CD and a public PyPI
 publish stay deferred until an open-source migration; v0.1.0 distributes privately (git-install).
+
+**Updated 2026-07-25 — license = GPL-3.0-or-later.** The repo goes **open-source under GPL v3**,
+which resolves the gate: GitHub Actions CI/CD is unblocked, and a **public `pip install vidushi-oa`
+on PyPI** becomes the distribution path (private git-install is no longer the ceiling). The wheel
+carries `license = "GPL-3.0-or-later"` metadata + a top-level `LICENSE` file. Copyleft is acceptable
+for a personal-admin tool the user owns; consumers of the CLI/skill are unaffected (running a GPL
+tool imposes no obligation on their data or their own code).
+
+## Decision 7 — persistent install via `uv tool` + PyPI; the skill declares it a prerequisite (2026-07-25)
+
+The engine is **published to PyPI** (unblocked by Decision 6's GPL-3.0 call) and installed as a
+**persistent local tool** with **`uv tool install vidushi-oa`** — uv gives an isolated, on-PATH `voa`
+without polluting a global environment. The operator skill (`skills/vidushi-oa/`) declares the engine
+a **prerequisite** and drives the installed `voa` (the Decision 1 layering, now with a concrete
+command).
+
+**On-demand vs persistent — persistent, deliberately.** The gh-axi precedent runs its CLI on demand
+(`npx -y gh-axi`, nothing persisted), which suits a *stateless* wrapper over `gh`. Our engine is
+**stateful** — a durable local store (default embedded SQLite; see
+[DN-persistence-mongodb.md](DN-persistence-mongodb.md) 2026-07-25). The tool and its data must live
+locally across runs, so an ephemeral per-invocation fetch is the wrong model; `uv tool install` is the
+right one.
+
+- **Skill wiring:** `SKILL.md`'s engine-prerequisite step becomes `uv tool install vidushi-oa`
+  (persistent) → `voa setup` (provisions the active backend) → the agent drives `voa`. The *skill*
+  still installs via `npx skills add …` (unchanged, CR-OA-016); the two-piece model (skill + engine)
+  stands, with the engine install now a persistent `uv tool` command rather than raw `pip`.
+- **CI/CD + PyPI:** GitHub Actions builds/tests and publishes the wheel to PyPI on tag; the release
+  gate (`.skill-release.toml` / `skill-release-gate.py`) remains the pre-publish quality bar.
+
+## Decision 8 — mail-access MCP services are DECLARED skill prerequisites, not bundled deps (2026-07-25)
+
+The skill reads mail through **MCP services**, not the engine — `voa` is mail-agnostic, so these are
+**skill-level prerequisites, not engine pip-deps**. They also cannot all be "installed": **FastmailMCP**
+is an installable MCP server, but **Gmail** is reached via the **claude.ai connector** — a harness-specific
+OAuth connector authorized inside claude.ai, not a package. The Agent Skills format has **no dependency
+field** (verified against the `gh-axi` skill, which declares its `gh` prerequisite in prose and tells the
+agent to ask the user to authenticate).
+
+**Model: declared + orchestrated prerequisites.** The skill (a) **declares** the mail-access prerequisites
+in `SKILL.md` (FastmailMCP install + auth; a Gmail provider) the way gh-axi declares `gh`; (b) ships a
+**machine-readable MCP manifest** (e.g. `.mcp.json`) for harnesses that consume one (Claude Code), as a
+convenience, not a portability requirement; and (c) **documents per-harness setup**, honest that the
+claude.ai Gmail connector is claude.ai-specific and a different Gmail MCP is needed elsewhere. If a mail
+capability is missing at run time the skill says so and continues with whatever mailbox it can reach
+(the existing Fastmail-only fallback). This is realized in CR-OA-019.
 
 ## Consequences
 

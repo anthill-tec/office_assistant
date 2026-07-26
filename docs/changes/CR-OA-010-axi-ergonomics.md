@@ -7,7 +7,7 @@
 **Labels:** axi, cli, ergonomics
 **Phase:** Wave 5
 **Design reference:** PRD §8 (agent interface) · [DN-agent-interface-toon.md](../research/DN-agent-interface-toon.md) · axi.md (the 10 principles)
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
 

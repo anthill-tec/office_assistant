@@ -7,7 +7,7 @@
 **Labels:** mongo, state-machine, engine
 **Phase:** Wave 3
 **Design reference:** DN (deterministic state machine lives in the backend); PRD §3–§4
-**Author:** Antony John · **Co-author:** Claude (orchestrator — office-assistant)
+**Author:** Antony John · **Co-author:** Vidushi (orchestrator — office-assistant)
 
 ## Context
 
