@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "vidushi-oa"
 version = "0.1.0"
-description = "Vidushi office-assistant data CLI and shared store (MongoDB-backed)."
+description = "Vidushi office-assistant data CLI and shared store (pluggable-backend: SQLite/Mongo)."
 requires-python = ">=3.10"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]

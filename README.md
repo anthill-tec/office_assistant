@@ -80,8 +80,9 @@ the `inbox-analyst` agent; after installing and verifying it, remove those legac
 
 ## The data store
 
-Everything the roles learn is kept in **MongoDB** (db `vidushi_oa`) and accessed through the
-**`voa`** CLI — never directly. `voa snapshot` mirrors it to `data/*.jsonl` for versioning.
+Everything the roles learn is kept in the **active backend** — SQLite by default (db `vidushi_oa`,
+zero-config), or MongoDB opt-in (`VIDUSHI_BACKEND=mongo`) — and accessed through the **`voa`** CLI,
+never directly. `voa snapshot` mirrors the store to `data/*.jsonl` for versioning.
 
 Seven stores form a small **relational model**, joined by foreign keys:
 

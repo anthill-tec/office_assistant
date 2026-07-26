@@ -493,7 +493,7 @@ def cmd_attention(a):
 
 
 def cmd_warranty_sweep(a):
-    """Recompute past-due warranties to EXPIRED via the transition engine on Mongo;
+    """Recompute past-due warranties to EXPIRED via the transition engine on the active backend;
     each `expire` transition opens a renew-or-extend action. The `status != EXPIRED`
     filter makes a repeat sweep idempotent (already-expired warranties are skipped)."""
     from vidushi_oa import transitions
@@ -513,7 +513,7 @@ def cmd_warranty_sweep(a):
 def cmd_due_sweep(a):
     """Mark recurring-store docs (subscriptions, insurance, ...) DUE when their
     renewal trigger — EITHER `renews` OR `expiry` — falls within the 30-day
-    lookahead, via the transition engine on Mongo; each `renewal-window`
+    lookahead, via the transition engine on the active backend; each `renewal-window`
     transition opens the domain action (e.g. cancel-before-charge for
     subscriptions, renew-policy for insurance, which carries `expiry` not
     `renews`). Recurring stores are discovered dynamically as those that declare a
@@ -610,7 +610,7 @@ def _apply_transition(store, doc, tr):
 def cmd_event(a):
     """Drive a doc through the declarative transition table: look up (status, event),
     apply the matching transition (set status + fire effects), reject an unmatched
-    (from, event) pair leaving the Mongo doc untouched."""
+    (from, event) pair leaving the stored doc untouched."""
     from vidushi_oa import transitions
     from vidushi_oa.backends import get_backend, query as Q
     store = get_backend().store(a.type)
@@ -808,7 +808,7 @@ def main():
     if len(sys.argv) == 1:
         env = os.environ.get("VIDUSHI_FORMAT")
         _FMT = env if env in ("toon", "json") else "toon"
-        print("office_assistant store (scripts/store.py) — MongoDB-backed "
+        print("vidushi-oa store (scripts/store.py) — local "
               "personal-admin data CLI. Rows needing attention:")
         cmd_attention(argparse.Namespace(type=None))
         return
@@ -822,7 +822,12 @@ def main():
             env = os.environ.get("VIDUSHI_FORMAT")
             fmt_choice = env if env in ("toon", "json") else "toon"   # env, else default; garbage env -> toon
     _FMT = fmt_choice
-    a.func(a)
+    try:
+        a.func(a)
+    except ValueError as e:            # unknown VIDUSHI_BACKEND from get_backend()
+        out({"error": str(e)}); sys.exit(1)
+    except NotImplementedError as e:   # e.g. sqlite --filter (mongo-only)
+        out({"error": str(e)}); sys.exit(1)
 
 
 if __name__ == "__main__":
