@@ -37,14 +37,15 @@ Full decision + rationale: `docs/research/DN-packaging-distribution.md` §6 (in-
 
 ## CI workflow — release-time TODOs + local testing
 
-- **Do NOT vendor the release-gate script — it is a generic cross-project ecosystem tool.**
-  `~/.claude/scripts/skill-release-gate.py` is config-driven and shared across every skill-bundle project;
-  forking a per-repo copy would be wrong. Each project carries ONLY its own **`.skill-release.toml`** (engine
-  + lifecycle/AXI checks); the script reads it. For CI (where `~/.claude/...` won't exist on a runner) the
-  workflow must **provision the generic gate as a shared/published tool** — the same way the gate already
-  auto-provisions `skills-ref` in a throwaway venv — not copy the script in. **Open item:** the generic gate
-  needs a distribution mechanism (publish it so CI `pip`/`pipx`-installs it); the CR-OA-018 workflow currently
-  references the home path and must be repointed at the provisioned tool, not a vendored copy.
+- **Vendor the release-gate script into the repo for CI — a remote runner can't reach `~/.claude`.**
+  `~/.claude/scripts/skill-release-gate.py` is a **generic cross-project ecosystem tool** (config-driven,
+  shared across skill-bundle projects) — but because a GitHub runner has no `~/.claude`, the workflow **must
+  run a repo-local copy**. Decision (2026-07-26): keep a copy at **`scripts/skill-release-gate.py`** and point
+  the CI `test` job at `python3 scripts/skill-release-gate.py --project-dir .` (done in CR-OA-018's
+  `.github/workflows/ci.yml`). The home copy stays the canonical/generic source — **keep the vendored copy in
+  sync** with it (refresh on ecosystem updates). Each project still carries its own **`.skill-release.toml`**
+  (engine + lifecycle/AXI checks); the script only reads that. If the generic tool is ever published as an
+  installable package, CI could `pip`-install it instead of vendoring — until then, the repo copy is required.
 - **The stale store-count bug was in OUR in-repo `.skill-release.toml` (not the script) — FIXED 7 → 8.**
   Two checks failed because the config predated CR-OA-015's `orders` store: `[engine.wheel_glob_counts]`
   `"vidushi_oa/schema/*.json" = 7` and the lifecycle check `"setup provisions 7 collections"` /
