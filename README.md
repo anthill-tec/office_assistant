@@ -1,6 +1,6 @@
 # Vidushi OA
 
-**Version 1.0.0** · engine `uv tool install vidushi-oa` (console `voa`) + the portable `vidushi-oa` skill.
+Engine `uv tool install vidushi-oa` (console `voa`) + the portable `vidushi-oa` skill. Install the skill with `npx skills add anthill-tec/office_assistant/skills/vidushi-oa`.
 
 **Vidushi OA** is a personal office assistant that reads your mail (Fastmail + Gmail) and runs the
 everyday admin lifecycle around the things you buy and pay for — subscriptions, purchases & deliveries,

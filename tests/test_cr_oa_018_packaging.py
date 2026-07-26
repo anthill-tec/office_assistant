@@ -164,7 +164,7 @@ class CIWorkflowTest(unittest.TestCase):
         Three jobs are required:
           - `test` (runs on push): builds the wheel, runs pytest, runs the
             Model-B release gate.
-          - a test-publish job gated to `release/*` branches, whose publish
+          - a test-publish job gated to manual `workflow_dispatch`, whose publish
             step targets TestPyPI.
           - a production publish job gated to a main push (SemVer tag as a
             safety check), with `permissions.id-token: write`, an `environment`
@@ -220,14 +220,14 @@ class CIWorkflowTest(unittest.TestCase):
             f"pytest, AND invoke skill-release-gate.py; jobs found: {job_blobs}",
         )
 
-        # --- job 2: test-publish — gated to release/* branches, publishes to TestPyPI ---
+        # --- job 2: test-publish — gated to manual workflow_dispatch, publishes to TestPyPI ---
         test_publish_job = None
         for job_name, job in jobs.items():
             if not isinstance(job, dict) or job_name == test_job:
                 continue
             job_if = job.get("if", "")
-            gated_to_release_branch = isinstance(job_if, str) and "refs/heads/release/" in job_if
-            if not gated_to_release_branch:
+            gated_to_dispatch = isinstance(job_if, str) and "workflow_dispatch" in job_if
+            if not gated_to_dispatch:
                 continue
             steps = job.get("steps") or []
             targets_testpypi = False
@@ -251,8 +251,8 @@ class CIWorkflowTest(unittest.TestCase):
                 break
         self.assertIsNotNone(
             test_publish_job,
-            "expected a test-publish job gated to release/* branches (job 'if' containing "
-            "'refs/heads/release/') whose publish step targets TestPyPI (a "
+            "expected a test-publish job gated to manual workflow_dispatch (job 'if' containing "
+            "'workflow_dispatch') whose publish step targets TestPyPI (a "
             "with.repository-url/repository_url containing 'test.pypi.org', or a step "
             f"referencing 'testpypi'); jobs found: {list(jobs.keys())}",
         )
@@ -281,8 +281,9 @@ class CIWorkflowTest(unittest.TestCase):
             blob = job_blobs[job_name]
             uses_gh_action_pypi_publish = "pypa/gh-action-pypi-publish" in blob
             # the SemVer tag is a release SAFETY CHECK — a step asserting main HEAD carries a
-            # tag equal to [project].version, guarding an untagged/mismatched publish
-            has_tag_safety_check = "git tag --points-at" in blob or "safety check" in blob.lower()
+            # SemVer tag reachable from origin/main (hatch-vcs makes the version == the tag), and
+            # skipping the publish (staying green) on ordinary untagged main commits
+            has_tag_safety_check = "git tag --points-at" in blob
             if (
                 has_id_token_write
                 and environment_is_pypi
