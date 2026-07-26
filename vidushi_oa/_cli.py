@@ -758,7 +758,11 @@ def cmd_mail_search(a):
     `Message-ID` (by the client), field-projected, TOON-enveloped (`--json` -> a
     bare array with no tally/next)."""
     client = _mail_client_or_exit()
-    msgs = client.search(a.query, accounts=getattr(a, "accounts", None))
+    try:
+        msgs = client.search(a.query, accounts=getattr(a, "accounts", None))
+    except LookupError as e:
+        out({"error": str(e)})
+        sys.exit(1)
     rows = [_mail_row(m) for m in msgs]
     if _FMT == "json":
         out(rows)
@@ -799,6 +803,9 @@ def cmd_mail_get(a):
     except NotImplementedError:
         out({"error": "mail-get is not supported for this account",
              "account": a.account, "uid": a.uid})
+        sys.exit(1)
+    except LookupError as e:
+        out({"error": str(e), "account": a.account, "uid": a.uid})
         sys.exit(1)
     if msg is None:
         out({"error": "message not found", "account": a.account, "uid": a.uid})

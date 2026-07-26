@@ -10,6 +10,7 @@ token transport. No `httpx`, no Google client libraries.
 """
 import base64
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -43,7 +44,13 @@ def _urllib_transport(method, url, headers, body):
 
 def refresh_access_token(client_id, client_secret, refresh_token,
                          transport=None, token_url=_TOKEN_URL) -> str:
-    """Exchange a refresh token for a fresh access token, returned as a str."""
+    """Exchange a refresh token for a fresh access token, returned as a str.
+
+    A revoked/expired refresh token surfaces as a single catchable `LookupError`
+    — whether the transport raises `HTTPError` (a 4xx `invalid_grant`) or returns
+    an OAuth error body with no `access_token` field — so the lazy `_conn()`
+    refresh renders as a structured error, never a raw traceback.
+    """
     transport = transport or _urllib_transport
     body = urllib.parse.urlencode({
         "grant_type": "refresh_token",
@@ -52,8 +59,14 @@ def refresh_access_token(client_id, client_secret, refresh_token,
         "refresh_token": refresh_token,
     })
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    _status, payload = transport("POST", token_url, headers, body)
-    return payload["access_token"]
+    try:
+        _status, payload = transport("POST", token_url, headers, body)
+        return payload["access_token"]
+    except (KeyError, urllib.error.HTTPError) as e:
+        raise LookupError(
+            "Gmail XOAUTH2 token refresh failed (revoked or expired refresh "
+            "token); re-run `voa mail-auth` to re-authorize"
+        ) from e
 
 
 class GmailXoauth2Adapter(GmailImapAdapter):

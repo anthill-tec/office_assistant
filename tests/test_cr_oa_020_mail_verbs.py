@@ -219,6 +219,38 @@ def test_mail_search_json_mode_yields_bare_array_with_no_tally_or_next(monkeypat
     assert "next" not in raw
 
 
+def test_mail_search_revoked_xoauth2_token_is_a_structured_error_not_a_traceback(monkeypatch, capsys):
+    """A revoked/expired Gmail refresh token surfaces (lazily, at search time) as a
+    `LookupError` from `refresh_access_token` — `cmd_mail_search` must render it as a
+    structured error + exit 1, no traceback."""
+    from vidushi_oa.mail.xoauth2 import GmailXoauth2Adapter, refresh_access_token
+
+    def _err_transport(method, url, headers, body):
+        return (400, {"error": "invalid_grant"})
+
+    def _token_provider():
+        return refresh_access_token("cid", "sec", "refresh-xyz", transport=_err_transport)
+
+    def _no_conn(host, port):
+        raise AssertionError("must not connect once the token refresh fails")
+
+    adapter = GmailXoauth2Adapter(
+        account="gmail_work", source_tag="[GM]", host="imap.gmail.com",
+        user="me@workspace.example", access_token=_token_provider,
+        conn_factory=_no_conn,
+    )
+    monkeypatch.setattr(cli, "build_client", lambda **kw: MailClient({"gmail_work": adapter}))
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_search(Namespace(query="invoice", accounts=None))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    assert "error" in json.loads(captured.out.strip())
+
+
 # ─────────────────────────── mail-accounts (direct-call, fakes) ───────────────────────────
 
 def test_mail_accounts_lists_every_registered_account_with_its_capabilities(monkeypatch, capsys):

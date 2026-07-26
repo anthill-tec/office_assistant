@@ -263,6 +263,37 @@ class RefreshAccessTokenTest(unittest.TestCase):
         _method, url, _headers, _body = calls[0]
         self.assertEqual(url, "https://example.test/token")
 
+    def test_oauth_error_body_without_access_token_raises_lookuperror(self):
+        # A revoked/expired refresh token comes back as an OAuth error body with
+        # NO access_token field -> a clean, catchable LookupError, not a KeyError.
+        transport, _calls = _make_fake_transport(
+            (400, {"error": "invalid_grant", "error_description": "Token revoked"})
+        )
+
+        with self.assertRaises(LookupError) as ctx:
+            refresh_access_token(
+                client_id="client-123",
+                client_secret="secret-abc",
+                refresh_token="refresh-xyz",
+                transport=transport,
+            )
+
+        self.assertIn("mail-auth", str(ctx.exception))
+
+    def test_transport_httperror_is_re_raised_as_lookuperror(self):
+        import urllib.error
+
+        def transport(method, url, headers, body):
+            raise urllib.error.HTTPError(url, 400, "Bad Request", {}, None)
+
+        with self.assertRaises(LookupError):
+            refresh_access_token(
+                client_id="client-123",
+                client_secret="secret-abc",
+                refresh_token="refresh-xyz",
+                transport=transport,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
