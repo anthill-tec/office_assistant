@@ -77,6 +77,25 @@ Full decision + rationale: `docs/research/DN-packaging-distribution.md` §6 (in-
   auth-mode path (see CR-OA-020 "Deferred follow-ups"). Keep it out of the pytest gate (no creds on runners);
   run it as a release-branch qualification step alongside `no-mistakes` + AXI validation.
 
+## Release cutover — the last step that closes the full development cycle
+
+The release "completes the circle": ship the package, prune the now-redundant local setup, reinstall from
+the package alone, with **agent state preserved throughout**.
+
+- **Preserve agent state — do NOT lose it.** Prior-session state lives in two places that must stay readable
+  by the released architecture: the **Mongo `vidushi_oa` store** ([[mongo-preexisting-data-migration]]) and
+  the **`data/*.jsonl` snapshots**. The JSONL are **chezmoi-versioned** (the user's dotfile state, gitignored
+  in this repo) — the user **keeps the same data** to preserve the agent's state, and it must read cleanly
+  after release. (This is also why the import-parity test generates its own throwaway fixtures instead of
+  depending on that personal data.) Local backend stays `VIDUSHI_BACKEND=mongo`; the JSONL are the chezmoi mirror.
+- **LAST step BEFORE release — prune redundant `~/.claude` artifacts** superseded by the bundle: the **7 legacy
+  standalone skills** + the **`inbox-analyst` agent** (AGENTS.md "Replacement path" — the unified
+  `skills/vidushi-oa/` supersedes them all), plus any **local scripts now shipped in the package/repo** (no
+  duplication). Do this only once the bundle is verified.
+- **AFTER release — reinstall via the new installer schema:** `uv tool install vidushi-oa` (engine) +
+  `npx skills add ./skills/vidushi-oa` (skill) + `voa setup`; confirm the pruned environment works **from the
+  package alone** and the preserved state is still readable. That closes the cycle.
+
 ## Remote CI tracking
 
 Use the **`ci-monitor` skill** to watch GitHub Actions runs remotely after pushing (release/* → TestPyPI,
