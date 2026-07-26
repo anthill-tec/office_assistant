@@ -756,12 +756,15 @@ def _mail_client_or_exit():
 def cmd_mail_search(a):
     """Server-side search across the configured accounts, merged + de-duped by
     `Message-ID` (by the client), field-projected, TOON-enveloped (`--json` -> a
-    bare array with no tally/next)."""
+    bare array with no tally/next). Fail-soft: one bad account (revoked token, down
+    host) is surfaced in `failed_accounts` alongside the healthy results (exit 0);
+    only a total wipeout — every selected account failed — is a structured error +
+    exit 1 (no traceback), per AXI #6."""
     client = _mail_client_or_exit()
-    try:
-        msgs = client.search(a.query, accounts=getattr(a, "accounts", None))
-    except LookupError as e:
-        out({"error": str(e)})
+    msgs = client.search(a.query, accounts=getattr(a, "accounts", None))
+    failures = client.last_failures
+    if failures and client.last_succeeded == 0:
+        out({"error": "all selected accounts failed", "failed_accounts": failures})
         sys.exit(1)
     rows = [_mail_row(m) for m in msgs]
     if _FMT == "json":
@@ -772,7 +775,11 @@ def cmd_mail_search(a):
         tag = r["source_tag"].strip("[]")   # "[GM]" -> "GM" (bracket-free TOON map key)
         tally[tag] = tally.get(tag, 0) + 1
     nxt = [f"mail-search {a.query} --accounts <name>", "mail-accounts"]
-    out({"count": len(rows), "tally": {"source_tag": tally}, "results": rows, "next": nxt})
+    envelope = {"count": len(rows), "tally": {"source_tag": tally}, "results": rows}
+    if failures:
+        envelope["failed_accounts"] = failures
+    envelope["next"] = nxt
+    out(envelope)
 
 
 def cmd_mail_accounts(a):

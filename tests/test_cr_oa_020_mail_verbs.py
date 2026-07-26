@@ -105,6 +105,31 @@ class FakeAdapter(MailAdapter):
         return ["INBOX"]
 
 
+class FailingAdapter(MailAdapter):
+    """No network — `search` always raises (simulating a revoked XOAUTH2 token or a
+    down IMAP host) so `MailClient`'s per-adapter isolation and the `cmd_mail_search`
+    partial/total-failure branches can be exercised. `capabilities()`/`list_folders`
+    stay offline so a failing account never trips up `mail-accounts`."""
+
+    def __init__(self, account, source_tag, caps, error):
+        self.account = account
+        self.source_tag = source_tag
+        self._caps = set(caps)
+        self._error = error
+
+    def capabilities(self):
+        return set(self._caps)
+
+    def search(self, query, folder=None, limit=None):
+        raise self._error
+
+    def fetch_message(self, uid, folder=None):
+        raise self._error
+
+    def list_folders(self):
+        return ["INBOX"]
+
+
 SHARED_ID = "<shared-abc@example.com>"
 
 GM_ONE = _msg("<gm-1@gmail.com>", "gmail_main", "[GM]", "GM One", "a@gm.com", "2026-07-20T10:00:00Z", "gm-1")
@@ -251,6 +276,50 @@ def test_mail_search_revoked_xoauth2_token_is_a_structured_error_not_a_traceback
     assert "error" in json.loads(captured.out.strip())
 
 
+def test_mail_search_one_bad_account_still_returns_the_healthy_account_results(monkeypatch, capsys):
+    """Per-adapter isolation: one account raising (a revoked xoauth2 token -> LookupError)
+    must NOT blank the fan-out — the healthy account's rows come back, the failure is
+    surfaced in `failed_accounts`, and the verb exits 0 (partial success)."""
+    gmail = FakeAdapter("gmail_main", "[GM]", {"raw_query"}, messages=[GM_ONE])
+    yahoo = FailingAdapter("yahoo_main", "[YH]", {"legacy_only"},
+                           LookupError("token refresh failed; re-run voa mail-auth"))
+    client = MailClient({"gmail_main": gmail, "yahoo_main": yahoo})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "toon"
+
+    cli.cmd_mail_search(Namespace(query="invoice", accounts=None))
+
+    from vidushi_oa import toon as oa_toon
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    payload = oa_toon.from_toon(captured.out)
+    assert payload["count"] == 1
+    assert payload["results"][0]["id"] == GM_ONE.id
+    failed = {row["account"]: row["error"] for row in payload["failed_accounts"]}
+    assert list(failed) == ["yahoo_main"]
+    assert "voa mail-auth" in failed["yahoo_main"]
+
+
+def test_mail_search_all_accounts_failing_is_a_structured_error_exit_1(monkeypatch, capsys):
+    """Total wipeout — every selected account fails — is a structured error + exit 1
+    (no traceback), never an empty-but-successful-looking result set."""
+    gmail = FailingAdapter("gmail_main", "[GM]", {"raw_query"}, LookupError("token revoked"))
+    yahoo = FailingAdapter("yahoo_main", "[YH]", {"legacy_only"}, OSError("host unreachable"))
+    client = MailClient({"gmail_main": gmail, "yahoo_main": yahoo})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_search(Namespace(query="invoice", accounts=None))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    payload = json.loads(captured.out.strip())
+    assert "error" in payload
+    assert {row["account"] for row in payload["failed_accounts"]} == {"gmail_main", "yahoo_main"}
+
+
 # ─────────────────────────── mail-accounts (direct-call, fakes) ───────────────────────────
 
 def test_mail_accounts_lists_every_registered_account_with_its_capabilities(monkeypatch, capsys):
@@ -266,6 +335,21 @@ def test_mail_accounts_lists_every_registered_account_with_its_capabilities(monk
     assert set(by_account.keys()) == {"gmail_main", "fastmail_main", "yahoo_main"}
     assert sorted(by_account["gmail_main"]["capabilities"]) == sorted(["raw_query", "server_threads"])
     assert sorted(by_account["fastmail_main"]["capabilities"]) == ["server_side_categories"]
+
+
+def test_mail_accounts_stays_offline_even_when_an_account_would_fail_a_search(monkeypatch, capsys):
+    """`mail-accounts` is a pure capability listing — it must never trigger an
+    adapter's `search`, so a revoked/unreachable account is still listed cleanly."""
+    yahoo = FailingAdapter("yahoo_main", "[YH]", {"legacy_only"}, LookupError("token revoked"))
+    client = MailClient({"yahoo_main": yahoo})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    cli.cmd_mail_accounts(Namespace())
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    results = payload["results"] if isinstance(payload, dict) else payload
+    assert [row["account"] for row in results] == ["yahoo_main"]
 
 
 # ─────────────────────────── mail-get (direct-call, fakes) ───────────────────────────

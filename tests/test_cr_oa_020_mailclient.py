@@ -231,5 +231,53 @@ class MailClientDedupTest(unittest.TestCase):
         )
 
 
+class RaisingAdapter(FakeAdapter):
+    """A FakeAdapter whose `search` always raises, to exercise `MailClient`'s
+    per-adapter error isolation (a revoked token / down host)."""
+
+    def __init__(self, account, source_tag, caps, error):
+        super().__init__(account, source_tag, caps)
+        self._error = error
+
+    def search(self, query, folder=None, limit=None):
+        raise self._error
+
+
+class MailClientSearchIsolationTest(unittest.TestCase):
+    """One failing adapter must not abort the fan-out: the healthy account's rows are
+    returned, and the failure is recorded on `last_failures` (name + reason, never a
+    secret) with `last_succeeded` distinguishing partial from total failure."""
+
+    def test_one_failing_adapter_does_not_blank_the_healthy_account(self):
+        gmail = FakeAdapter(
+            "gmail_main", "[GM]", {"raw_query"},
+            messages=[_msg("<gm-1@gmail.com>", "gmail_main", "[GM]", uid="gm-1")],
+        )
+        yahoo = RaisingAdapter("yahoo_main", "[YH]", {"legacy_only"},
+                               LookupError("token refresh failed"))
+        client = MailClient({"gmail_main": gmail, "yahoo_main": yahoo})
+
+        results = client.search("invoice")
+
+        self.assertEqual([m.id for m in results], ["<gm-1@gmail.com>"])
+        self.assertEqual(client.last_succeeded, 1)
+        self.assertEqual([f["account"] for f in client.last_failures], ["yahoo_main"])
+        self.assertIn("token refresh failed", client.last_failures[0]["error"])
+
+    def test_all_adapters_failing_yields_no_results_and_zero_successes(self):
+        gmail = RaisingAdapter("gmail_main", "[GM]", {"raw_query"}, LookupError("revoked"))
+        yahoo = RaisingAdapter("yahoo_main", "[YH]", {"legacy_only"}, OSError("unreachable"))
+        client = MailClient({"gmail_main": gmail, "yahoo_main": yahoo})
+
+        results = client.search("invoice")
+
+        self.assertEqual(results, [])
+        self.assertEqual(client.last_succeeded, 0)
+        self.assertEqual(
+            sorted(f["account"] for f in client.last_failures),
+            ["gmail_main", "yahoo_main"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
