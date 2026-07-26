@@ -37,19 +37,21 @@ Full decision + rationale: `docs/research/DN-packaging-distribution.md` §6 (in-
 
 ## CI workflow — release-time TODOs + local testing
 
-- **Vendor the release-gate script into the repo at release.** The CI `test` job runs
-  `~/.claude/scripts/skill-release-gate.py`, which lives in the user's home and **will NOT exist on a
-  GitHub runner**. During release, **copy `skill-release-gate.py` into the project** (e.g. `scripts/`) and
-  point the workflow at the repo-relative path, so the gate runs in CI. (CR-OA-018 only authors +
-  parse-validates the workflow; this is the release-time fix.)
-- **When vendoring, bump the gate's stale store count 7 → 8.** The home copy of `skill-release-gate.py`
-  hard-codes **7** collections/schemas (it predates CR-OA-015's `orders` store), so two checks FAIL against
-  the current engine: *"wheel bundles 7x vidushi_oa/schema/*.json (found 8)"* and *"setup provisions 7
-  collections (found 8: …,orders)"*. **8 is correct** (contacts, invoices, warranties, cases, products,
-  subscriptions, insurance, orders) — the repo pytest suite already expects 8. Update the vendored copy to 8
-  (and thereafter derive it from the engine's `STORES` rather than a literal). Phase 1 (`agentskills validate`
-  the skill bundle) already PASSES — only these two stale-count assertions fail, and they do **not** reflect
-  a defect in engine or skill code.
+- **Do NOT vendor the release-gate script — it is a generic cross-project ecosystem tool.**
+  `~/.claude/scripts/skill-release-gate.py` is config-driven and shared across every skill-bundle project;
+  forking a per-repo copy would be wrong. Each project carries ONLY its own **`.skill-release.toml`** (engine
+  + lifecycle/AXI checks); the script reads it. For CI (where `~/.claude/...` won't exist on a runner) the
+  workflow must **provision the generic gate as a shared/published tool** — the same way the gate already
+  auto-provisions `skills-ref` in a throwaway venv — not copy the script in. **Open item:** the generic gate
+  needs a distribution mechanism (publish it so CI `pip`/`pipx`-installs it); the CR-OA-018 workflow currently
+  references the home path and must be repointed at the provisioned tool, not a vendored copy.
+- **The stale store-count bug was in OUR in-repo `.skill-release.toml` (not the script) — FIXED 7 → 8.**
+  Two checks failed because the config predated CR-OA-015's `orders` store: `[engine.wheel_glob_counts]`
+  `"vidushi_oa/schema/*.json" = 7` and the lifecycle check `"setup provisions 7 collections"` /
+  `expect = ["initialized[7]"]`. **8 is correct** (contacts, invoices, warranties, cases, products,
+  subscriptions, insurance, orders) — the repo pytest suite already expects 8. Bumped all three to 8 in
+  `bugfix/skill-release-toml-store-count`. The generic script reads the count from config; ideally the check
+  should derive from the engine's `STORES` rather than a literal. Phase 1 (`agentskills validate`) already PASSED.
 - **Test the CI workflow locally with `act`** (nektos/act) before pushing — `act -n`/`act --list` to
   validate structure, or a full run to exercise the jobs in Docker. Catches the gate-script-path issue and
   other runner-only problems without burning GitHub Actions minutes.
