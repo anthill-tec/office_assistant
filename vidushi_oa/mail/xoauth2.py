@@ -57,21 +57,36 @@ def refresh_access_token(client_id, client_secret, refresh_token,
 
 
 class GmailXoauth2Adapter(GmailImapAdapter):
-    """Gmail adapter authenticating via `XOAUTH2` instead of a password."""
+    """Gmail adapter authenticating via `XOAUTH2` instead of a password.
+
+    `access_token` is either a ready string OR a zero-argument callable that
+    mints one lazily (a token provider). The provider is invoked at most once,
+    on first `_conn()` — never at construction — so building the adapter (e.g.
+    from `mail-accounts` or for an unrelated account) performs no network I/O.
+    """
 
     def __init__(self, account, source_tag, host, user, access_token, port=993,
                  conn_factory=None):
         super().__init__(account, source_tag, host, user, password="",
                          port=port, conn_factory=conn_factory)
         self.access_token = access_token
+        self._resolved_token = None
+
+    def _token(self):
+        """Resolve (and cache) the access token — invoking the provider once."""
+        if self._resolved_token is None:
+            token = self.access_token
+            self._resolved_token = token() if callable(token) else token
+        return self._resolved_token
 
     def _conn(self):
         """Create + XOAUTH2-authenticate the connection once, then reuse it."""
         if self._connection is None:
+            token = self._token()
             conn = self._factory(self.host, self.port)
             conn.authenticate(
                 "XOAUTH2",
-                lambda _challenge: _xoauth2_raw(self.user, self.access_token),
+                lambda _challenge: _xoauth2_raw(self.user, token),
             )
             conn.select("INBOX")
             self._connection = conn

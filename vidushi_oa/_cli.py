@@ -740,11 +740,24 @@ def _mail_row(msg):
             "sender": msg.sender, "date": msg.date}
 
 
+def _mail_client_or_exit():
+    """Build the mail client for a mail-* verb, rendering an unresolvable
+    `secret_ref` (`LookupError` from secret resolution) as a structured error +
+    exit 1 (no traceback). Scoped to the mail verbs on purpose: a `LookupError`
+    from any other command handler still surfaces as a real traceback at its
+    fault site rather than being masked as a cryptic error payload."""
+    try:
+        return build_client()
+    except LookupError as e:
+        out({"error": str(e)})
+        sys.exit(1)
+
+
 def cmd_mail_search(a):
     """Server-side search across the configured accounts, merged + de-duped by
     `Message-ID` (by the client), field-projected, TOON-enveloped (`--json` -> a
     bare array with no tally/next)."""
-    client = build_client()
+    client = _mail_client_or_exit()
     msgs = client.search(a.query, accounts=getattr(a, "accounts", None))
     rows = [_mail_row(m) for m in msgs]
     if _FMT == "json":
@@ -761,7 +774,7 @@ def cmd_mail_search(a):
 def cmd_mail_accounts(a):
     """List the configured accounts + their adapter capabilities."""
     rows = [{"account": name, "capabilities": sorted(caps)}
-            for name, caps in build_client().accounts()]
+            for name, caps in _mail_client_or_exit().accounts()]
     if _FMT == "json":
         out(rows)
     else:
@@ -774,7 +787,7 @@ def cmd_mail_get(a):
     structured error + exit 1 (no traceback), across every real adapter contract:
     `ImapAdapter` returns None for an unknown uid, `JmapAdapter` raises
     `NotImplementedError`."""
-    client = build_client()
+    client = _mail_client_or_exit()
     adapter = client._adapters.get(a.account)
     if adapter is None:
         out({"error": "unknown account", "account": a.account, "uid": a.uid})
@@ -819,6 +832,10 @@ def cmd_mail_auth(a):
     name = f"{a.provider}:{a.address}"
 
     auth_mode = getattr(a, "auth_mode", "password")
+    if auth_mode == "xoauth2" and a.provider != "gmail":
+        out({"error": "xoauth2 auth-mode is supported for the gmail provider only",
+             "provider": a.provider})
+        sys.exit(1)
     if a.secret_ref:
         secret_ref = a.secret_ref
         accounts.add_account(name, a.provider, a.address, secret_ref,
@@ -1014,8 +1031,6 @@ def main():
     except ValueError as e:            # unknown VIDUSHI_BACKEND from get_backend()
         out({"error": str(e)}); sys.exit(1)
     except NotImplementedError as e:   # e.g. sqlite --filter (mongo-only)
-        out({"error": str(e)}); sys.exit(1)
-    except LookupError as e:           # unresolvable mail secret_ref (mail-* verbs)
         out({"error": str(e)}); sys.exit(1)
 
 

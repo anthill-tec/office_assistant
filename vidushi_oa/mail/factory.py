@@ -21,9 +21,10 @@ def _default_adapter_factory(provider, account, address, secret_ref, resolver,
 
     Resolves the secret reference through `resolver` and builds the concrete
     provider adapter. For `gmail` with `auth_mode == "xoauth2"` the resolved
-    secret is a JSON blob `{client_id, client_secret, refresh_token}` that mints a
-    short-lived access token (via `refresh_access_token`, `transport` defaulting to
-    the stdlib urllib transport) for a `GmailXoauth2Adapter`.
+    secret is a JSON blob `{client_id, client_secret, refresh_token}`; the token
+    mint (via `refresh_access_token`, `transport` defaulting to the stdlib urllib
+    transport) is deferred into a lazy token provider so no network runs here —
+    the `GmailXoauth2Adapter` refreshes on its first connect, not at build time.
     """
     from vidushi_oa.mail.imap import GmailImapAdapter, YahooImapAdapter
     from vidushi_oa.mail.jmap import fastmail_adapter
@@ -36,12 +37,15 @@ def _default_adapter_factory(provider, account, address, secret_ref, resolver,
             from vidushi_oa.mail.xoauth2 import (GmailXoauth2Adapter,
                                                  refresh_access_token)
             creds = json.loads(secret)
-            access_token = refresh_access_token(
-                creds["client_id"], creds["client_secret"],
-                creds["refresh_token"], transport=transport,
-            )
+
+            def _token_provider():
+                return refresh_access_token(
+                    creds["client_id"], creds["client_secret"],
+                    creds["refresh_token"], transport=transport,
+                )
+
             return GmailXoauth2Adapter(account, SOURCE_TAGS["gmail"],
-                                       "imap.gmail.com", address, access_token)
+                                       "imap.gmail.com", address, _token_provider)
         return GmailImapAdapter(account, SOURCE_TAGS["gmail"],
                                 "imap.gmail.com", address, secret)
     if provider == "yahoo":

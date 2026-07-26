@@ -217,6 +217,28 @@ class MailAuthDoctorTest(unittest.TestCase):
         self.assertNotIn(SENTINEL, r.stdout)
         self.assertNotIn(SENTINEL, r.stderr)
 
+    def test_mail_auth_rejects_xoauth2_for_non_gmail_provider(self):
+        # xoauth2 is honoured only in the gmail factory branch; requesting it for
+        # yahoo/fastmail must fail LOUDLY with a structured error + exit 1 BEFORE
+        # anything is persisted, rather than silently storing a mis-auth entry.
+        blob = json.dumps({"client_id": "cid", "client_secret": SENTINEL,
+                           "refresh_token": "rtok"})
+        r = self._run(["mail-auth", "--provider", "yahoo", "--address", "y@x.com",
+                       "--auth-mode", "xoauth2"], fmt="json", input_=blob + "\n")
+
+        self.assertNotEqual(r.returncode, 0,
+                            "xoauth2 with a non-gmail provider must exit non-zero")
+        self.assertNotIn("Traceback", r.stdout)
+        self.assertNotIn("Traceback", r.stderr)
+        payload = json.loads(r.stdout.strip())
+        self.assertIn("error", payload)
+        self.assertNotIn(SENTINEL, r.stdout)
+        self.assertNotIn(SENTINEL, r.stderr)
+        # Nothing was persisted: the accounts registry must not have been created/written.
+        self.assertFalse(os.path.exists(self.accounts_path) and
+                         json.load(open(self.accounts_path, encoding="utf-8")),
+                         "a rejected xoauth2 mail-auth must write no account entry")
+
     def test_mail_accounts_unresolvable_secret_is_structured_error_not_traceback(self):
         # A configured account whose secret_ref cannot be resolved (file backend, no
         # secret seeded) makes build_client raise LookupError during eager resolution;
