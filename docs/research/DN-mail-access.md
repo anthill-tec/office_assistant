@@ -135,10 +135,12 @@ the non-interactive `voa setup`, DN-packaging-distribution Decision 5):
   - **Yahoo** → **login access** (an IMAP app password).
   The agent presents the concrete generation steps; the user generates each and enters it via the
   interactive `mail-auth`.
-- **`voa doctor` — install/config health (gh-axi style).** A diagnostic verb reporting: engine version, the
-  active store backend + reachability, the active secret backend (vault reachable? else keyring), and each
-  configured mail provider + credential kind + whether its reference **resolves** — flagging missing/broken
-  config with a fix hint. TOON output; **never reveals a secret**. (Absorbs the earlier `setup --check`.)
+- **`voa doctor` — install/config health (gh-axi style) + remediation entry point.** A diagnostic verb
+  reporting: engine version, the active store backend + reachability, the active **secret backend**
+  (keyring wired? else the confirmed file store — per [Decision 8](#decision-8--supersede-decision-4-keyring-primary-os-aware-setup-drop-the-vault-backends)),
+  and each configured mail provider + credential kind + whether its reference **resolves**. Beyond flagging,
+  it emits the **ordered remediation plan / wizard** of Decision 8 (agent-runnable vs human-input-required
+  steps). TOON output; **never reveals a secret**. (Absorbs the earlier `setup --check`.)
 
 ## Decision 7 — sending: draft-then-confirm, embedded (JMAP `EmailSubmission` + SMTP), send-capable creds
 
@@ -205,6 +207,17 @@ keyring the primary** store, with an OS-aware setup that offers what the host ac
 - **No silent fallback.** The Decision 4 chain fell keyring→file with only a stderr warning, so a user who
   wanted the keyring silently landed on the least-secure file store. Post-revision, reaching the file backend
   is an **explicit, confirmed** outcome surfaced by setup and reported by `voa doctor`.
+- **Guided remediation is a wizard, not a wall of hints — and `voa doctor` is the detector + entry point.**
+  The interactive steps here need **human input** (typing the secret into `mail-auth`; flipping a desktop
+  KWallet toggle) and therefore **must not be run silently by the agent** (DN §Decision 6: the agent guides
+  *which* and *how*, the human enters the secret). So `voa doctor` doesn't just print fix hints — it emits an
+  **ordered, machine-readable remediation plan** where each step is classified **agent-runnable** (a
+  non-interactive command the agent may run) vs **human-input-required** (enable the OS Secret Service; run
+  the interactive `mail-auth` for account X — a *recommendation the agent walks the user through*, one step at
+  a time via the AXI `next[]` chain). A `voa doctor --fix` / `voa setup` **wizard mode** *instantiates* that
+  sequence — chaining into interactive `mail-auth`/provisioning for the human — rather than requiring the user
+  to assemble the raw `env VIDUSHI_SECRET_BACKEND=keyring voa mail-auth --provider … --address …` invocation
+  by hand. The agent's role is to **recommend and guide locally**; the human performs each input step.
 - **Removed surface (revises Decisions 4 + 6):** `OnePasswordBackend`, `BitwardenBackend`, the `op://`
   reference routing, and their `VIDUSHI_SECRET_BACKEND` registry entries + auto-detect are **deleted**;
   Decision 6's "detects/configures the dedicated vault … defaults to keyring" reduces to

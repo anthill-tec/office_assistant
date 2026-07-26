@@ -49,10 +49,17 @@ with concrete guidance, then **pre-flight** the chosen backend (module present +
 - **headless / no provider** → the **0600 file**, offered as a **stated, confirmed user choice** — never a
   silent downgrade (DN §Decision 8: reaching the file backend is an explicit outcome).
 
-### §S4 `voa doctor` reflects the simplified chain + explicit file surfacing
-`doctor`'s secret-backend line reports **keyring** vs **file (confirmed)**; when no provider is wired it names
-the active OS's fix (e.g. "enable KWallet Secret Service"). No `1password`/`bitwarden` kinds remain. Never
-prints a secret.
+### §S4 `voa doctor` — simplified chain, explicit file surfacing + a guided remediation wizard
+`doctor`'s secret-backend line reports **keyring** vs **file (confirmed)**; no `1password`/`bitwarden` kinds
+remain; never prints a secret. Beyond flagging, `doctor` emits an **ordered, machine-readable remediation
+plan** (DN §Decision 8) — one step per detected gap (Secret Service not wired; a provider with no/unresolvable
+credential) — where **each step carries a `human_input` flag**: `false` = **agent-runnable** (a
+non-interactive command); `true` = **human-input-required** (enable the OS Secret Service; run interactive
+`mail-auth` for account X), surfaced as an AXI `next[]` recommendation the agent walks the user through. A
+`voa doctor --fix` (or `voa setup` wizard mode) **instantiates** the sequence — chaining into the interactive
+`mail-auth`/provisioning for the human — rather than making the user hand-assemble the raw invocation. The
+agent recommends/guides; the human performs each input step (DN §Decision 6: the agent never enters the
+secret).
 
 All verbs stay AXI-conformant (CR-OA-017): TOON output, `--json`, structured errors, exit codes; `mail-auth`
 keeps its single documented interactive exception (DN §Decision 6).
@@ -79,6 +86,8 @@ per the existing `[test]` extra) — no real OS Secret Service, no live vault.
 
 ### §S4
 - [ ] `voa doctor` on a keyring-available env reports `secret_backend: keyring`; on a no-provider env reports `secret_backend: file` **with a `confirmed`/explicit marker** and an OS-specific fix hint; the output contains neither `1password` nor `bitwarden`.
+- [ ] On an env with an unwired Secret Service **and** an unauthenticated provider, `voa doctor` emits a remediation plan with **≥2 ordered steps**, each carrying a boolean `human_input` field: the "enable Secret Service" and "run `mail-auth` for `<account>`" steps are `human_input: true` and appear in the AXI `next[]` chain; any non-interactive step is `human_input: false`.
+- [ ] `voa doctor --fix` (or the `voa setup` wizard path) is wired to **instantiate** the interactive `mail-auth` step for a gap (caller-existence: grep ≥1 non-test caller chaining doctor → the interactive provisioning), and it **never** invokes the secret-entry step non-interactively (the secret is read via `mail-auth`'s hidden-input path only).
 
 ## Estimated size
 M — a deletion (two backends + routing) plus new OS/desktop detection, a pre-flight round-trip, an explicit
