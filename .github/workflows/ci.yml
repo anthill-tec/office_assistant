@@ -7,8 +7,10 @@ on:
       - "release/**"
       - "master"
       - "develop"
+    # Semver release tags (NO 'v' prefix — per the git-workflow versioning rule). git-flow
+    # release-finish tags master with e.g. 1.2.3; pushing it triggers the PyPI publish job.
     tags:
-      - "v*"
+      - "[0-9]+.[0-9]+.[0-9]+*"
 
 jobs:
   test:
