@@ -10,7 +10,7 @@ Verifies the NEW-contract ACs before the consolidated skill file lands:
         (phishing/customs awareness, draft-then-confirm, verified-contacts-
         only) surviving consolidation.
 
-  §S2 — the `vidushi-oa` engine (`pip install vidushi-oa` + `voa setup`)
+  §S2 — the `vidushi-oa` engine (`uv tool install vidushi-oa` + `voa setup`)
         declared as a prerequisite, the store driven exclusively through
         the `voa` CLI (never raw Mongo, never an MCP server), and a
         harness-agnostic front-matter block / portability statement so the
@@ -239,14 +239,14 @@ class SkillSafetyContractTest(_SkillFileTestCase):
 
 class SkillEnginePrerequisiteTest(_SkillFileTestCase):
     """T5 — §S2: the `vidushi-oa` engine is named as a prerequisite
-    (`pip install vidushi-oa` + `voa setup`); the store is driven via the
+    (`uv tool install vidushi-oa` + `voa setup`); the store is driven via the
     `voa` CLI, never raw Mongo and never a hard MCP-server requirement."""
 
-    def test_body_declares_pip_install_vidushi_oa_prerequisite(self):
+    def test_body_declares_uv_tool_install_vidushi_oa_prerequisite(self):
         body = _body_text(self._read_skill())
         self.assertIn(
-            "pip install vidushi-oa", body.lower(),
-            "expected the body to name `pip install vidushi-oa` as the engine prerequisite",
+            "uv tool install vidushi-oa", body.lower(),
+            "expected the body to name `uv tool install vidushi-oa` as the engine prerequisite",
         )
 
     def test_body_declares_voa_setup_prerequisite(self):

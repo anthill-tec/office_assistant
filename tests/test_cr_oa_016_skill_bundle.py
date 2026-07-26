@@ -123,7 +123,7 @@ class RosterAndInstallDocsTest(unittest.TestCase):
     def test_readme_documents_both_install_paths_and_the_gate(self):
         readme = _read(os.path.join(ROOT, "README.md"))
         self.assertIn("npx skills add", readme)            # skill install (local + public)
-        self.assertIn("pip install vidushi-oa", readme)    # engine install
+        self.assertIn("uv tool install vidushi-oa", readme)  # engine install
         self.assertRegex(readme, r"PyPI|license")          # names the public-path gate
 
     def test_scripts_readme_documents_install(self):
