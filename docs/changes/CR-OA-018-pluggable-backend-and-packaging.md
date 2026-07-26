@@ -1,6 +1,6 @@
 # CR-OA-018 — Pluggable persistence (SQLite default) + GPL-v3 packaging for `uv tool`/PyPI distribution
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-26 on feature/CR-OA-018-pluggable-backend-and-packaging)
 **Type:** feature
 **Priority:** High
 **Depends on:** 016, 017
@@ -88,32 +88,32 @@ are updated.
 ## Acceptance criteria
 
 ### §S1
-- [ ] A backend interface type exists with the methods above; `VIDUSHI_BACKEND=sqlite` and `=mongo` each resolve to a concrete implementation via the factory; an unknown value errors (structured, exit 1).
-- [ ] **Integration:** after this CR, the `voa` CLI verbs in `vidushi_oa/_cli.py` obtain their store via the backend factory (not `pymongo` directly). **Caller-existence:** `grep -rn 'import pymongo' vidushi_oa/` returns hits **only** under the mongo backend module (0 in `_cli.py`); the factory has ≥1 non-test caller.
+- [x] A backend interface type exists with the methods above; `VIDUSHI_BACKEND=sqlite` and `=mongo` each resolve to a concrete implementation via the factory; an unknown value errors (structured, exit 1).
+- [x] **Integration:** after this CR, the `voa` CLI verbs in `vidushi_oa/_cli.py` obtain their store via the backend factory (not `pymongo` directly). **Caller-existence:** `grep -rn 'import pymongo' vidushi_oa/` returns hits **only** under the mongo backend module (0 in `_cli.py`); the factory has ≥1 non-test caller.
 
 ### §S2
-- [ ] With `VIDUSHI_BACKEND=sqlite` on a temp db file, the full lifecycle passes: `setup → add → event → due-sweep/delivery-sweep → attention → validate` — a test drives every verb and asserts the same observable outcomes as the Mongo suite.
-- [ ] A neutral `elem_match` condition (`actions` where `status=OPEN`), compiled by the SQLite backend to JSON1, returns exactly the rows whose `actions[]` contains an OPEN action; a test seeds mixed rows and asserts the match set. A **cross-backend parity** test runs the SAME neutral query against `mongo` and `sqlite` and asserts identical result ids.
-- [ ] The SQLite backend rejects an out-of-enum `status` using the packaged schema (no row lands), and a duplicate `id` is de-duped/rejected — parity with the Mongo validator/index ACs.
+- [x] With `VIDUSHI_BACKEND=sqlite` on a temp db file, the full lifecycle passes: `setup → add → event → due-sweep/delivery-sweep → attention → validate` — a test drives every verb and asserts the same observable outcomes as the Mongo suite.
+- [x] A neutral `elem_match` condition (`actions` where `status=OPEN`), compiled by the SQLite backend to JSON1, returns exactly the rows whose `actions[]` contains an OPEN action; a test seeds mixed rows and asserts the match set. A **cross-backend parity** test runs the SAME neutral query against `mongo` and `sqlite` and asserts identical result ids.
+- [x] The SQLite backend rejects an out-of-enum `status` using the packaged schema (no row lands), and a duplicate `id` is de-duped/rejected — parity with the Mongo validator/index ACs.
 
 ### §S3
-- [ ] With **no** `VIDUSHI_BACKEND` set, the backend is SQLite and `voa setup` creates the db at `$XDG_DATA_HOME/vidushi-oa/oa.db` (or `VIDUSHI_SQLITE_PATH`); a test asserts the file exists and the lifecycle runs.
-- [ ] Build the wheel and install it into a **clean venv without pymongo**: `voa setup` + the SQLite lifecycle succeed (proves pymongo is not a hard dependency); installing `vidushi-oa[mongo]` pulls `pymongo` and `VIDUSHI_BACKEND=mongo` works.
+- [x] With **no** `VIDUSHI_BACKEND` set, the backend is SQLite and `voa setup` creates the db at `$XDG_DATA_HOME/vidushi-oa/oa.db` (or `VIDUSHI_SQLITE_PATH`); a test asserts the file exists and the lifecycle runs.
+- [x] Build the wheel and install it into a **clean venv without pymongo**: `voa setup` + the SQLite lifecycle succeed (proves pymongo is not a hard dependency); installing `vidushi-oa[mongo]` pulls `pymongo` and `VIDUSHI_BACKEND=mongo` works.
 
 ### §S4
-- [ ] `snapshot` then `import` round-trips on SQLite (row counts + `validate [0]:` preserved).
-- [ ] **Field-level fidelity:** a cross-backend move (Mongo → `snapshot` → SQLite `import`) yields records that are **deep-equal** to the source per `id` — including nested `actions[]` (with `opened`/`resolved`/log entries), `documents[]`, `source`, and every FK/lifecycle field — asserted by a test that deep-compares the full record set, not just counts.
-- [ ] **Migration validated against the live data (read-only):** a `snapshot` of the **live** `vidushi_oa` Mongo store (read-only) imported into a throwaway SQLite db reproduces every store's row count and a clean `validate` on the SQLite side — proving the migration works on the real data shape **without touching the live store**. (Per the migrate-first decision 2026-07-26, the *actual production cutover* — pointing the default SQLite db at the migrated data — is a **release-time operational step**, not performed inside this CR; the live Mongo DB stays intact, rollback via re-`import` under `VIDUSHI_BACKEND=mongo`.)
+- [x] `snapshot` then `import` round-trips on SQLite (row counts + `validate [0]:` preserved).
+- [x] **Field-level fidelity:** a cross-backend move (Mongo → `snapshot` → SQLite `import`) yields records that are **deep-equal** to the source per `id` — including nested `actions[]` (with `opened`/`resolved`/log entries), `documents[]`, `source`, and every FK/lifecycle field — asserted by a test that deep-compares the full record set, not just counts.
+- [x] **Migration validated against the live data (read-only):** a `snapshot` of the **live** `vidushi_oa` Mongo store (read-only) imported into a throwaway SQLite db reproduces every store's row count and a clean `validate` on the SQLite side — proving the migration works on the real data shape **without touching the live store**. (Per the migrate-first decision 2026-07-26, the *actual production cutover* — pointing the default SQLite db at the migrated data — is a **release-time operational step**, not performed inside this CR; the live Mongo DB stays intact, rollback via re-`import` under `VIDUSHI_BACKEND=mongo`.)
 
 ### §S5
-- [ ] A top-level `LICENSE` file contains the GPL-3.0 text; the **built wheel's** metadata declares `License: GPL-3.0-or-later` (verified by inspecting the wheel's METADATA, not by reading `pyproject.toml`).
+- [x] A top-level `LICENSE` file contains the GPL-3.0 text; the **built wheel's** metadata declares `License: GPL-3.0-or-later` (verified by inspecting the wheel's METADATA, not by reading `pyproject.toml`).
 
 ### §S6
-- [ ] `uv tool install` from the built wheel yields an on-PATH `voa` that runs `voa --help` (exit 0) in a clean environment; `README.md` documents the command.
-- [ ] A GitHub Actions workflow file exists whose parsed structure confirms: a `test` job (on push) that builds the wheel + runs pytest + the release gate; a **test-publish** job gated to **`release/*`** branches targeting **TestPyPI**; and a **production** publish job gated to a **version tag** targeting **PyPI**, automated (no manual-reviewer gate — gated to master only) with `id-token: write` (OIDC) + `environment: pypi` for trusted-publisher scoping.
+- [x] `uv tool install` from the built wheel yields an on-PATH `voa` that runs `voa --help` (exit 0) in a clean environment; `README.md` documents the command.
+- [x] A GitHub Actions workflow file exists whose parsed structure confirms: a `test` job (on push) that builds the wheel + runs pytest + the release gate; a **test-publish** job gated to **`release/*`** branches targeting **TestPyPI**; and a **production** publish job gated to a **version tag** targeting **PyPI**, automated (no manual-reviewer gate — gated to master only) with `id-token: write` (OIDC) + `environment: pypi` for trusted-publisher scoping.
 
 ### §S7
-- [ ] `skills/vidushi-oa/SKILL.md`, `README.md`, and `scripts/README.md` name `uv tool install vidushi-oa` as the engine install (grep), and state SQLite as the default backend with `[mongo]` as the opt-in; `agentskills validate skills/vidushi-oa` still exits 0.
+- [x] `skills/vidushi-oa/SKILL.md`, `README.md`, and `scripts/README.md` name `uv tool install vidushi-oa` as the engine install (grep), and state SQLite as the default backend with `[mongo]` as the opt-in; `agentskills validate skills/vidushi-oa` still exits 0.
 
 ## Estimated size
 L — a persistence seam + a full SQLite backend with JSON1 query parity + validation, backend-agnostic
