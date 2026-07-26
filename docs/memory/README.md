@@ -19,3 +19,5 @@ Each file is one note with YAML frontmatter (`name`, `description`, `metadata.ty
   live mail-account verification (CR-OA-020) is a release-time test, not a CI gate.
 - [vercel-skills-bundle-packaging](vercel-skills-bundle-packaging.md) — post-merge follow-up: bundle the
   skill + its scripts/engine as one deployable vercel/skills package (flagged during CR-016).
+- [mongo-preexisting-data-migration](mongo-preexisting-data-migration.md) — this machine's OA keeps its store on
+  Mongo `vidushi_oa`@27017 (no forced SQLite migration); set `VIDUSHI_BACKEND=mongo` for CLI + SessionStart hook.
