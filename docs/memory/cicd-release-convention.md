@@ -45,6 +45,14 @@ Full decision + rationale: `docs/research/DN-packaging-distribution.md` §6 (in-
 - **Test the CI workflow locally with `act`** (nektos/act) before pushing — `act -n`/`act --list` to
   validate structure, or a full run to exercise the jobs in Docker. Catches the gate-script-path issue and
   other runner-only problems without burning GitHub Actions minutes.
+- **Live mail-account verification (CR-OA-020) is a release-time test, not a CI gate.** The embedded mail
+  client (`mail-*` verbs + Gmail/Fastmail/Yahoo adapters + XOAUTH2) ships tested only against in-process
+  fakes — no live credentials in the suite (a deliberate CR-020 decision). **During the release**, set up a
+  live-account verification test (a real Gmail/Fastmail/Yahoo account each, secrets via the vault/keyring
+  resolver, `VIDUSHI_SECRET_BACKEND`) to exercise the real adapters end-to-end — this also finally exercises
+  the real `_default_adapter_factory` against live servers and the deferred Fastmail JMAP-vs-app-password
+  auth-mode path (see CR-OA-020 "Deferred follow-ups"). Keep it out of the pytest gate (no creds on runners);
+  run it as a release-branch qualification step alongside `no-mistakes` + AXI validation.
 
 ## Remote CI tracking
 

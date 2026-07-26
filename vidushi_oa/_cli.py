@@ -30,7 +30,12 @@ Tracking-state framework (see schema.md "Tracking state framework"):
 
 Fields support dotted paths (e.g. source.email_id). Output is compact JSON on stdout; warnings to stderr.
 """
-import argparse, json, os, sys, datetime, re
+import argparse, json, os, sys, datetime, re, getpass
+
+# Module-level seam: tests monkeypatch `vidushi_oa._cli.build_client`; the
+# `cmd_mail_*` handlers call it (no args) to obtain a wired `MailClient`.
+from vidushi_oa.mail.base import SOURCE_TAGS
+from vidushi_oa.mail.factory import build_client
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("VIDUSHI_DATA_DIR") or os.path.normpath(os.path.join(HERE, "..", "data"))
@@ -726,6 +731,148 @@ def cmd_snapshot(a):
     out({"snapshot": counts})
 
 
+_MAIL_PROVIDERS = ("gmail", "yahoo", "fastmail")
+
+
+def _mail_row(msg):
+    """Project a `Message` to the AXI mail row: id/source_tag/subject/sender/date."""
+    return {"id": msg.id, "source_tag": msg.source_tag, "subject": msg.subject,
+            "sender": msg.sender, "date": msg.date}
+
+
+def cmd_mail_search(a):
+    """Server-side search across the configured accounts, merged + de-duped by
+    `Message-ID` (by the client), field-projected, TOON-enveloped (`--json` -> a
+    bare array with no tally/next)."""
+    client = build_client()
+    msgs = client.search(a.query, accounts=getattr(a, "accounts", None))
+    rows = [_mail_row(m) for m in msgs]
+    if _FMT == "json":
+        out(rows)
+        return
+    tally = {}
+    for r in rows:
+        tag = r["source_tag"].strip("[]")   # "[GM]" -> "GM" (bracket-free TOON map key)
+        tally[tag] = tally.get(tag, 0) + 1
+    nxt = [f"mail-search {a.query} --accounts <name>", "mail-accounts"]
+    out({"count": len(rows), "tally": {"source_tag": tally}, "results": rows, "next": nxt})
+
+
+def cmd_mail_accounts(a):
+    """List the configured accounts + their adapter capabilities."""
+    rows = [{"account": name, "capabilities": sorted(caps)}
+            for name, caps in build_client().accounts()]
+    if _FMT == "json":
+        out(rows)
+    else:
+        out({"results": rows, "next": ["mail-search <query>"]})
+
+
+def cmd_mail_get(a):
+    """Fetch one message by `--account` + `--uid` via that account's adapter. An
+    unknown account or uid is a structured error + exit 1 (no traceback)."""
+    client = build_client()
+    try:
+        adapter = client._adapters[a.account]
+        msg = adapter.fetch_message(a.uid)
+    except KeyError:
+        out({"error": "message not found", "account": a.account, "uid": a.uid})
+        sys.exit(1)
+    row = _mail_row(msg)
+    if _FMT == "json":
+        out(row)
+    else:
+        out({"result": row, "next": [f"mail-search --accounts {a.account}"]})
+
+
+def cmd_mail_auth(a):
+    """Register a credential *reference* (provider/address/secret-ref) — never the
+    secret itself. Rejects an unsupported provider with a structured error.
+
+    Two modes: with ``--secret-ref`` the caller supplies the reference directly
+    (§S5). Without it, the raw secret is obtained WITHOUT touching argv — a hidden
+    prompt when interactive, else one line of stdin (the non-interactive/CI escape) —
+    stored through a ``SecretResolver`` under a DERIVED reference
+    ``vidushi-oa/{provider}:{address}``, and only that reference is persisted."""
+    from vidushi_oa.mail import accounts
+    from vidushi_oa.mail.secrets import SecretResolver, BACKEND_ENV
+    if a.provider not in _MAIL_PROVIDERS:
+        out({"error": "unsupported provider", "provider": a.provider,
+             "supported": list(_MAIL_PROVIDERS)})
+        sys.exit(1)
+    name = f"{a.provider}:{a.address}"
+
+    if a.secret_ref:
+        secret_ref = a.secret_ref
+        accounts.add_account(name, a.provider, a.address, secret_ref)
+    else:
+        if sys.stdin.isatty():
+            secret = getpass.getpass(f"Secret for {name}: ")
+        else:
+            secret = sys.stdin.readline().rstrip("\n")
+        secret_ref = f"vidushi-oa/{a.provider}:{a.address}"
+        resolver = SecretResolver()
+        primary = resolver._primary_backend()
+        resolver.store(secret_ref, secret)
+        # §S4 fallback warning: no vault was provisioned, so the secret landed in
+        # the OS keyring (or the last-resort file) rather than 1Password/Bitwarden.
+        if not os.environ.get(BACKEND_ENV) and primary.name not in ("1password", "bitwarden"):
+            sys.stderr.write(
+                f"vidushi-oa: no vault (1Password/Bitwarden) provisioned; "
+                f"stored the secret in the '{primary.name}' backend instead.\n")
+        accounts.add_account(name=name, provider=a.provider, address=a.address,
+                             secret_ref=secret_ref)
+
+    out({"status": "registered", "name": name, "provider": a.provider,
+         "address": a.address, "secret_ref": secret_ref,
+         "source_tag": SOURCE_TAGS[a.provider]})
+
+
+def cmd_doctor(a):
+    """Diagnostic health read (absorbs ``setup --check``): engine version, the active
+    STORE backend + its reachability, the active SECRET backend, and one row per
+    configured account reporting whether its reference resolves (plus a fix hint when
+    it does not). Never prints a secret value. Exits non-zero when the store is
+    unreachable or any account fails to resolve — after emitting the payload."""
+    from vidushi_oa.backends import get_backend
+    from vidushi_oa.mail import accounts
+    from vidushi_oa.mail.secrets import SecretResolver
+    from vidushi_oa import __version__
+
+    backend = get_backend()
+    store_ok, _msg = backend.check()
+
+    resolver = SecretResolver()
+    secret_backend = resolver._primary_backend().name
+
+    rows = []
+    all_resolve = True
+    for entry in accounts.load_accounts():
+        ref = entry.get("secret_ref", "")
+        try:
+            resolver.resolve(ref)
+            resolves = True
+        except LookupError:
+            resolves = False
+        if not resolves:
+            all_resolve = False
+        kind = "1password" if ref.startswith("op://") else secret_backend
+        hint = "" if resolves else (
+            f"secret_ref {ref} did not resolve; re-run "
+            f"`voa mail-auth --provider {entry.get('provider')} "
+            f"--address {entry.get('address')}` to store it")
+        rows.append({"account": entry.get("name"), "provider": entry.get("provider"),
+                     "kind": kind, "resolves": resolves, "hint": hint})
+
+    out({"engine": __version__,
+         "store_backend": {"name": backend.name, "ok": bool(store_ok)},
+         "secret_backend": secret_backend,
+         "accounts": rows})
+
+    if not store_ok or not all_resolve:
+        sys.exit(1)
+
+
 def main():
     p = argparse.ArgumentParser(description="Office-assistant JSONL store")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -799,6 +946,23 @@ def main():
     su = add_parser("setup"); su.add_argument("--check", action="store_true", dest="check")
     su.set_defaults(func=cmd_setup)
     av = add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
+
+    # embedded mail client (CR-OA-020 §S5) — reference-only auth + read verbs
+    msr = add_parser("mail-search"); msr.add_argument("query")
+    msr.add_argument("--accounts", type=lambda s: s.split(",") if s else None,
+                     help="comma-separated account names to search (default: all)")
+    read_json(msr); read_full(msr); msr.set_defaults(func=cmd_mail_search)
+    mac = add_parser("mail-accounts"); read_json(mac); mac.set_defaults(func=cmd_mail_accounts)
+    mge = add_parser("mail-get"); mge.add_argument("--account", required=True)
+    mge.add_argument("--uid", required=True); read_json(mge); mge.set_defaults(func=cmd_mail_get)
+    mau = add_parser("mail-auth"); mau.add_argument("--provider", required=True)
+    mau.add_argument("--address", required=True)
+    mau.add_argument("--secret-ref", dest="secret_ref", default=None,
+                     help="credential reference (op://…/keyring/file). Omit to be prompted "
+                          "(hidden) or to pipe the secret on stdin; it is stored under a "
+                          "derived reference and never accepted as a CLI arg.")
+    read_json(mau); mau.set_defaults(func=cmd_mail_auth)
+    dr = add_parser("doctor"); read_json(dr); dr.set_defaults(func=cmd_doctor)
 
     # Content-first no-arg path (S6/AXI #8): a truly-empty argv (just the
     # program name) prints live data — a one-line description + the executable

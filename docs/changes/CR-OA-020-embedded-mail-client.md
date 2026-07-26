@@ -1,6 +1,6 @@
 # CR-OA-020 — Embedded mail client in `voa` (unified Gmail/Fastmail/Yahoo + vault-first credentials)
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-26 on feature/CR-OA-020-embedded-mail-client)
 **Type:** feature
 **Priority:** High
 **Depends on:** 017
@@ -79,29 +79,29 @@ fake `op`/`bw` on `PATH`) — no live credentials in the suite. Live-account ver
 **manual** step, not a gate.
 
 ### §S1
-- [ ] A `MailClient` interface type exists with the four operations and a `capabilities()` set; a registered fake adapter is dispatched by account; `mail-search` across two fake accounts returns a single merged result set.
+- [x] A `MailClient` interface type exists with the four operations and a `capabilities()` set; a registered fake adapter is dispatched by account; `mail-search` across two fake accounts returns a single merged result set.
 
 ### §S2
-- [ ] Against a fake IMAP server, the **Gmail** adapter issues an `X-GM-RAW` search for a Gmail-syntax query and parses the matched UIDs' headers into the common message shape; the **Yahoo** adapter issues an RFC 3501 `SEARCH` (no `X-GM-*`), reconstructs a thread from `References`, and uses one reused connection (a test asserts no second connect).
+- [x] Against a fake IMAP server, the **Gmail** adapter issues an `X-GM-RAW` search for a Gmail-syntax query and parses the matched UIDs' headers into the common message shape; the **Yahoo** adapter issues an RFC 3501 `SEARCH` (no `X-GM-*`), reconstructs a thread from `References`, and uses one reused connection (a test asserts no second connect).
 
 ### §S3
-- [ ] Against a fake JMAP endpoint, the Fastmail adapter performs `session → Email/query → #-ref Email/get` in **one POST**, projects only requested properties, and surfaces the delivered-to alias; a Basic-plan (token-absent) config falls back to the IMAP adapter.
+- [x] Against a fake JMAP endpoint, the Fastmail adapter performs `session → Email/query → #-ref Email/get` in **one POST**, projects only requested properties, and surfaces the delivered-to alias; a Basic-plan (token-absent) config falls back to the IMAP adapter.
 
 ### §S4
-- [ ] Precedence: with a fake `op` present the resolver returns the vault value; with the vault CLI absent/unset it **falls back to keyring** (fake) and emits a warning; with both absent it uses the file backend. A test asserts the resolved secret value is **never** written to the store, config, snapshot, or captured logs (grep the artifacts for the sentinel secret → 0).
-- [ ] `mail-auth` persists only a **reference** (provider + address + `secret-ref`), never the secret; a test reads back the stored account and asserts no secret material is present.
+- [x] Precedence: with a fake `op` present the resolver returns the vault value; with the vault CLI absent/unset it **falls back to keyring** (fake) and emits a warning; with both absent it uses the file backend. A test asserts the resolved secret value is **never** written to the store, config, snapshot, or captured logs (grep the artifacts for the sentinel secret → 0).
+- [x] `mail-auth` persists only a **reference** (provider + address + `secret-ref`), never the secret; a test reads back the stored account and asserts no secret material is present.
 
 ### §S5
-- [ ] `mail-search` across fake FM+GM+YH accounts returns a TOON envelope with `results[N]` + `tally:` + `next[N]`; each row is `[FM]`/`[GM]`/`[YH]` source-tagged; two accounts returning the same `Message-ID` de-dup to one row; `--json` yields a bare array with no `tally`.
-- [ ] **Caller-existence:** `voa --help` lists `mail-search`/`mail-auth`/`mail-accounts`/`mail-get`/`doctor`, and each verb is wired via a non-test `set_defaults` caller (grep ≥1).
+- [x] `mail-search` across fake FM+GM+YH accounts returns a TOON envelope with `results[N]` + `tally:` + `next[N]`; each row is `[FM]`/`[GM]`/`[YH]` source-tagged; two accounts returning the same `Message-ID` de-dup to one row; `--json` yields a bare array with no `tally`.
+- [x] **Caller-existence:** `voa --help` lists `mail-search`/`mail-auth`/`mail-accounts`/`mail-get`/`doctor`, and each verb is wired via a non-test `set_defaults` caller (grep ≥1).
 
 ### §S6
-- [ ] Given an access token, the XOAUTH2 adapter builds the correct base64 `user=…\x01auth=Bearer …\x01\x01` SASL string and authenticates against the fake IMAP server via `AUTHENTICATE XOAUTH2`; a unit test asserts the encoded string.
+- [x] Given an access token, the XOAUTH2 adapter builds the correct base64 `user=…\x01auth=Bearer …\x01\x01` SASL string and authenticates against the fake IMAP server via `AUTHENTICATE XOAUTH2`; a unit test asserts the encoded string.
 
 ### §S7
-- [ ] `voa mail-auth` registers a provider credential storing only a **reference** (never the secret in argv/store/config/logs), emits an AXI TOON status object, and honours `--json`; its **non-interactive** mode (secret via stdin) registers the same reference headlessly — a test drives the stdin path and greps every artifact for the sentinel secret → 0 matches.
-- [ ] With no vault provisioned, `mail-auth` **falls back to keyring** with a warning (fake vault CLI absent) — not a crash.
-- [ ] `voa doctor` emits a TOON envelope reporting engine + active store backend + active secret backend + each configured provider (credential kind + whether the reference resolves), flags a missing/broken config with a fix hint, exits non-zero when a checked item fails, `--json` yields clean JSON, and it **prints no secret value** (a test seeds a sentinel + greps `doctor` output → 0 matches).
+- [x] `voa mail-auth` registers a provider credential storing only a **reference** (never the secret in argv/store/config/logs), emits an AXI TOON status object, and honours `--json`; its **non-interactive** mode (secret via stdin) registers the same reference headlessly — a test drives the stdin path and greps every artifact for the sentinel secret → 0 matches.
+- [x] With no vault provisioned, `mail-auth` **falls back to keyring** with a warning (fake vault CLI absent) — not a crash.
+- [x] `voa doctor` emits a TOON envelope reporting engine + active store backend + active secret backend + each configured provider (credential kind + whether the reference resolves), flags a missing/broken config with a fix hint, exits non-zero when a checked item fails, `--json` yields clean JSON, and it **prints no secret value** (a test seeds a sentinel + greps `doctor` output → 0 matches).
 
 ## Estimated size
 L–XL — a mail subsystem (unified interface + three provider adapters over two protocols), a four-backend
@@ -119,3 +119,23 @@ stable; the XOAUTH2 path hedges Google's OAuth-only signalling.
 Sending mail (read-mostly; SMTP / JMAP `EmailSubmission` deferred); a live-sync/IDLE daemon (poll-on-demand
 only); the skill revision that repoints "Mailboxes & search" to `voa mail-*` (CR-OA-021); calendar/contacts
 over JMAP; a non-claude.ai Gmail *connector* (embedding replaces the connector entirely).
+
+## Deferred follow-ups (post-VERIFY, non-blocking)
+Surfaced by the CR-OA-020 VERIFY pass; left out of scope so they don't gate the merge. None is a
+correctness defect on the shipped paths (the one BLOCKING defect — a malformed Fastmail factory config
+raising `KeyError` — was fixed under this CR, with new `tests/test_cr_oa_020_factory.py` coverage of the
+real `_default_adapter_factory`/`build_client` path).
+
+- **Fastmail per-account auth mode.** The account registry (`accounts.py`) records only
+  `{name,provider,address,secret_ref}`, so `_default_adapter_factory` always builds the **JMAP** adapter for
+  `fastmail` (Fastmail's primary path). The §S3 Basic-plan **IMAP fallback** (`fastmail_adapter` with an
+  `app_password`) is verified in isolation but not reachable end-to-end until an account `auth_mode`
+  (jmap-token vs app-password) field is added to `accounts.py` + `mail-auth` (+ surfaced in `doctor`).
+- **`doctor` per-ref credential kind.** `doctor` reports `kind` from the *currently active* primary secret
+  backend, not the backend that actually stored each account's `secret_ref` — so a ref stored via keyring
+  before the primary changed can be mislabelled. Ask the resolver per-ref instead of prefix-sniffing.
+- **De-dup the `op://` special-case.** The `op://`→1Password routing lives in both `SecretResolver` and
+  `doctor`'s `kind` sniff; fold it behind a single resolver query.
+- **`GmailXoauth2Adapter` placeholder password.** The empty-string `password=""` passed to the `ImapAdapter`
+  superclass (never read — `_conn()` is fully overridden to use `AUTHENTICATE XOAUTH2`) reads as a smell; a
+  `None` sentinel + a one-line comment would be clearer.
