@@ -15,6 +15,14 @@ The user's CI/CD release model (their standard across "almost every project"), f
   **gate is "only from master"** (the branch condition) — master only ever receives release-finish merges,
   so the git-flow discipline IS the human decision. **Do NOT add a manual-approval reviewer gate** to the
   production publish; that contradicts the model.
+- **Release tags are plain SemVer — NO `v` prefix** (`1.2.3`, not `v1.2.3`), per the git-workflow rule
+  (user choice, 2026-07-26). Three things must agree: the workflow triggers on
+  `on.push.tags: "[0-9]+.[0-9]+.[0-9]+*"`; **git-flow must be set to match** —
+  `git config gitflow.prefix.versiontag ""` (its default is `v`, and `.git/config` is **untracked**, so
+  set this per-clone / at `git flow init`); and the skill already mandates no-`v`. Then
+  `git flow release finish 1.2.3` tags `1.2.3` and the tag push fires the PyPI publish. **A `v`-prefixed
+  tag would silently NOT trigger publish.** (Publish is gated `if: refs/tags/*` — it relies on the branch
+  discipline that only release-finish creates tags; no per-tag master-reachability check.)
 - **Test-publish to TestPyPI on `release/*` branch push** — packaging + deploy are validated there during
   `git flow release`, before the production release from master.
 - `test` job (build wheel + pytest + release gate) runs on every push.
