@@ -103,7 +103,7 @@ are updated.
 ### §S4
 - [ ] `snapshot` then `import` round-trips on SQLite (row counts + `validate [0]:` preserved).
 - [ ] **Field-level fidelity:** a cross-backend move (Mongo → `snapshot` → SQLite `import`) yields records that are **deep-equal** to the source per `id` — including nested `actions[]` (with `opened`/`resolved`/log entries), `documents[]`, `source`, and every FK/lifecycle field — asserted by a test that deep-compares the full record set, not just counts.
-- [ ] **Live cutover verified:** running the migration against a copy of the live `vidushi_oa` Mongo store reproduces every store's row count and a clean `validate` on the SQLite side, and the old Mongo DB is **left intact** (rollback available via re-`import` under `VIDUSHI_BACKEND=mongo`); the CR does not drop live data.
+- [ ] **Migration validated against the live data (read-only):** a `snapshot` of the **live** `vidushi_oa` Mongo store (read-only) imported into a throwaway SQLite db reproduces every store's row count and a clean `validate` on the SQLite side — proving the migration works on the real data shape **without touching the live store**. (Per the migrate-first decision 2026-07-26, the *actual production cutover* — pointing the default SQLite db at the migrated data — is a **release-time operational step**, not performed inside this CR; the live Mongo DB stays intact, rollback via re-`import` under `VIDUSHI_BACKEND=mongo`.)
 
 ### §S5
 - [ ] A top-level `LICENSE` file contains the GPL-3.0 text; the **built wheel's** metadata declares `License: GPL-3.0-or-later` (verified by inspecting the wheel's METADATA, not by reading `pyproject.toml`).
