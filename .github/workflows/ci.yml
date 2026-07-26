@@ -36,7 +36,8 @@ jobs:
         run: python -m pytest
 
       - name: Model-B release gate
-        run: python3 ~/.claude/scripts/skill-release-gate.py --project-dir .
+        # Vendored copy of the generic skill-release gate so remote runners (no ~/.claude) can run it.
+        run: python3 scripts/skill-release-gate.py --project-dir .
 
   # Validates packaging/deploy during a git-flow release (the release/* branch also hosts the
   # no-mistakes + AXI-qualification steps, run by the orchestrator).
