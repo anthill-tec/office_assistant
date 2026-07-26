@@ -63,13 +63,18 @@ Add a top-level `LICENSE` (GPL-3.0-or-later text) and set `license`/classifier m
 `pyproject.toml` so the built wheel declares it.
 
 ### §S6 `uv tool` / PyPI publish path + CI/CD
-Make `pyproject.toml` PyPI-ready (metadata, classifiers, long-description) and document `uv tool install
-vidushi-oa`. Add a GitHub Actions workflow that builds + runs the suite + the release gate on push, and
-publishes the wheel to **PyPI on a version tag**. This CR **authors and parse-validates** the workflow +
-lands the packaging; the workflow is **first exercised at release time on the release branch** — during
-`git flow release` the repo is flipped public, the public license is confirmed, and the remote push runs
-the CI packaging/deploy for real (user-directed 2026-07-25). No live publish or public-flip happens
-inside this CR.
+Make `pyproject.toml` PyPI-ready (metadata, license, long-description) and document `uv tool install
+vidushi-oa`. Add a GitHub Actions workflow with a **two-tier publish strategy matching git-flow**
+(user-directed 2026-07-26):
+- a `test` job builds the wheel + runs the pytest suite + the release gate on **every push**;
+- a **test-publish** job publishes to **TestPyPI** when a **`release/*`** branch is pushed — this is where
+  packaging + deploy are validated during `git flow release`, before any production publish;
+- a **production** job publishes to **PyPI** only on a **master version tag** (`refs/tags/…`), behind a
+  **manual-approval GitHub Environment** (`pypi`, required reviewers) + OIDC trusted publishing — never an
+  automatic publish.
+This CR **authors and parse-validates** the workflow + lands the packaging; the workflow is **first
+exercised at release time on the release branch** (the repo flip-to-public + the TestPyPI/PyPI credential
+setup are release-time ops, not inside this CR). No live publish happens inside this CR.
 
 ### §S7 Skill + docs wiring
 Repoint the engine-install instructions in `skills/vidushi-oa/SKILL.md`, `README.md`, and
@@ -102,7 +107,7 @@ are updated.
 
 ### §S6
 - [ ] `uv tool install` from the built wheel yields an on-PATH `voa` that runs `voa --help` (exit 0) in a clean environment; `README.md` documents the command.
-- [ ] A GitHub Actions workflow file exists that, on push, builds the wheel + runs the pytest suite + the release gate, and on a version tag publishes to PyPI; a lint/parse of the workflow confirms the build/test/gate steps and the tag-gated publish job.
+- [ ] A GitHub Actions workflow file exists whose parsed structure confirms: a `test` job (on push) that builds the wheel + runs pytest + the release gate; a **test-publish** job gated to **`release/*`** branches targeting **TestPyPI**; and a **production** publish job gated to a **version tag** targeting **PyPI**, behind a manual-approval Environment (`pypi`) + `id-token: write` (OIDC) — no ungated auto-publish.
 
 ### §S7
 - [ ] `skills/vidushi-oa/SKILL.md`, `README.md`, and `scripts/README.md` name `uv tool install vidushi-oa` as the engine install (grep), and state SQLite as the default backend with `[mongo]` as the opt-in; `agentskills validate skills/vidushi-oa` still exits 0.
