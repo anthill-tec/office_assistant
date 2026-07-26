@@ -9,9 +9,8 @@ The default `adapter_factory` resolves the secret only when it actually builds a
 concrete adapter (and even then, per-account, when `build_client` runs).
 """
 from vidushi_oa.mail.accounts import load_accounts
+from vidushi_oa.mail.base import SOURCE_TAGS
 from vidushi_oa.mail.client import MailClient
-
-_SOURCE_TAGS = {"gmail": "[GM]", "yahoo": "[YH]", "fastmail": "[FM]"}
 
 
 def _default_adapter_factory(provider, account, address, secret_ref, resolver):
@@ -27,14 +26,18 @@ def _default_adapter_factory(provider, account, address, secret_ref, resolver):
     resolver = resolver or SecretResolver()
     secret = resolver.resolve(secret_ref)
     if provider == "gmail":
-        return GmailImapAdapter(account, _SOURCE_TAGS["gmail"],
+        return GmailImapAdapter(account, SOURCE_TAGS["gmail"],
                                 "imap.gmail.com", address, secret)
     if provider == "yahoo":
-        return YahooImapAdapter(account, _SOURCE_TAGS["yahoo"],
+        return YahooImapAdapter(account, SOURCE_TAGS["yahoo"],
                                 "imap.mail.yahoo.com", address, secret)
     if provider == "fastmail":
-        return fastmail_adapter(account, _SOURCE_TAGS["fastmail"],
-                                {"address": address, "token": secret})
+        # Fastmail's primary path is JMAP (DN-mail-access): hand fastmail_adapter
+        # the JMAP config so it builds a JmapAdapter with .token == secret.
+        # TODO: per-account Basic-plan IMAP fallback (app-password) needs a future
+        # account auth-mode field to select the IMAP path instead of JMAP.
+        return fastmail_adapter(account, SOURCE_TAGS["fastmail"],
+                                {"jmap_token": secret, "username": address})
     raise ValueError(f"unsupported provider: {provider!r}")
 
 
@@ -57,6 +60,6 @@ def build_client(config_path=None, resolver=None, adapter_factory=None) -> MailC
             secret_ref=entry["secret_ref"],
             resolver=resolver,
         )
-        adapter.source_tag = _SOURCE_TAGS.get(provider, adapter.source_tag)
+        adapter.source_tag = SOURCE_TAGS.get(provider, adapter.source_tag)
         client.register(entry["name"], adapter)
     return client

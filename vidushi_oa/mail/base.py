@@ -8,6 +8,9 @@ The `MailClient` in `client.py` dispatches across registered adapters, merges th
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+# Canonical provider -> source-tag map, shared by the factory and the CLI.
+SOURCE_TAGS = {"gmail": "[GM]", "yahoo": "[YH]", "fastmail": "[FM]"}
+
 
 @dataclass
 class Message:
@@ -29,6 +32,9 @@ class Message:
     thread_id: str | None = None
     uid: str | None = None
     folder: str | None = None
+    references: str = ""
+    in_reply_to: str = ""
+    delivered_to: str = ""
 
 
 class MailAdapter(ABC):

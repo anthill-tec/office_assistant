@@ -34,6 +34,7 @@ import argparse, json, os, sys, datetime, re, getpass
 
 # Module-level seam: tests monkeypatch `vidushi_oa._cli.build_client`; the
 # `cmd_mail_*` handlers call it (no args) to obtain a wired `MailClient`.
+from vidushi_oa.mail.base import SOURCE_TAGS
 from vidushi_oa.mail.factory import build_client
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -731,7 +732,6 @@ def cmd_snapshot(a):
 
 
 _MAIL_PROVIDERS = ("gmail", "yahoo", "fastmail")
-_MAIL_TAGS = {"gmail": "[GM]", "yahoo": "[YH]", "fastmail": "[FM]"}
 
 
 def _mail_row(msg):
@@ -752,7 +752,7 @@ def cmd_mail_search(a):
         return
     tally = {}
     for r in rows:
-        tag = r["source_tag"]
+        tag = r["source_tag"].strip("[]")   # "[GM]" -> "GM" (bracket-free TOON map key)
         tally[tag] = tally.get(tag, 0) + 1
     nxt = [f"mail-search {a.query} --accounts <name>", "mail-accounts"]
     out({"count": len(rows), "tally": {"source_tag": tally}, "results": rows, "next": nxt})
@@ -825,7 +825,7 @@ def cmd_mail_auth(a):
 
     out({"status": "registered", "name": name, "provider": a.provider,
          "address": a.address, "secret_ref": secret_ref,
-         "source_tag": _MAIL_TAGS[a.provider]})
+         "source_tag": SOURCE_TAGS[a.provider]})
 
 
 def cmd_doctor(a):
