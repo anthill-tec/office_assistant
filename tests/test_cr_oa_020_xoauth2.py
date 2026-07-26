@@ -14,8 +14,12 @@
     stdlib-`urllib` transport is the (untested-here) default.
   - `GmailXoauth2Adapter(GmailImapAdapter)` — takes an `access_token` instead
     of a `password`; `_conn()` authenticates via
-    `conn.authenticate("XOAUTH2", <callable>)` (NOT `.login()`), where the
-    callable returns `build_xoauth2_string(user, access_token)`, then selects
+    `conn.authenticate("XOAUTH2", <callable>)` (NOT `.login()`). Because
+    `imaplib.IMAP4.authenticate()` base64-encodes whatever the callable
+    returns before sending it over the wire, the callable must return the
+    RAW (decoded) SASL bytes — `base64.b64decode(build_xoauth2_string(user,
+    access_token))` — NOT the already-base64 `build_xoauth2_string(...)`
+    value itself (that would make imaplib double-encode it). Then selects
     `INBOX`. Cached/reused exactly like the base `ImapAdapter`.
 
 No real IMAP/network — `FakeXoauthIMAP` records `.authenticate(mechanism,
@@ -149,11 +153,19 @@ class GmailXoauth2AdapterAuthenticatesTest(unittest.TestCase):
         self.assertEqual(mechanism, "XOAUTH2")
 
     def test_authenticate_callback_returns_the_correct_sasl_bytes(self):
+        # imaplib.IMAP4.authenticate() base64-encodes whatever the authobject
+        # callback returns before sending it to the server. The callback must
+        # therefore hand back the RAW (decoded) SASL bytes, NOT the already
+        # base64-encoded `build_xoauth2_string(...)` value — returning the
+        # base64 form here would make imaplib double-encode it, which a real
+        # Gmail IMAP server would reject.
         self.adapter.list_folders()
 
-        expected = build_xoauth2_string("me@workspace.example", "access-tok-1")
+        expected_raw = base64.b64decode(
+            build_xoauth2_string("me@workspace.example", "access-tok-1")
+        )
         _, returned_bytes = self.fake.authenticate_calls[0]
-        self.assertEqual(returned_bytes, expected)
+        self.assertEqual(returned_bytes, expected_raw)
 
     def test_login_is_never_called_on_the_xoauth2_path(self):
         self.adapter.list_folders()
