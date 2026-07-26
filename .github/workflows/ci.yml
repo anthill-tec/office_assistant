@@ -5,7 +5,7 @@ on:
     branches:
       - "**"
       - "release/**"
-      - "master"
+      - "main"
       - "develop"
 
 jobs:
@@ -88,14 +88,14 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
 
-  # AUTOMATED production release. The DEPLOY TRIGGER is a push to master (git-flow release-finish
-  # merges release/* → master). The matching SemVer tag is a SAFETY CHECK, not the trigger — the job
-  # refuses to publish unless master HEAD carries a tag equal to [project].version. OIDC trusted
-  # publishing (`pypi` environment). No manual-reviewer gate — master is the gate.
+  # AUTOMATED production release. The DEPLOY TRIGGER is a push to main (git-flow release-finish
+  # merges release/* → main). The matching SemVer tag is a SAFETY CHECK, not the trigger — the job
+  # refuses to publish unless main HEAD carries a tag equal to [project].version. OIDC trusted
+  # publishing (`pypi` environment). No manual-reviewer gate — main is the gate.
   publish:
     name: Publish to PyPI
     needs: test
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -115,12 +115,12 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Release safety check — master HEAD must carry a SemVer tag equal to [project].version
+      - name: Release safety check — main HEAD must carry a SemVer tag equal to [project].version
         run: |
           VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           TAG=$(git tag --points-at HEAD | grep -Ex '[0-9]+\.[0-9]+\.[0-9]+.*' | head -1 || true)
           if [ -z "$TAG" ]; then
-            echo "::error::master HEAD carries no SemVer tag — not a release-finish commit; refusing to publish"; exit 1
+            echo "::error::main HEAD carries no SemVer tag — not a release-finish commit; refusing to publish"; exit 1
           fi
           if [ "$TAG" != "$VER" ]; then
             echo "::error::tag '$TAG' != pyproject [project].version '$VER' — refusing a mismatched publish"; exit 1
