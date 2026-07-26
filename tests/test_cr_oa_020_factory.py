@@ -103,3 +103,22 @@ def test_build_client_default_factory_wires_all_three_providers_without_keyerror
     assert client._adapters["gmail_main"].source_tag == "[GM]"
     assert client._adapters["yahoo_main"].source_tag == "[YH]"
     assert client._adapters["fastmail_main"].source_tag == "[FM]"
+
+
+def test_add_account_upserts_by_name_on_secret_rotation(tmp_path, monkeypatch):
+    """Re-running `voa mail-auth` for an existing account name (secret rotation)
+    replaces the entry in place — exactly one row, carrying the latest
+    `secret_ref`, so `voa doctor` never shows a duplicate/stale account."""
+    from vidushi_oa.mail import accounts
+
+    config_path = tmp_path / "accounts.json"
+    monkeypatch.setenv("VIDUSHI_MAIL_CONFIG", str(config_path))
+
+    accounts.add_account("gmail_main", "gmail", "me@gmail.com", "ref-old")
+    accounts.add_account("yahoo_main", "yahoo", "me@yahoo.com", "ref-y")
+    accounts.add_account("gmail_main", "gmail", "me@gmail.com", "ref-new")
+
+    rows = accounts.load_accounts(str(config_path))
+    assert [r["name"] for r in rows] == ["gmail_main", "yahoo_main"]
+    gmail = next(r for r in rows if r["name"] == "gmail_main")
+    assert gmail["secret_ref"] == "ref-new"

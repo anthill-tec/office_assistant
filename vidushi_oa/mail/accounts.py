@@ -38,9 +38,11 @@ def load_accounts(path=None) -> list[dict]:
 
 
 def add_account(name, provider, address, secret_ref, path=None) -> dict:
-    """Append a reference-only account entry and persist it (file mode `0600`).
+    """Upsert a reference-only account entry by name and persist it (mode `0600`).
 
-    Returns the stored entry. Existing entries are preserved in order.
+    Returns the stored entry. An existing entry with the same `name` is replaced
+    in place (order preserved) so re-running `voa mail-auth` to rotate a secret
+    stays idempotent; otherwise the entry is appended.
     """
     target = _config_path(path)
     parent = os.path.dirname(target)
@@ -54,7 +56,12 @@ def add_account(name, provider, address, secret_ref, path=None) -> dict:
         "secret_ref": secret_ref,
     }
     accounts = load_accounts(target)
-    accounts.append(entry)
+    for i, existing in enumerate(accounts):
+        if existing.get("name") == name:
+            accounts[i] = entry
+            break
+    else:
+        accounts.append(entry)
 
     # Create the file owner-only before writing any content.
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
