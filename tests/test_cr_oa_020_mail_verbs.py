@@ -52,11 +52,13 @@ Design pinned here for GREEN (see also the final RED report):
 
 No live mail/creds — everything below uses in-process fakes.
 """
+import imaplib
 import json
 import os
 import stat
 import subprocess
 import sys
+import urllib.error
 from argparse import Namespace
 
 import pytest
@@ -300,6 +302,29 @@ def test_mail_search_one_bad_account_still_returns_the_healthy_account_results(m
     assert "voa mail-auth" in failed["yahoo_main"]
 
 
+def test_mail_search_json_partial_failure_warns_on_stderr_keeps_bare_array(monkeypatch, capsys):
+    """Under `--json` (AXI decision-B) stdout stays a bare array of the healthy rows,
+    but a partial fan-out failure must still be visible to machine consumers: the
+    failed account(s) + reason are written to STDERR, and the verb exits 0."""
+    gmail = FakeAdapter("gmail_main", "[GM]", {"raw_query"}, messages=[GM_ONE])
+    yahoo = FailingAdapter("yahoo_main", "[YH]", {"legacy_only"},
+                           LookupError("token refresh failed; re-run voa mail-auth"))
+    client = MailClient({"gmail_main": gmail, "yahoo_main": yahoo})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    cli.cmd_mail_search(Namespace(query="invoice", accounts=None))
+
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    rows = json.loads(captured.out.strip())
+    assert isinstance(rows, list), f"--json stdout must stay a bare array, got {captured.out!r}"
+    assert [r["id"] for r in rows] == [GM_ONE.id]
+    assert "failed_accounts" not in captured.out, "decision-B: no envelope keys on stdout"
+    assert "yahoo_main" in captured.err
+    assert "voa mail-auth" in captured.err
+
+
 def test_mail_search_all_accounts_failing_is_a_structured_error_exit_1(monkeypatch, capsys):
     """Total wipeout — every selected account fails — is a structured error + exit 1
     (no traceback), never an empty-but-successful-looking result set."""
@@ -437,6 +462,29 @@ def test_mail_get_jmap_not_implemented_is_a_structured_error(monkeypatch, capsys
 
     with pytest.raises(SystemExit) as exc_info:
         cli.cmd_mail_get(Namespace(account="fastmail_main", uid="1"))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    assert "error" in json.loads(captured.out.strip())
+
+
+@pytest.mark.parametrize("error", [
+    imaplib.IMAP4.error("SELECT failed"),
+    OSError("host unreachable"),
+    urllib.error.URLError("network down"),
+])
+def test_mail_get_live_fetch_failure_is_a_structured_error_not_a_traceback(monkeypatch, capsys, error):
+    """A live fetch/connect failure — down host, DNS failure, bad app-password, or a
+    network-down XOAUTH2 refresh (`imaplib.IMAP4.error` / `OSError` /
+    `urllib.error.URLError`) — must render structurally + exit 1, never a traceback,
+    symmetric with `cmd_mail_search`."""
+    adapter = FailingAdapter("gmail_main", "[GM]", {"raw_query"}, error)
+    monkeypatch.setattr(cli, "build_client", lambda **kw: MailClient({"gmail_main": adapter}))
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_get(Namespace(account="gmail_main", uid="1"))
 
     assert exc_info.value.code != 0
     captured = capsys.readouterr()

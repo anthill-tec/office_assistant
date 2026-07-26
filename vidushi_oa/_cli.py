@@ -30,7 +30,7 @@ Tracking-state framework (see schema.md "Tracking state framework"):
 
 Fields support dotted paths (e.g. source.email_id). Output is compact JSON on stdout; warnings to stderr.
 """
-import argparse, json, os, sys, datetime, re, getpass
+import argparse, json, os, sys, datetime, re, getpass, imaplib, urllib.error
 
 # Module-level seam: tests monkeypatch `vidushi_oa._cli.build_client`; the
 # `cmd_mail_*` handlers call it (no args) to obtain a wired `MailClient`.
@@ -768,6 +768,11 @@ def cmd_mail_search(a):
         sys.exit(1)
     rows = [_mail_row(m) for m in msgs]
     if _FMT == "json":
+        if failures:
+            detail = ", ".join(
+                f"{f['account']} ({f['error']})" for f in failures)
+            sys.stderr.write(
+                f"warn: mail-search: {len(failures)} account(s) failed: {detail}\n")
         out(rows)
         return
     tally = {}
@@ -797,7 +802,10 @@ def cmd_mail_get(a):
     unknown account or uid — or an adapter that cannot fetch by uid (JMAP) — is a
     structured error + exit 1 (no traceback), across every real adapter contract:
     `ImapAdapter` returns None for an unknown uid, `JmapAdapter` raises
-    `NotImplementedError`."""
+    `NotImplementedError`. A live fetch/connect failure (down host, DNS failure,
+    bad app-password, or a network-down XOAUTH2 refresh — `imaplib.IMAP4.error` /
+    `OSError` / `urllib.error.URLError`) is rendered structurally too, never as a
+    raw traceback."""
     client = _mail_client_or_exit()
     adapter = client._adapters.get(a.account)
     if adapter is None:
@@ -813,6 +821,10 @@ def cmd_mail_get(a):
         sys.exit(1)
     except LookupError as e:
         out({"error": str(e), "account": a.account, "uid": a.uid})
+        sys.exit(1)
+    except (imaplib.IMAP4.error, OSError, urllib.error.URLError) as e:
+        out({"error": str(e) or e.__class__.__name__,
+             "account": a.account, "uid": a.uid})
         sys.exit(1)
     if msg is None:
         out({"error": "message not found", "account": a.account, "uid": a.uid})

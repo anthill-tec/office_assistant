@@ -294,6 +294,20 @@ class RefreshAccessTokenTest(unittest.TestCase):
                 transport=transport,
             )
 
+    def test_transport_urlerror_network_down_is_re_raised_as_lookuperror(self):
+        import urllib.error
+
+        def transport(method, url, headers, body):
+            raise urllib.error.URLError("network down")
+
+        with self.assertRaises(LookupError):
+            refresh_access_token(
+                client_id="client-123",
+                client_secret="secret-abc",
+                refresh_token="refresh-xyz",
+                transport=transport,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
