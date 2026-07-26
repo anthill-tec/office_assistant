@@ -15,14 +15,14 @@ Read them for non-obvious project context (CI/release convention, packaging foll
 
 This project is **Vidushi OA** — a **functional personal office assistant, not just code** — an evolving **set of role-based capabilities** (Claude *skills* + an *agent*, defined under "Vidushi OA toolkit — roles" below) that read the user's mail and run the post-purchase / personal-admin lifecycle, operating over the **shared data + document store kept in this repo**.
 
-Think of it as *a system of roles plus its persistent memory*: the one executable is the **`voa`** CLI (the installable `vidushi-oa` package; the in-repo `scripts/store.py` remains a path-compat shim), backed by a local **MongoDB**; the actual behaviour lives in the roles. **The roster of roles is the primary artifact of this project**, and this repo is the durable state they all share. There is no long-running server; a `pytest` suite guards the CLI. (The repo/folder name stays `office_assistant`; the *product* is Vidushi OA.)
+Think of it as *a system of roles plus its persistent memory*: the one executable is the **`voa`** CLI (the installable `vidushi-oa` package; the in-repo `scripts/store.py` remains a path-compat shim), backed by a **local store — SQLite by default (zero-config, no server), MongoDB opt-in** (CR-OA-018); the actual behaviour lives in the roles. **The roster of roles is the primary artifact of this project**, and this repo is the durable state they all share. There is no long-running server; a `pytest` suite guards the CLI. (The repo/folder name stays `office_assistant`; the *product* is Vidushi OA.)
 
 ## Cardinal rules
 
-1. **Access the stores ONLY through the `voa` CLI** (the in-repo `scripts/store.py` is a path-compat shim to it). The data lives in **MongoDB** (db `vidushi_oa`); `data/*.jsonl` are `snapshot` outputs (chezmoi-versioned), not the source of truth. Query the script for exactly the rows/fields you need (token-frugal). Going around it — hand-editing the JSONL snapshots or hitting Mongo directly — bypasses id-generation, dedupe, the `$jsonSchema` validators, and the state-machine transitions.
+1. **Access the stores ONLY through the `voa` CLI** (the in-repo `scripts/store.py` is a path-compat shim to it). The store is **SQLite by default** (`$XDG_DATA_HOME/vidushi-oa/oa.db`; MongoDB opt-in via `VIDUSHI_BACKEND=mongo`); `data/*.jsonl` are `snapshot` outputs (chezmoi-versioned), not the source of truth. Query the CLI for exactly the rows/fields you need (token-frugal). Going around it — hand-editing the JSONL snapshots or hitting the DB directly — bypasses id-generation, dedupe, the schema validators, and the state-machine transitions.
 2. **Use the purpose-built skills for their tasks — don't improvise.** When a request matches a skill's domain (below), invoke that skill *first* and follow its steps; reach for the browser/web only as a skill's own documented fallback. (This is a standing user rule; improvising has caused real misses.)
 
-## Commands (the `voa` CLI — `pymongo`, MongoDB-backed)
+## Commands (the `voa` CLI — pluggable backend: SQLite default / Mongo opt-in)
 
 Types: `contacts` · `invoices` · `warranties` · `cases` · `products` · `subscriptions` · `insurance`. Full field schemas in `data/schema.md`.
 
@@ -47,18 +47,18 @@ voa attention [<type>]               # rows with an OPEN action or a status need
 voa warranty-sweep [--dry-run]       # expire past-term warranties (+ open renew-or-extend)
 voa due-sweep [--dry-run]            # flag subscriptions/insurance inside the renewal window
 
-# admin — Mongo provisioning, schema validation, migration + versioning
-voa setup [--check]                  # verify/provision local MongoDB, then init (--check diagnoses only)
-voa init                             # create collections + unique id index + $jsonSchema validators
+# admin — active-backend provisioning, schema validation, migration + versioning
+voa setup [--check]                  # provision the active backend (SQLite default / Mongo), then init (--check diagnoses only)
+voa init                             # create tables/collections + unique id index + schema validators
 voa validate [<type>]                # list docs that violate the validator ([] = clean)
-voa import [<type>]                  # data/*.jsonl -> Mongo (idempotent upsert by id)
-voa snapshot [<type>]                # Mongo -> data/*.jsonl (chezmoi-versioned)
+voa import [<type>]                  # data/*.jsonl -> active backend (idempotent upsert by id)
+voa snapshot [<type>]                # active backend -> data/*.jsonl (chezmoi-versioned; the migration bridge)
 ```
 
-> The console command is **`voa`** (from `pip install vidushi-oa`, or in-repo `python -m venv .venv && .venv/bin/pip install -e .`). The
+> The console command is **`voa`** (from `uv tool install vidushi-oa`, or in-repo `uv tool install --editable .`). The
 > in-repo **`scripts/store.py`** stays a thin path-compat shim to the same CLI (`python3 scripts/store.py <verb>`).
 
-**Connection:** MongoDB on `127.0.0.1:27017`, db `vidushi_oa` — overridable via `VIDUSHI_MONGO_URI` / `VIDUSHI_MONGO_DB` (and `VIDUSHI_DATA_DIR` for the snapshot/import directory, used by the test suite for isolation). A fresh `pip install vidushi-oa` → `voa setup` provisions/verifies this local MongoDB.
+**Backend selection (`VIDUSHI_BACKEND`):** **`sqlite`** (default) at `$XDG_DATA_HOME/vidushi-oa/oa.db` (override `VIDUSHI_SQLITE_PATH`); **`mongo`** (opt-in — needs the `[mongo]` extra) on `127.0.0.1:27017` db `vidushi_oa`, via `VIDUSHI_MONGO_URI` / `VIDUSHI_MONGO_DB`. `VIDUSHI_DATA_DIR` sets the snapshot/import directory (the test suite uses it for isolation). A fresh `uv tool install vidushi-oa` → `voa setup` provisions the active backend. The CLI builds a **neutral query model** each backend compiles to its own native query (no dialect-translation layer).
 
 **Ambient-context hook (AXI #7):** `.claude/settings.json` registers a Claude Code **SessionStart** hook that runs the bare CLI (via the `scripts/store.py` shim, no verb — read-only) so the **attention** worklist (rows with an OPEN action or a status needing attention) is surfaced automatically at the start of every session, before the agent acts. The hook prefers the repo `.venv/bin/python` when it exists (the editable in-repo install the system `python3` can't see on PEP 668 Pythons) and otherwise falls back to system `python3` — so a missing `.venv` no longer breaks session start.
 
@@ -66,7 +66,7 @@ IDs are auto-generated from anchor fields (`ven_<vendor>`, `doc_<vendor>_<number
 
 ## Architecture (the big picture)
 
-**Seven MongoDB collections** (mirrored to `data/*.jsonl` by `snapshot`) **form a small relational model**, joined by foreign keys and resolved with `voa … --expand`:
+**Seven stores** (SQLite tables by default, or Mongo collections; mirrored to `data/*.jsonl` by `snapshot`) **form a small relational model**, joined by foreign keys and resolved with `voa … --expand`:
 
 ```
 invoice (proof of purchase)  ──invoice_id──┐
@@ -108,7 +108,7 @@ read-only **deep-sweep mode**). Load it for any mail/admin task; its operational
 | `inbox-analyst` (agent) | "Deep-sweep mode (read-only)" |
 
 **Replacement path (a one-time swap; pruning the legacy files is the user's, outside this repo):**
-1. **Install** the bundle (see `README.md` / `scripts/README.md` install section): `npx skills add ./skills/vidushi-oa` for the skill + the engine (`pip install -e .` in-repo, then `voa setup`).
+1. **Install** the bundle (see `README.md` / `scripts/README.md` install section): `npx skills add ./skills/vidushi-oa` for the skill + the engine (`uv tool install vidushi-oa`, or `--editable .` in-repo, then `voa setup`).
 2. **Verify** it: `agentskills validate skills/vidushi-oa` exits 0 (or run the release gate `~/.claude/scripts/skill-release-gate.py`).
 3. **Remove** the seven legacy `~/.claude/skills/` skills + the `inbox-analyst` agent — the unified skill now covers them all.
 
