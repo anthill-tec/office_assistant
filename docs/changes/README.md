@@ -129,6 +129,27 @@ mail. Design + primary-source research in
 **Order:** 017 (conformant CLI) → 020 → 021. Independent of the 018 packaging track; both can proceed in
 parallel after 017.
 
+## Wave 10 — embedded mail send + secret-store simplification (→ 1.1.0 minor)
+
+Wave 9 embedded mail **reading**; first real Phase-1 usage exposed two gaps. Design in
+[`../research/DN-mail-access.md`](../research/DN-mail-access.md) §Decision 7 (sending) + §Decision 8
+(secret store, supersedes §Decision 4).
+
+- **022** embeds mail **sending** — draft-then-confirm (`mail-draft`/`mail-send`/`mail-reply`, **never
+  auto-send**, engine-enforced), JMAP `EmailSubmission` + SMTP, masked-alias From, verified-recipient guard,
+  store-linked correspondence trail.
+- **023** simplifies the secret store — **drops the vault backends** (1Password/Bitwarden + `op://`),
+  **keyring becomes primary + a base dependency** (closing the installer gap), **OS-aware `setup`** with a
+  **doctor-driven remediation wizard** (agent guides, human performs the input steps), and the 0600 file
+  becomes an **explicit confirmed** choice (no silent downgrade).
+
+Cross-cutting invariants threaded through both: **no personal data in the client** (field descriptions +
+artificial samples only; real values live in the user's config/keyring), and the **agent-guides / human-inputs**
+split for every interactive step.
+
+**Order:** 023 → 022 (023 simplifies the secret resolver 022's send-capable creds ride on). Each via
+RED/GREEN/VERIFY → no-mistakes → a combined **1.1.0** `git flow release`.
+
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
 tracking verbs still read JSONL; importing next repopulates Mongo so the store is functional
@@ -151,6 +172,10 @@ end-to-end. Both 006 and 004 depend only on the now-shipped 003.)
   / 004 port onto pymongo — not to be redone.
 - `data/*.jsonl` stay as the `snapshot` target (chezmoi-versioned); they are NOT committed to the
   project repo (gitignored). Mongo data lives on the local instance only.
+- **Wave 10 → 1.1.0 (2026-07-27):** CR-022 + CR-023 authored this session (design phase, on develop).
+  **Next session builds the 1.1.0 minor release** from them **plus any further usability issues the user
+  surfaces during local Phase-1 use** — those get filed as new CRs/tasks at wave-open, not mid-execution
+  (user directive). Vault-backend removal is the one breaking bit, accepted within the minor bump.
 
 ## Follow-up tasks
 Small items (no design surface → tasks, not CRs) surfaced during execution:
