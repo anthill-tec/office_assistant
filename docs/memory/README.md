@@ -15,6 +15,7 @@ Each file is one note with YAML frontmatter (`name`, `description`, `metadata.ty
 
 - [cicd-release-convention](cicd-release-convention.md) — automated production PyPI release from master
   (git-flow), TestPyPI on `release/*`; **no** manual-approval gate; GPL-3.0 license rationale; the
-  `release/*` branch also runs no-mistakes + AXI validation; gate-script-vendoring + `act` + `ci-monitor`.
+  `release/*` branch also runs no-mistakes + AXI validation; gate-script-vendoring + `act` + `ci-monitor`;
+  live mail-account verification (CR-OA-020) is a release-time test, not a CI gate.
 - [vercel-skills-bundle-packaging](vercel-skills-bundle-packaging.md) — post-merge follow-up: bundle the
   skill + its scripts/engine as one deployable vercel/skills package (flagged during CR-016).
