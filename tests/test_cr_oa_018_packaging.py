@@ -154,7 +154,26 @@ class CIWorkflowTest(unittest.TestCase):
                         blob.append(val)
         return "\n".join(blob)
 
+    def _with_block_values(self, step):
+        with_block = step.get("with") if isinstance(step, dict) else None
+        return with_block if isinstance(with_block, dict) else {}
+
     def test_ci_workflow_exists_and_builds_tests_gates(self):
+        """§S6/§S7 — two-tier, git-flow publish model.
+
+        Three jobs are required:
+          - `test` (runs on push): builds the wheel, runs pytest, runs the
+            Model-B release gate.
+          - a test-publish job gated to `release/*` branches, whose publish
+            step targets TestPyPI.
+          - a production publish job gated to a version tag, with
+            `permissions.id-token: write`, an `environment` named `pypi`
+            (OIDC trusted-publisher scoping), and a
+            `pypa/gh-action-pypi-publish` step.
+
+        Manual-reviewer / required-approval gating is a repo setting, not
+        YAML — deliberately NOT asserted here.
+        """
         on_section = self._on_section()
         self.assertIsNotNone(
             on_section,
@@ -178,43 +197,97 @@ class CIWorkflowTest(unittest.TestCase):
         )
         self.assertTrue(jobs, f"expected at least one job in {self.workflow_path}")
 
-        build_test_gate_job = None
+        job_blobs = {
+            name: self._all_step_strings(job.get("steps") if isinstance(job, dict) else None)
+            for name, job in jobs.items()
+        }
+
+        # --- job 1: `test` — builds the wheel, runs pytest, runs the release gate ---
+        test_job = None
         for job_name, job in jobs.items():
-            blob = self._all_step_strings(job.get("steps")) if isinstance(job, dict) else ""
+            if not isinstance(job, dict):
+                continue
+            blob = job_blobs[job_name]
             builds_wheel = "build" in blob and ("-m build" in blob or "python -m build" in blob)
             runs_pytest = "pytest" in blob
             runs_release_gate = "skill-release-gate.py" in blob
             if builds_wheel and runs_pytest and runs_release_gate:
-                build_test_gate_job = job_name
+                test_job = job_name
                 break
         self.assertIsNotNone(
-            build_test_gate_job,
-            "expected a job whose steps build the wheel (python -m build), run pytest, "
-            "AND invoke skill-release-gate.py; jobs found: "
-            f"{ {name: self._all_step_strings(j.get('steps') if isinstance(j, dict) else None) for name, j in jobs.items()} }",
+            test_job,
+            "expected a `test` job whose steps build the wheel (python -m build), run "
+            f"pytest, AND invoke skill-release-gate.py; jobs found: {job_blobs}",
         )
 
-        publish_job = None
+        # --- job 2: test-publish — gated to release/* branches, publishes to TestPyPI ---
+        test_publish_job = None
         for job_name, job in jobs.items():
-            if not isinstance(job, dict):
-                continue
-            blob = self._all_step_strings(job.get("steps")).lower()
-            publishes_to_pypi = "pypi" in blob
-            if not publishes_to_pypi:
+            if not isinstance(job, dict) or job_name == test_job:
                 continue
             job_if = job.get("if", "")
-            gated_by_job_if = isinstance(job_if, str) and "refs/tags/" in job_if
-            on_push_tags = isinstance(on_section, dict) and isinstance(on_section.get("push"), dict) and bool(
-                on_section["push"].get("tags")
-            )
-            if gated_by_job_if or on_push_tags:
-                publish_job = job_name
+            gated_to_release_branch = isinstance(job_if, str) and "refs/heads/release/" in job_if
+            if not gated_to_release_branch:
+                continue
+            steps = job.get("steps") or []
+            targets_testpypi = False
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                with_vals = self._with_block_values(step)
+                repo_url = with_vals.get("repository-url") or with_vals.get("repository_url")
+                if isinstance(repo_url, str) and "test.pypi.org" in repo_url:
+                    targets_testpypi = True
+                    break
+                for key in ("run", "uses", "name"):
+                    val = step.get(key)
+                    if isinstance(val, str) and "testpypi" in val.lower():
+                        targets_testpypi = True
+                        break
+                if targets_testpypi:
+                    break
+            if targets_testpypi:
+                test_publish_job = job_name
                 break
         self.assertIsNotNone(
-            publish_job,
-            "expected a job that publishes to PyPI gated on a version tag "
-            "(either job-level 'if' referencing refs/tags/, or 'on: push: tags:'); "
-            f"jobs found: {list(jobs.keys())}",
+            test_publish_job,
+            "expected a test-publish job gated to release/* branches (job 'if' containing "
+            "'refs/heads/release/') whose publish step targets TestPyPI (a "
+            "with.repository-url/repository_url containing 'test.pypi.org', or a step "
+            f"referencing 'testpypi'); jobs found: {list(jobs.keys())}",
+        )
+
+        # --- job 3: production publish — gated to a version tag, OIDC-scoped ---
+        production_job = None
+        for job_name, job in jobs.items():
+            if not isinstance(job, dict) or job_name in (test_job, test_publish_job):
+                continue
+            job_if = job.get("if", "")
+            gated_to_tag = isinstance(job_if, str) and "refs/tags/" in job_if
+            if not gated_to_tag:
+                continue
+            permissions = job.get("permissions") or {}
+            has_id_token_write = (
+                isinstance(permissions, dict) and permissions.get("id-token") == "write"
+            )
+            environment = job.get("environment")
+            env_name = (
+                environment.get("name")
+                if isinstance(environment, dict)
+                else environment
+            )
+            environment_is_pypi = env_name == "pypi"
+            blob = job_blobs[job_name]
+            uses_gh_action_pypi_publish = "pypa/gh-action-pypi-publish" in blob
+            if has_id_token_write and environment_is_pypi and uses_gh_action_pypi_publish:
+                production_job = job_name
+                break
+        self.assertIsNotNone(
+            production_job,
+            "expected a production publish job gated to a version tag (job 'if' containing "
+            "'refs/tags/') with permissions.id-token: write, an environment named 'pypi' "
+            "(OIDC trusted-publisher scoping), and a pypa/gh-action-pypi-publish step; "
+            f"jobs found: { {name: jobs[name] for name in jobs} }",
         )
 
 
