@@ -14,6 +14,19 @@ jobs:
   test:
     name: Build wheel, run tests, release gate
     runs-on: ubuntu-latest
+    # The suite's mongo-backed tests (CR-001..007, CR-017 AXI, import/snapshot) connect to a live
+    # mongod on 127.0.0.1:27017. SQLite is the default backend, but these exercise the Mongo path,
+    # so CI provides a mongod service container (a GitHub runner has none by default).
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
