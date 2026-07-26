@@ -60,9 +60,12 @@ class OnePasswordBackend(SecretBackend):
         return bool(shutil.which("op")) and bool(os.environ.get("OP_SERVICE_ACCOUNT_TOKEN"))
 
     def get(self, ref: str) -> str | None:
-        result = subprocess.run(
-            ["op", "read", ref], capture_output=True, text=True
-        )
+        try:
+            result = subprocess.run(
+                ["op", "read", ref], capture_output=True, text=True
+            )
+        except FileNotFoundError:
+            return None
         if result.returncode != 0:
             return None
         return result.stdout.strip()
@@ -78,11 +81,14 @@ class BitwardenBackend(SecretBackend):
 
     def get(self, ref: str) -> str | None:
         session = os.environ.get("BW_SESSION", "")
-        result = subprocess.run(
-            ["bw", "get", "password", ref, "--session", session],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["bw", "get", "password", ref, "--session", session],
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            return None
         if result.returncode != 0:
             return None
         return result.stdout.strip()
