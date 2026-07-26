@@ -85,6 +85,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
 
   # AUTOMATED production release. The DEPLOY TRIGGER is a push to master (git-flow release-finish
   # merges release/* → master). The matching SemVer tag is a SAFETY CHECK, not the trigger — the job
@@ -131,3 +132,5 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
