@@ -223,6 +223,20 @@ class FindOperatorTest(SqliteStoreTestBase):
         self.assertNotIn("sub_due", ids)
         self.assertEqual(len(docs), 2)
 
+    def test_contains_treats_like_wildcards_as_literals(self):
+        # `%` and `_` are LIKE metacharacters; `contains` must match them literally
+        # (parity with Mongo's re.escape substring), not as wildcards.
+        self.store.insert({"id": "sub_pct", "provider": "100% cotton", "status": "NEW"})
+        self.store.insert({"id": "sub_plain", "provider": "100 percent", "status": "NEW"})
+        self.store.insert({"id": "sub_us", "provider": "foo_bar", "status": "NEW"})
+        self.store.insert({"id": "sub_usx", "provider": "fooXbar", "status": "NEW"})
+
+        pct = sorted(d["id"] for d in self.store.find(cond("provider", "contains", "100%")))
+        self.assertEqual(pct, ["sub_pct"])
+
+        us = sorted(d["id"] for d in self.store.find(cond("provider", "contains", "foo_bar")))
+        self.assertEqual(us, ["sub_us"])
+
     def test_eq_none_matches_null_value_and_missing_key(self):
         self.store.insert({"id": "sub_null_val", "provider": "HasNull", "status": "NEW", "disposition": None})
         self.store.insert({"id": "sub_null_missing", "provider": "MissingField", "status": "NEW"})

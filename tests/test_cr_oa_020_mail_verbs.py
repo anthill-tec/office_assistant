@@ -280,6 +280,68 @@ def test_mail_get_unknown_uid_is_a_structured_error_not_a_traceback(monkeypatch,
     assert "error" in payload
 
 
+def test_mail_get_imap_none_return_for_unknown_uid_is_a_structured_error(monkeypatch, capsys):
+    """The real `ImapAdapter.fetch_message` returns None (not KeyError) for an unknown
+    uid — `cmd_mail_get` must still emit a structured error + exit 1, no traceback."""
+    from vidushi_oa.mail.imap import ImapAdapter
+
+    class _EmptyIMAP:
+        def login(self, user, password):
+            return ("OK", [b"Logged in"])
+
+        def select(self, mailbox="INBOX", readonly=False):
+            return ("OK", [b"1"])
+
+        def uid(self, command, *args):
+            return ("OK", [])  # FETCH of an unknown uid yields no message -> None
+
+    adapter = ImapAdapter("gmail_main", "[GM]", host="imap.example.com",
+                          user="me", password="pw",
+                          conn_factory=lambda host, port: _EmptyIMAP())
+    monkeypatch.setattr(cli, "build_client", lambda **kw: MailClient({"gmail_main": adapter}))
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_get(Namespace(account="gmail_main", uid="404"))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    assert json.loads(captured.out.strip())["error"] == "message not found"
+
+
+def test_mail_get_jmap_not_implemented_is_a_structured_error(monkeypatch, capsys):
+    """`JmapAdapter.fetch_message` raises `NotImplementedError` — `cmd_mail_get` must
+    render that as a structured error + exit 1, not a leaked traceback."""
+    from vidushi_oa.mail.jmap import JmapAdapter
+
+    adapter = JmapAdapter("fastmail_main", "[FM]", token="tok", transport=lambda *a, **k: (200, {}))
+    monkeypatch.setattr(cli, "build_client", lambda **kw: MailClient({"fastmail_main": adapter}))
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_get(Namespace(account="fastmail_main", uid="1"))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    assert "error" in json.loads(captured.out.strip())
+
+
+def test_mail_get_unknown_account_is_a_structured_error(monkeypatch, capsys):
+    client = _build_fake_client()
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_get(Namespace(account="no_such_account", uid="1"))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    assert "error" in json.loads(captured.out.strip())
+
+
 # ─────────────────────────── vidushi_oa.mail.accounts (reference-only registry) ───────────
 
 def test_add_account_then_load_accounts_round_trips_a_reference_only_entry(tmp_path, monkeypatch):

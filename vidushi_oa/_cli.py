@@ -770,12 +770,24 @@ def cmd_mail_accounts(a):
 
 def cmd_mail_get(a):
     """Fetch one message by `--account` + `--uid` via that account's adapter. An
-    unknown account or uid is a structured error + exit 1 (no traceback)."""
+    unknown account or uid — or an adapter that cannot fetch by uid (JMAP) — is a
+    structured error + exit 1 (no traceback), across every real adapter contract:
+    `ImapAdapter` returns None for an unknown uid, `JmapAdapter` raises
+    `NotImplementedError`."""
     client = build_client()
+    adapter = client._adapters.get(a.account)
+    if adapter is None:
+        out({"error": "unknown account", "account": a.account, "uid": a.uid})
+        sys.exit(1)
     try:
-        adapter = client._adapters[a.account]
         msg = adapter.fetch_message(a.uid)
     except KeyError:
+        msg = None
+    except NotImplementedError:
+        out({"error": "mail-get is not supported for this account",
+             "account": a.account, "uid": a.uid})
+        sys.exit(1)
+    if msg is None:
         out({"error": "message not found", "account": a.account, "uid": a.uid})
         sys.exit(1)
     row = _mail_row(msg)

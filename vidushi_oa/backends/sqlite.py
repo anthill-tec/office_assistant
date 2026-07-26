@@ -99,7 +99,8 @@ def _leaf(expr, op, value):
     if op == "exists":
         return f"{expr} IS NOT NULL", []
     if op == "contains":
-        return f"lower({expr}) LIKE '%'||lower(?)||'%'", [value]
+        term = str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return f"lower({expr}) LIKE '%'||lower(?)||'%' ESCAPE '\\'", [term]
     if op in _SQL_CMP:
         return f"{expr} {_SQL_CMP[op]} ?", [value]
     raise ValueError(f"unsupported op {op!r} for sqlite")
