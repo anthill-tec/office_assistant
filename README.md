@@ -55,7 +55,7 @@ provides the `voa` CLI). Install both, then `voa setup`.
 ```bash
 npx skills add ./skills/vidushi-oa                    # add the skill from this repo
 uv tool install --editable .                          # the engine (voa), editable/in-repo
-voa setup                                             # verify/provision the local MongoDB
+voa setup                                             # provision the active backend (SQLite by default)
 agentskills validate skills/vidushi-oa                # confirm the bundle shape (exits 0)
 ```
 
@@ -84,7 +84,7 @@ Everything the roles learn is kept in the **active backend** — SQLite by defau
 zero-config), or MongoDB opt-in (`VIDUSHI_BACKEND=mongo`) — and accessed through the **`voa`** CLI,
 never directly. `voa snapshot` mirrors the store to `data/*.jsonl` for versioning.
 
-Seven stores form a small **relational model**, joined by foreign keys:
+Eight stores form a small **relational model**, joined by foreign keys:
 
 ```
 invoice (proof of purchase) → warranty (coverage/expiry) → product (manual/specs)
@@ -94,6 +94,7 @@ invoice (proof of purchase) → warranty (coverage/expiry) → product (manual/s
 
 - **contacts** — verified vendor/manufacturer support directory
 - **invoices** — purchase documents (PO / invoice / receipt), with the originating email pinned and any saved PDF
+- **orders** — the purchase **fulfilment / delivery** lifecycle (ordered → shipped → delivered, including international customs), linked to its invoice
 - **warranties** — coverage, term, expiry, registration
 - **products** — owned products keyed on the **manufacturer**, with official reference links + specs
 - **cases** — support / claim / RMA / service cases
