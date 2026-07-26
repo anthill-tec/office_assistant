@@ -66,7 +66,8 @@ jobs:
       name: testpypi
       url: https://test.pypi.org/p/vidushi-oa
     permissions:
-      id-token: write
+      id-token: write   # OIDC trusted publishing
+      contents: read    # actions/checkout needs repo read — a permissions block resets all others to none
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -100,7 +101,8 @@ jobs:
       name: pypi
       url: https://pypi.org/p/vidushi-oa
     permissions:
-      id-token: write
+      id-token: write   # OIDC trusted publishing
+      contents: read    # actions/checkout (with fetch-tags for the safety check) needs repo read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
