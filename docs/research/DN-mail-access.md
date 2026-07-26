@@ -141,6 +141,41 @@ the non-interactive `voa setup`, DN-packaging-distribution Decision 5):
   configured mail provider + credential kind + whether its reference **resolves** — flagging missing/broken
   config with a fix hint. TOON output; **never reveals a secret**. (Absorbs the earlier `setup --check`.)
 
+## Decision 7 — sending: draft-then-confirm, embedded (JMAP `EmailSubmission` + SMTP), send-capable creds
+
+**Why (gap):** Decisions 1–6 embedded the **read** side only; sending was deferred (a CR-OA-020 non-goal).
+But the skill's **Support domain requires draft-then-confirm outbound mail** (RMA / claims / service — "reply
+from the buying alias the vendor knows, **never auto-send**"), so sending is a **required system capability**
+that today still routes through the **harness mail MCP** — leaving Decision 1's "embed mail to supersede the
+MCP" **half-done and non-portable**. This decision closes it: embed sending in `voa`, with the safety spine
+enforced at the engine level. (Approved 2026-07-27.)
+
+- **Transport (parallels Decision 2's read hybrid).** Fastmail → **JMAP `EmailSubmission`** (native
+  identities/aliases); Gmail / Yahoo → **SMTP submission** (STARTTLS :587 / SSL :465). Both reuse the
+  Decision 4 secret resolver + the XOAUTH2 path; a Fastmail app-password can SMTP-send as the fallback.
+- **Credential scope — revisits Decision 3.** Decision 3 preferred a **read-only** Fastmail token ("cannot
+  mutate/send"); sending needs a **send-capable** credential — a Fastmail JMAP token scoped
+  `mail`+`submission`, or the IMAP **app-password** (which already authorizes SMTP) for Gmail/Yahoo, or
+  XOAUTH2 with the send scope. **Send is opt-in per account** (read-only accounts stay read-only); `mail-auth`
+  records a **`send`-capability flag**, and the send verbs refuse a non-send-capable account. The user still
+  generates every credential.
+- **Draft-then-confirm is the safety spine (engine-enforced) — `voa` has NO path that sends without an
+  explicit, identified `mail-send`:**
+  - `mail-draft` composes an RFC 5322 message and **saves a real draft** into the account's Drafts (JMAP
+    `Email/set` with `$draft` / IMAP `APPEND` to Drafts) — reviewable in the user's own mail client; returns
+    the draft id; **no network send**.
+  - `mail-send <draft-id>` dispatches **only that identified draft** (JMAP `EmailSubmission/set` / SMTP).
+  - `mail-reply` composes a **threaded** reply (`In-Reply-To`/`References` from a fetched message) as a draft.
+  This two-step is the engine-level enforcement of the skill's "draft-then-confirm, never auto-send" rule.
+  (Options weighed: a **real draft in the mailbox** vs a locally-staged send-queue — chose the real draft:
+  the user reviews it where they already read mail; no local queue to trust.)
+- **Identity / From — masked aliases.** The From is a **chosen identity** — the account address or a
+  **Fastmail masked alias** ("the buying alias the vendor knows") — validated against the account's identities
+  (JMAP `Identity/get` / a configured alias list); an unknown From is refused.
+- **Guards (mirror the skill).** Draft/send only to a **verified `contact`** (else a structured error unless
+  explicitly overridden); a message can be **linked to a store row** (`--case`/`--invoice`/…) and, on send,
+  recorded as a `document` + the relevant action resolved on that row — the tracked correspondence trail.
+
 ## Consequences
 
 - **Dependency footprint: ~0–2 small deps** — `httpx` for Fastmail JMAP (or `urllib`, 0), optional

@@ -42,8 +42,9 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-017](CR-OA-017-axi-conformance-audit.md) | AXI conformance audit + gap-closure (full verb surface) | maintenance | COMPLETED | 009, 010, 014 | 8 |
 | [CR-OA-018](CR-OA-018-pluggable-backend-and-packaging.md) | Pluggable backend (SQLite default) + GPL-v3 `uv`/PyPI packaging | feature | COMPLETED | 016, 017 | 8 |
 | [CR-OA-019](CR-OA-019-skill-mail-prerequisites.md) | Skill mail-access prerequisites (declared + orchestrated) | docs | SUPERSEDED (by 020) | 016 | 8 |
-| [CR-OA-020](CR-OA-020-embedded-mail-client.md) | Embedded mail client in `voa` (Gmail/Fastmail/Yahoo + vault-first creds) | feature | PENDING | 017 | 9 |
-| [CR-OA-021](CR-OA-021-skill-mail-verbs.md) | Skill revision — `Mailboxes & search` uses `voa mail-*` verbs | docs | PENDING | 016, 020 | 9 |
+| [CR-OA-020](CR-OA-020-embedded-mail-client.md) | Embedded mail client in `voa` (Gmail/Fastmail/Yahoo + vault-first creds) | feature | COMPLETED (2026-07-27) | 017 | 9 |
+| [CR-OA-021](CR-OA-021-skill-mail-verbs.md) | Skill revision — `Mailboxes & search` uses `voa mail-*` verbs | docs | COMPLETED (2026-07-27) | 016, 020 | 9 |
+| [CR-OA-022](CR-OA-022-embedded-mail-sending.md) | Embedded mail *sending* in `voa` (draft-then-confirm, per-mailbox identity, store-linked) | feature | PENDING | 020 | 10 |
 
 ## v0.1.0 milestone — Wave 6
 
