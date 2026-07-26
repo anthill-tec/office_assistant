@@ -15,14 +15,17 @@ The user's CI/CD release model (their standard across "almost every project"), f
   **gate is "only from master"** (the branch condition) — master only ever receives release-finish merges,
   so the git-flow discipline IS the human decision. **Do NOT add a manual-approval reviewer gate** to the
   production publish; that contradicts the model.
-- **Release tags are plain SemVer — NO `v` prefix** (`1.2.3`, not `v1.2.3`), per the git-workflow rule
-  (user choice, 2026-07-26). Three things must agree: the workflow triggers on
-  `on.push.tags: "[0-9]+.[0-9]+.[0-9]+*"`; **git-flow must be set to match** —
-  `git config gitflow.prefix.versiontag ""` (its default is `v`, and `.git/config` is **untracked**, so
-  set this per-clone / at `git flow init`); and the skill already mandates no-`v`. Then
-  `git flow release finish 1.2.3` tags `1.2.3` and the tag push fires the PyPI publish. **A `v`-prefixed
-  tag would silently NOT trigger publish.** (Publish is gated `if: refs/tags/*` — it relies on the branch
-  discipline that only release-finish creates tags; no per-tag master-reachability check.)
+- **Version = single source `pyproject.toml [project].version` (DRY) — do NOT add a bespoke version/tag
+  config.** The **git-workflow skill** already reads the version from the project config **by project type**
+  (Python → `[project].version`) and owns the **plain SemVer, no-`v`** tag rule, so `git flow release finish`
+  produces tag `0.1.0` (not `v0.1.0`). The skill issues the git-flow commands and handles the `versiontag`
+  prefix — no `[tool.gitflow]` section, no per-clone `git config` step to remember. (Correcting an earlier
+  note that wrongly proposed a duplicate config + tag-triggered publish.)
+- **PyPI publish TRIGGER = push to `master`; the SemVer tag is a SAFETY CHECK, not the trigger.** The
+  `publish` job is `if: github.ref == 'refs/heads/master'`; a step then requires master HEAD to carry a SemVer
+  tag **equal to `[project].version`**, else it refuses to publish (guards an untagged or version-mismatched
+  master commit). git-flow release-finish merges `release/*` → master (+ tags it); the **master push** drives
+  the deploy. TestPyPI stays on `release/*` push. No manual-reviewer gate — master is the gate.
 - **Test-publish to TestPyPI on `release/*` branch push** — packaging + deploy are validated there during
   `git flow release`, before the production release from master.
 - `test` job (build wheel + pytest + release gate) runs on every push.
