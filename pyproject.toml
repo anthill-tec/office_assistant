@@ -18,6 +18,9 @@ dependencies = [
 mongo = ["pymongo>=4.16"]
 sqlite = ["jsonschema>=4"]
 mail = ["keyring>=24"]
+# CI/dev test backend: a real, storable keyring so the keyring-fallback test exercises an
+# actual keyring (pointed at a hermetic temp file), not a no-op backend.
+test = ["keyrings.alt>=5"]
 
 [project.scripts]
 voa = "vidushi_oa.cli:main"
