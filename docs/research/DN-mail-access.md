@@ -235,6 +235,18 @@ keyring the primary** store, with an OS-aware setup that offers what the host ac
   verbs (a later skill-revision CR); the safety contract (phishing/customs) is unchanged.
 - **Independent of Wave 8** — CR-OA-017/018 (AXI + backend/packaging) are unaffected; mail is Wave 9.
 - **No credentials in any artifact** — never in the store, snapshots, packages, or git; only references.
+- **The client carries no personal data — only field descriptions (portability + privacy invariant).** The
+  `voa` client and everything it emits — prompts, `next[]` hints, help text, error messages, and the
+  setup/mail-auth/doctor **wizard** — hardcode **no** mail addresses, masked aliases, domains, account names,
+  or any personal identifier. Every such value is supplied by the user at runtime (interactive paste / their
+  own config store) and lives **only** in the user's config + keyring, never in `vidushi_oa/` source. Prompts
+  and hints tell the user **what to paste into each field, illustrated with an artificial example for format**
+  ("your Fastmail address, e.g. `you@fastmail.com`"; "the app password you generated, e.g.
+  `abcd-efgh-ijkl-mnop`") — the sample is **fictitious** (`example`-style placeholders), shown only to convey
+  shape; it is never a pre-filled real value and is never persisted. Generic, reusable, **portable**. Provider
+  *infrastructure* endpoints (e.g. `imap.gmail.com`) are not personal data and may be coded. This is what lets
+  the public PyPI/GitHub artifact ship with zero of the user's information in it — the agent guides *which*
+  field (with an example shape), the human supplies the real value.
 
 ## Risks
 

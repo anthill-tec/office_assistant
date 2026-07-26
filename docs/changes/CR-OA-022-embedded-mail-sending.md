@@ -73,6 +73,7 @@ Drafts store) — **no live sending in the suite**. Live-send verification is a 
 ### §S2
 - [ ] `compose(from_addr="me@x", to="v@y", subject="S", body="B")` returns bytes whose parsed headers are `From: me@x`, `To: v@y`, `Subject: S`; a reply built with `in_reply_to="<m1@y>"` sets `In-Reply-To: <m1@y>` and includes `<m1@y>` in `References`.
 - [ ] `compose(from_addr=<not-an-identity>, …)` (or the verb path) raises/exits with a structured error naming the invalid From.
+- [ ] **No personal data in the client (DN Consequences invariant):** the From/recipient/alias values come only from account config + verb args — a grep asserts the send path in `vidushi_oa/` hardcodes no real mailbox address or masked alias.
 
 ### §S3
 - [ ] `mail-draft` against a fake adapter records exactly one draft-save (an `APPEND`/`Email/set $draft`) and **zero** sends (the fake's send-count is 0), and returns a `draft` id in its TOON status.

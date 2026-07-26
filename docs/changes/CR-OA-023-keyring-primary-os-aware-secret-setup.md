@@ -49,6 +49,11 @@ with concrete guidance, then **pre-flight** the chosen backend (module present +
 - **headless / no provider** → the **0600 file**, offered as a **stated, confirmed user choice** — never a
   silent downgrade (DN §Decision 8: reaching the file backend is an explicit outcome).
 
+**No personal data in the client (DN Consequences invariant).** Every prompt/hint the wizard, `mail-auth`,
+and `doctor` emit hardcodes **no** real address, alias, domain, or account name — it names the field and
+shows an **artificial `example`-style sample** for format ("your Fastmail address, e.g. `you@fastmail.com`").
+Personal values are supplied by the user at runtime and stored only in their config/keyring, never in source.
+
 ### §S4 `voa doctor` — simplified chain, explicit file surfacing + a guided remediation wizard
 `doctor`'s secret-backend line reports **keyring** vs **file (confirmed)**; no `1password`/`bitwarden` kinds
 remain; never prints a secret. Beyond flagging, `doctor` emits an **ordered, machine-readable remediation
@@ -82,6 +87,7 @@ per the existing `[test]` extra) — no real OS Secret Service, no live vault.
 - [ ] Against a faked **KDE** environment (Secret-Service provider absent), `voa setup` (mail path) emits guidance naming **KWallet / `org.freedesktop.secrets`** and exits without silently writing a file-backend secret.
 - [ ] Against a faked **no-provider / headless** environment, the file backend is chosen only via an **explicit confirmed** step (a flag/prompt); a structured status records `secret_backend: file` as a stated choice — asserted, and the silent-fallback path is absent (grep: no unconditional keyring→file fall-through without the confirmed marker).
 - [ ] The pre-flight performs a `set`→`get` round-trip on the selected backend and reports success/failure in its TOON status.
+- [ ] **No personal data in the client:** a test/grep asserts `vidushi_oa/` source contains **no** real personal mailbox address, alias, or user-specific domain (the account addresses live only in the user's config/keyring); the wizard/`mail-auth` field prompts render a **fictitious `example`-style** sample (e.g. matches `you@fastmail.com` / an `example.`-domain placeholder), not a pre-filled real value. Provider infrastructure hostnames (`imap.gmail.com`, etc.) are exempt.
 - [ ] **Caller-existence:** `voa --help` shows the setup/mail-auth path; the OS-detection + pre-flight is invoked from a non-test caller in `vidushi_oa/_cli.py` (grep ≥1).
 
 ### §S4
