@@ -7,10 +7,6 @@ on:
       - "release/**"
       - "master"
       - "develop"
-    # Semver release tags (NO 'v' prefix — per the git-workflow versioning rule). git-flow
-    # release-finish tags master with e.g. 1.2.3; pushing it triggers the PyPI publish job.
-    tags:
-      - "[0-9]+.[0-9]+.[0-9]+*"
 
 jobs:
   test:
@@ -90,13 +86,14 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
 
-  # AUTOMATED production release from master (git-flow release-finish tags master → CI publishes);
-  # gated to master only; OIDC trusted publishing (the `pypi` environment scopes the trusted
-  # publisher). No manual-reviewer gate — the branch is the gate.
+  # AUTOMATED production release. The DEPLOY TRIGGER is a push to master (git-flow release-finish
+  # merges release/* → master). The matching SemVer tag is a SAFETY CHECK, not the trigger — the job
+  # refuses to publish unless master HEAD carries a tag equal to [project].version. OIDC trusted
+  # publishing (`pypi` environment). No manual-reviewer gate — master is the gate.
   publish:
     name: Publish to PyPI
     needs: test
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -106,11 +103,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # full history + tags, so the safety check can see the release tag
+          fetch-tags: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Release safety check — master HEAD must carry a SemVer tag equal to [project].version
+        run: |
+          VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          TAG=$(git tag --points-at HEAD | grep -Ex '[0-9]+\.[0-9]+\.[0-9]+.*' | head -1 || true)
+          if [ -z "$TAG" ]; then
+            echo "::error::master HEAD carries no SemVer tag — not a release-finish commit; refusing to publish"; exit 1
+          fi
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::tag '$TAG' != pyproject [project].version '$VER' — refusing a mismatched publish"; exit 1
+          fi
+          echo "release $VER verified — tag matches [project].version"
 
       - name: Build distributions
         run: |
