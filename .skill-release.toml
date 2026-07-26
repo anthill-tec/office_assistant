@@ -13,7 +13,7 @@ forbid_entry_points = ["oa"]
 import_check = "vidushi_oa"
 
 [engine.wheel_glob_counts]
-"vidushi_oa/schema/*.json" = 7
+"vidushi_oa/schema/*.json" = 8
 
 [skills]
 paths = ["skills/vidushi-oa"]
@@ -27,9 +27,9 @@ drop_mongo_db = "$THROWAWAY_DB"
 
 # ---- functional lifecycle (installed voa, throwaway DB) ----
 [[check]]
-name = "setup provisions 7 collections"
+name = "setup provisions 8 collections"
 argv = ["setup"]
-expect = ["initialized[7]"]
+expect = ["initialized[8]"]
 
 [[check]]
 name = "add a KEEP subscription (renews in-window)"
