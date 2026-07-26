@@ -196,8 +196,11 @@ def test_mail_search_toon_tally_counts_rows_by_source_tag_after_dedup(monkeypatc
     payload = oa_toon.from_toon(out)
 
     assert payload["count"] == 4
-    # Post-dedup: gm-one + shared(GM) + fm-one + yh-one.
-    assert payload["tally"] == {"source_tag": {"[GM]": 2, "[FM]": 1, "[YH]": 1}}
+    # Post-dedup: gm-one + shared(GM) + fm-one + yh-one. Tally keys are the
+    # bracket-free provider tags ("GM"/"FM"/"YH") even though each ROW's own
+    # `source_tag` keeps its bracketed form (e.g. "[GM]") — see the row-level
+    # assertions above/elsewhere in this file, which are unchanged.
+    assert payload["tally"] == {"source_tag": {"GM": 2, "FM": 1, "YH": 1}}
     assert isinstance(payload["next"], list)
 
 
