@@ -788,13 +788,32 @@ def cmd_mail_search(a):
 
 
 def cmd_mail_accounts(a):
-    """List the configured accounts + their adapter capabilities."""
+    """List the configured accounts + their adapter capabilities. Fail-soft: an
+    account whose `secret_ref` cannot be resolved is skipped from the listing and
+    surfaced in `failed_accounts` (TOON) / a stderr warning (`--json`), never a
+    traceback — the healthy accounts still list. Only a total wipeout — every
+    configured account failed to build — is a structured error + exit 1 (no
+    traceback), symmetric with `mail-search`."""
+    client = _mail_client_or_exit()
     rows = [{"account": name, "capabilities": sorted(caps)}
-            for name, caps in _mail_client_or_exit().accounts()]
+            for name, caps in client.accounts()]
+    failures = client.build_failures
+    if failures and not rows:
+        out({"error": "all configured accounts failed", "failed_accounts": failures})
+        sys.exit(1)
     if _FMT == "json":
+        if failures:
+            detail = ", ".join(
+                f"{f['account']} ({f['error']})" for f in failures)
+            sys.stderr.write(
+                f"warn: mail-accounts: {len(failures)} account(s) failed: {detail}\n")
         out(rows)
     else:
-        out({"results": rows, "next": ["mail-search <query>"]})
+        envelope = {"results": rows}
+        if failures:
+            envelope["failed_accounts"] = failures
+        envelope["next"] = ["mail-search <query>"]
+        out(envelope)
 
 
 def cmd_mail_get(a):
@@ -809,7 +828,10 @@ def cmd_mail_get(a):
     client = _mail_client_or_exit()
     adapter = client._adapters.get(a.account)
     if adapter is None:
-        out({"error": "unknown account", "account": a.account, "uid": a.uid})
+        build_failure = next(
+            (f for f in client.build_failures if f["account"] == a.account), None)
+        error = build_failure["error"] if build_failure else "unknown account"
+        out({"error": error, "account": a.account, "uid": a.uid})
         sys.exit(1)
     try:
         msg = adapter.fetch_message(a.uid)

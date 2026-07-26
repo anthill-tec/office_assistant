@@ -15,6 +15,7 @@ class MailClient:
         self._adapters: dict[str, MailAdapter] = dict(adapters or {})
         self.last_failures: list[dict] = []
         self.last_succeeded: int = 0
+        self.build_failures: list[dict] = []
 
     def register(self, name: str, adapter: MailAdapter) -> None:
         """Register (or replace) an adapter under `name`."""
@@ -32,9 +33,14 @@ class MailClient:
         XOAUTH2 token -> `LookupError`, or a down IMAP host) does NOT abort the
         fan-out — that account is recorded in `last_failures` (name + short reason,
         never the secret) and the healthy accounts' results are still returned.
-        `last_succeeded` counts the adapters that ran clean, so the caller can tell a
-        partial failure (some succeeded) from a total wipeout (none did)."""
-        selected = self._adapters.keys() if accounts is None else accounts
+        Accounts that could not even be built (`build_failures` — e.g. an
+        unresolvable `secret_ref`) fold into the same `last_failures` for the
+        selected accounts, so a stale secret on one account is surfaced rather than
+        blanking the whole search. `last_succeeded` counts the adapters that ran
+        clean, so the caller can tell a partial failure (some succeeded) from a
+        total wipeout (none did)."""
+        selected = list(self._adapters.keys()) if accounts is None else list(accounts)
+        build_fail_map = {f["account"]: f for f in self.build_failures}
 
         merged: list[Message] = []
         seen_ids: set = set()
@@ -43,6 +49,9 @@ class MailClient:
         for name in selected:
             adapter = self._adapters.get(name)
             if adapter is None:
+                build_failure = build_fail_map.get(name)
+                if build_failure is not None:
+                    failures.append(build_failure)
                 continue
             try:
                 messages = list(adapter.search(query))
@@ -56,6 +65,10 @@ class MailClient:
                         continue
                     seen_ids.add(message.id)
                 merged.append(message)
+        if accounts is None:
+            for name, build_failure in build_fail_map.items():
+                if name not in self._adapters:
+                    failures.append(build_failure)
         self.last_failures = failures
         self.last_succeeded = succeeded
         return merged

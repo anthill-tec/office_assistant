@@ -39,6 +39,19 @@ class FakeBlobResolver:
                            "refresh_token": "rtok"})
 
 
+class FailingRefResolver:
+    """Resolves every ref except `bad_ref`, which raises `LookupError` — a rotated/
+    deleted vault entry, a missing `op` CLI, or a locked keyring."""
+
+    def __init__(self, bad_ref):
+        self._bad_ref = bad_ref
+
+    def resolve(self, ref):
+        if ref == self._bad_ref:
+            raise LookupError(f"secret_ref {ref!r} could not be resolved")
+        return f"secret-for-{ref}"
+
+
 def test_default_adapter_factory_builds_gmail_imap_adapter_with_resolved_password():
     adapter = _default_adapter_factory(
         provider="gmail", account="g1", address="me@gmail.com",
@@ -233,3 +246,47 @@ def test_add_account_upserts_by_name_on_secret_rotation(tmp_path, monkeypatch):
     assert [r["name"] for r in rows] == ["gmail_main", "yahoo_main"]
     gmail = next(r for r in rows if r["name"] == "gmail_main")
     assert gmail["secret_ref"] == "ref-new"
+
+
+def test_build_client_isolates_an_account_whose_secret_cannot_resolve(tmp_path, monkeypatch):
+    """One account's unresolvable `secret_ref` must NOT abort building the others:
+    the healthy account still registers, and the failure is recorded in
+    `build_failures` (name + reason, never the resolved secret)."""
+    from vidushi_oa.mail import accounts
+
+    config_path = tmp_path / "accounts.json"
+    monkeypatch.setenv("VIDUSHI_MAIL_CONFIG", str(config_path))
+    accounts.add_account("gmail_main", "gmail", "me@gmail.com", "good-ref")
+    accounts.add_account("yahoo_main", "yahoo", "me@yahoo.com", "bad-ref")
+
+    client = build_client(config_path=str(config_path),
+                          resolver=FailingRefResolver("bad-ref"))
+
+    registered = dict(client.accounts())
+    assert set(registered.keys()) == {"gmail_main"}
+    assert isinstance(client._adapters["gmail_main"], GmailImapAdapter)
+    assert client._adapters["gmail_main"].password == "secret-for-good-ref"
+    assert [f["account"] for f in client.build_failures] == ["yahoo_main"]
+    assert "bad-ref" in client.build_failures[0]["error"]
+    assert "secret-for" not in client.build_failures[0]["error"]
+
+
+def test_build_client_build_failure_folds_into_search_fail_soft_reporting(tmp_path, monkeypatch):
+    """A build-time failure (unresolvable secret) folds into `MailClient.search`'s
+    fail-soft reporting for the selected account — no network, `last_succeeded == 0`,
+    and the failed account surfaced in `last_failures`."""
+    from vidushi_oa.mail import accounts
+
+    config_path = tmp_path / "accounts.json"
+    monkeypatch.setenv("VIDUSHI_MAIL_CONFIG", str(config_path))
+    accounts.add_account("gmail_main", "gmail", "me@gmail.com", "good-ref")
+    accounts.add_account("yahoo_main", "yahoo", "me@yahoo.com", "bad-ref")
+
+    client = build_client(config_path=str(config_path),
+                          resolver=FailingRefResolver("bad-ref"))
+
+    results = client.search("invoice", accounts=["yahoo_main"])
+
+    assert results == []
+    assert client.last_succeeded == 0
+    assert [f["account"] for f in client.last_failures] == ["yahoo_main"]

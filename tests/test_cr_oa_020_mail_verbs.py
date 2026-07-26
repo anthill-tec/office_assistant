@@ -325,6 +325,51 @@ def test_mail_search_json_partial_failure_warns_on_stderr_keeps_bare_array(monke
     assert "voa mail-auth" in captured.err
 
 
+def test_mail_search_build_time_failure_folds_into_failed_accounts(monkeypatch, capsys):
+    """An account that failed to BUILD (unresolvable `secret_ref` — recorded in
+    `client.build_failures`, never registered) is surfaced in `failed_accounts`
+    next to the healthy account's rows, exit 0 — matching the connection-time
+    isolation so one stale secret can't blank the whole search."""
+    gmail = FakeAdapter("gmail_main", "[GM]", {"raw_query"}, messages=[GM_ONE])
+    client = MailClient({"gmail_main": gmail})
+    client.build_failures = [
+        {"account": "yahoo_main", "error": "secret_ref 'op://Vault/yahoo' could not be resolved"}]
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "toon"
+
+    cli.cmd_mail_search(Namespace(query="invoice", accounts=None))
+
+    from vidushi_oa import toon as oa_toon
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    payload = oa_toon.from_toon(captured.out)
+    assert payload["count"] == 1
+    assert payload["results"][0]["id"] == GM_ONE.id
+    assert {row["account"] for row in payload["failed_accounts"]} == {"yahoo_main"}
+
+
+def test_mail_search_all_accounts_failing_to_build_is_a_structured_error_exit_1(monkeypatch, capsys):
+    """Total wipeout at BUILD time — every account's secret_ref is unresolvable so
+    none register — is still a structured error + exit 1 (no traceback)."""
+    client = MailClient({})
+    client.build_failures = [
+        {"account": "gmail_main", "error": "secret unresolved"},
+        {"account": "yahoo_main", "error": "op CLI missing"},
+    ]
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_search(Namespace(query="invoice", accounts=None))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    payload = json.loads(captured.out.strip())
+    assert "error" in payload
+    assert {row["account"] for row in payload["failed_accounts"]} == {"gmail_main", "yahoo_main"}
+
+
 def test_mail_search_all_accounts_failing_is_a_structured_error_exit_1(monkeypatch, capsys):
     """Total wipeout — every selected account fails — is a structured error + exit 1
     (no traceback), never an empty-but-successful-looking result set."""
@@ -375,6 +420,46 @@ def test_mail_accounts_stays_offline_even_when_an_account_would_fail_a_search(mo
     payload = json.loads(capsys.readouterr().out.strip())
     results = payload["results"] if isinstance(payload, dict) else payload
     assert [row["account"] for row in results] == ["yahoo_main"]
+
+
+def test_mail_accounts_surfaces_a_build_failed_account(monkeypatch, capsys):
+    """An account whose `secret_ref` couldn't resolve at build time is skipped from
+    the listing but surfaced in `failed_accounts`, never a traceback — the healthy
+    accounts still list."""
+    gmail = FakeAdapter("gmail_main", "[GM]", {"raw_query"}, messages=[])
+    client = MailClient({"gmail_main": gmail})
+    client.build_failures = [
+        {"account": "yahoo_main", "error": "secret_ref could not be resolved"}]
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "toon"
+
+    cli.cmd_mail_accounts(Namespace())
+
+    from vidushi_oa import toon as oa_toon
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    payload = oa_toon.from_toon(captured.out)
+    assert [row["account"] for row in payload["results"]] == ["gmail_main"]
+    assert {row["account"] for row in payload["failed_accounts"]} == {"yahoo_main"}
+
+
+def test_mail_accounts_json_build_failure_warns_on_stderr_keeps_bare_array(monkeypatch, capsys):
+    """Under `--json` the accounts listing stays a bare array on stdout, but a
+    build-failed account is surfaced to machine consumers on STDERR."""
+    gmail = FakeAdapter("gmail_main", "[GM]", {"raw_query"}, messages=[])
+    client = MailClient({"gmail_main": gmail})
+    client.build_failures = [
+        {"account": "yahoo_main", "error": "secret_ref could not be resolved"}]
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    cli.cmd_mail_accounts(Namespace())
+
+    captured = capsys.readouterr()
+    rows = json.loads(captured.out.strip())
+    assert [row["account"] for row in rows] == ["gmail_main"]
+    assert "failed_accounts" not in captured.out
+    assert "yahoo_main" in captured.err
 
 
 # ─────────────────────────── mail-get (direct-call, fakes) ───────────────────────────
@@ -504,6 +589,27 @@ def test_mail_get_unknown_account_is_a_structured_error(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "Traceback" not in captured.out and "Traceback" not in captured.err
     assert "error" in json.loads(captured.out.strip())
+
+
+def test_mail_get_build_failed_account_reports_the_build_failure_reason(monkeypatch, capsys):
+    """`mail-get` targeting an account that failed to BUILD (unresolvable secret_ref)
+    reports the build-failure reason + exit 1, never a traceback or a misleading
+    'unknown account'."""
+    client = MailClient({})
+    client.build_failures = [
+        {"account": "yahoo_main", "error": "secret_ref 'op://Vault/yahoo' could not be resolved"}]
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_get(Namespace(account="yahoo_main", uid="1"))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    payload = json.loads(captured.out.strip())
+    assert payload["account"] == "yahoo_main"
+    assert "could not be resolved" in payload["error"]
 
 
 # ─────────────────────────── vidushi_oa.mail.accounts (reference-only registry) ───────────

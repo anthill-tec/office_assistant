@@ -67,20 +67,34 @@ def build_client(config_path=None, resolver=None, adapter_factory=None) -> MailC
     For each account the `adapter_factory` is called by keyword with
     `provider`/`account`/`address`/`secret_ref`/`resolver`/`auth_mode`; the returned
     adapter's `.source_tag` is stamped from the provider and it is registered under
-    the account name. No secret is resolved here.
+    the account name.
+
+    Fail-soft, per-account: building one account (the default factory resolves its
+    `secret_ref` here) may fail — an unresolvable/rotated secret, a missing vault
+    CLI, or a locked keyring raises inside the factory. Such an account is recorded
+    in `client.build_failures` (name + short reason, never the secret) and SKIPPED,
+    so the healthy accounts still register and one stale secret can't blank the
+    whole `mail-search`/`mail-accounts`/`mail-get` fan-out.
     """
     factory = adapter_factory or _default_adapter_factory
     client = MailClient()
+    failures: list[dict] = []
     for entry in load_accounts(config_path):
-        provider = entry["provider"]
-        adapter = factory(
-            provider=provider,
-            account=entry["name"],
-            address=entry["address"],
-            secret_ref=entry["secret_ref"],
-            resolver=resolver,
-            auth_mode=entry.get("auth_mode", "password"),
-        )
-        adapter.source_tag = SOURCE_TAGS.get(provider, adapter.source_tag)
-        client.register(entry["name"], adapter)
+        name = entry["name"]
+        try:
+            provider = entry["provider"]
+            adapter = factory(
+                provider=provider,
+                account=name,
+                address=entry["address"],
+                secret_ref=entry["secret_ref"],
+                resolver=resolver,
+                auth_mode=entry.get("auth_mode", "password"),
+            )
+            adapter.source_tag = SOURCE_TAGS.get(provider, adapter.source_tag)
+        except Exception as exc:
+            failures.append({"account": name, "error": str(exc) or exc.__class__.__name__})
+            continue
+        client.register(name, adapter)
+    client.build_failures = failures
     return client
