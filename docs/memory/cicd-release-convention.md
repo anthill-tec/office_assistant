@@ -1,118 +1,108 @@
 ---
 name: cicd-release-convention
-description: "CI/CD publish model — automated production release from master (git-flow), TestPyPI on release/*"
-metadata: 
+description: "CI/CD release model — automated PyPI publish from main (git-flow + hatch-vcs), manual TestPyPI dry-run; skill ships as a public GitHub repo. 1.0.0 shipped."
+metadata:
   node_type: memory
   type: feedback
   originSessionId: 99afe2dc-d6bb-44f2-8156-92ea1d4df250
-  modified: 2026-07-26T06:00:11.207Z
+  modified: 2026-07-27T00:00:00.000Z
 ---
 
-The user's CI/CD release model (their standard across "almost every project"), for GitHub Actions + git-flow:
+**1.0.0 SHIPPED (2026-07-27):** `vidushi-oa 1.0.0` is live on PyPI (https://pypi.org/project/vidushi-oa/,
+`uv tool install vidushi-oa` → `voa`); the skill is public on `main`
+(`npx skills add anthill-tec/office_assistant/skills/vidushi-oa`). Repo:
+**`anthill-tec/office_assistant`** (public). The model below is what actually shipped — it evolved from
+earlier notes during the release, so trust this version.
 
-- **Production release is AUTOMATED from `master`.** The moment a git-flow `finish` lands on master (with its
-  version tag) and is pushed, CI triggers on master and **automatically publishes to production PyPI**. The
-  **gate is "only from master"** (the branch condition) — master only ever receives release-finish merges,
-  so the git-flow discipline IS the human decision. **Do NOT add a manual-approval reviewer gate** to the
-  production publish; that contradicts the model.
-- **Version = single source `pyproject.toml [project].version` (DRY) — do NOT add a bespoke version/tag
-  config.** The **git-workflow skill** already reads the version from the project config **by project type**
-  (Python → `[project].version`) and owns the **plain SemVer, no-`v`** tag rule, so `git flow release finish`
-  produces tag `0.1.0` (not `v0.1.0`). The skill issues the git-flow commands and handles the `versiontag`
-  prefix — no `[tool.gitflow]` section, no per-clone `git config` step to remember. (Correcting an earlier
-  note that wrongly proposed a duplicate config + tag-triggered publish.)
-- **PyPI publish TRIGGER = push to `master`; the SemVer tag is a SAFETY CHECK, not the trigger.** The
-  `publish` job is `if: github.ref == 'refs/heads/master'`; a step then requires master HEAD to carry a SemVer
-  tag **equal to `[project].version`**, else it refuses to publish (guards an untagged or version-mismatched
-  master commit). git-flow release-finish merges `release/*` → master (+ tags it); the **master push** drives
-  the deploy. TestPyPI stays on `release/*` push. No manual-reviewer gate — master is the gate.
-- **Test-publish to TestPyPI on `release/*` branch push** — packaging + deploy are validated there during
-  `git flow release`, before the production release from master.
-- `test` job (build wheel + pytest + release gate) runs on every push.
-- Use OIDC trusted publishing (`permissions: id-token: write`, `environment: pypi`/`testpypi` for
-  trusted-publisher scoping) — no long-lived stored token.
-- The **`release/*` branch is also where the final release-qualification steps run**: the **`no-mistakes`
-  workflow** (the `no-mistakes` skill) and **AXI validation/qualification** (per the AXI standard, so the
-  released code can be **submitted to the AXI catalog**). These are release-branch *process* steps run by
-  the user/orchestrator — not necessarily automated GitHub Actions jobs.
+## Release model (GitHub Actions + git-flow + hatch-vcs) — as shipped
+
+- **Production branch is `main`** (git-flow `gitflow.branch.master = main`; there is NO `master` branch).
+  Everything targets `refs/heads/main`.
+- **Version is single-sourced from the git TAG via hatch-vcs.** `pyproject.toml` has
+  `dynamic = ["version"]` + `[tool.hatch.version] source = "vcs"` (`local_scheme = "no-local-version"`);
+  there is **no static `[project].version` and no version-bump commit**. `git flow release finish 1.2.3`
+  tags `main` with `1.2.3` (no-`v`; `gitflow.prefix.versiontag = ""`), and hatch-vcs makes the built
+  version **== the tag by construction**. An untagged commit builds a dev version (e.g. `0.1.1.devN`).
+- **PyPI publish TRIGGER = push to `main`; the SemVer tag is a SAFETY CHECK, not the trigger.** The `publish`
+  job is `if: github.ref == 'refs/heads/main'`; a **gate step** checks HEAD carries a clean SemVer tag AND
+  `git merge-base --is-ancestor $SHA origin/main` — if there's **no tag it SKIPS (stays green)**, so ordinary
+  main commits don't red-CI; only a tagged, on-main commit publishes. No version-literal compare (hatch-vcs =
+  tag). No manual-reviewer gate — `main` + git-flow discipline IS the gate.
+- **TestPyPI is a MANUAL `workflow_dispatch` dry-run** (NOT a `release/*` push trigger, per the sandesh
+  model). Validate the deploy with `gh workflow run ci.yml --ref <branch>` before the real release; it
+  uploads a dev version (`skip-existing: true` makes it idempotent).
+- **`test` job** (build wheel + pytest + release gate) runs on every push; needs **`fetch-depth: 0`**
+  (hatch-vcs reads tags). Publisher jobs also use `fetch-depth: 0` + **`twine check dist/*`**.
+- **OIDC trusted publishing**, no stored token. Each publisher job needs `permissions: id-token: write`
+  **AND `contents: read`** — a `permissions:` block resets all other scopes to none, so without
+  `contents: read` `actions/checkout` fails ("Repository not found") on a private repo. **Trusted publishers
+  are configured on the index side under owner `anthill-tec`**: TestPyPI (env `testpypi`) + PyPI (env `pypi`),
+  project `vidushi-oa`, repo `office_assistant`, workflow `ci.yml` (pending publishers auto-create the project
+  on first publish). GitHub `testpypi`/`pypi` environments auto-create on first use.
+- **The `release/*` branch is where release-qualification runs** before finishing: the **`no-mistakes`
+  workflow** (the `no-mistakes` skill — it caught the entire mail-error-handling hardening + real deploy bugs)
+  and **AXI conformance validation**. These are release-branch *process* steps, not CI jobs. NOTE: no-mistakes
+  commits its fixes to its **gate remote** (`~/.no-mistakes/...`), NOT your local branch — after a run,
+  reconcile your local to the gate ref (`git fetch no-mistakes <branch>` then rebase/reset) before continuing.
+
+## Skill publishing — just a public GitHub repo (NOT an "AXI-catalog submission")
+
+Correcting an earlier note: publishing the skill is **not** a marketplace/catalog submission. The Vercel
+Agent Skills ecosystem (`npx skills`) **auto-discovers/indexes skills from any public GitHub repo** — there
+is no publish step. The bundle at `skills/vidushi-oa/SKILL.md` (valid frontmatter, `agentskills validate`-
+clean) is installable the moment the repo is public and the skill is on `main`:
+`npx skills add anthill-tec/office_assistant/skills/vidushi-oa` (or the whole repo). No CI job needed. See
+[[vercel-skills-bundle-packaging]]. Ref: https://vercel.com/docs/agent-resources/skills.
 
 ## OSS license — GPL-3.0-or-later (enables CI + public PyPI)
 
-The repo is licensed **GPL-3.0-or-later** (user's choice, 2026-07-26). Rationale: an **OSS license is the
-gate for a public GitHub repo → free GitHub Actions CI** and a **public PyPI publish**. GPL v3 (2007) is
-the **latest** GNU GPL (no v4); SPDX id `GPL-3.0-or-later` (bare `GPL-3.0` is deprecated). Requirements:
-- A verbatim **`LICENSE`** file at the **repo root** (GitHub convention — `licensee` auto-detects it, showing
-  the GPLv3 badge; if GitHub ever fails to detect, swap to choosealicense.com's exact `gpl-3.0.txt`).
-- `pyproject.toml` `license = "GPL-3.0-or-later"` → wheel `License-Expression: GPL-3.0-or-later`.
-Full decision + rationale: `docs/research/DN-packaging-distribution.md` §6 (in-repo). Delivered in CR-OA-018 §S5.
+The repo is licensed **GPL-3.0-or-later** (user's choice, 2026-07-26): an OSS license is the gate for a
+public GitHub repo → free Actions CI + public PyPI. GPL v3 (2007) is the latest GNU GPL; SPDX id
+`GPL-3.0-or-later` (bare `GPL-3.0` deprecated). A verbatim **`LICENSE`** at repo root (GitHub auto-detects →
+GPLv3 badge); `pyproject.toml` `license = "GPL-3.0-or-later"` → wheel `License-Expression`. **Do NOT also add
+a `License ::` trove classifier** (PEP 639: the SPDX expression supersedes it). Rationale:
+`docs/research/DN-packaging-distribution.md` §6. Delivered CR-OA-018 §S5.
 
-## CI workflow — release-time TODOs + local testing
+## CI provisioning principle + release-gate
 
-- **PRINCIPLE (user, 2026-07-26): provision the CI environment to meet the tests' real requirements — do
-  NOT weaken/skip tests to pass in a deficient runner.** When a test passes locally but fails on the GitHub
-  runner because the runner lacks something, ADD the capability to CI; don't relax the assertion or skip.
-  Concretely for this repo: (a) mongo-backed tests → a `services: mongodb` container; (b) tests that use the
-  repo `.venv/bin/python` (e.g. `CleanVenvPackagingTest`'s `VENV_PYTHON`) → create + run the suite inside a
-  repo-root `.venv` on the runner (mirrors the local `.venv/bin/python -m pytest`); (c) the keyring-fallback
-  test → install a REAL storable keyring backend on the runner (`keyrings.alt`, pointed at a hermetic temp
-  file) so the fallback actually stores and the warning names `keyring`; (d) the snapshot import-parity test →
-  the test itself GENERATES synthetic `data/*.jsonl` fixtures at setUp and tears them down (never depend on the
-  user's gitignored personal `data/*.jsonl`, never assert a hardcoded row count). Weakening a test to green a
-  deficient env throws away the coverage the test encodes.
+- **PRINCIPLE (user, 2026-07-26): provision the CI environment to meet the tests' real requirements — do NOT
+  weaken/skip tests to pass in a deficient runner.** When a test passes locally but fails on the runner,
+  ADD the capability to CI. For this repo: (a) mongo-backed tests → a `services: mongodb` container; (b) tests
+  that use the repo `.venv/bin/python` (`CleanVenvPackagingTest`) → create + run the suite inside a repo-root
+  `.venv`; (c) the keyring-fallback test → a REAL storable keyring (`keyrings.alt`, hermetic temp file);
+  (d) the snapshot import-parity test → the test GENERATES synthetic `data/*.jsonl` fixtures at setUp + tears
+  them down (never the user's gitignored personal data, never a hardcoded row count). (All done.)
+- **Release-gate script is vendored at `scripts/skill-release-gate.py`** (a copy of the generic
+  `~/.claude/scripts/skill-release-gate.py`, since a runner has no `~/.claude`); CI runs
+  `.venv/bin/python scripts/skill-release-gate.py --project-dir .`. Keep the copy in sync with the home
+  source. The per-project config is **`.skill-release.toml`** (its stale `7`→`8` store count is fixed).
+- **Test the CI workflow locally with `act`** — `act -l` for a fast parse-check (catches YAML errors, the
+  Node-actions bump, etc.), a full `act push`/`act workflow_dispatch` to exercise jobs in Docker. (Caveat: a
+  local mongod holding `27017` blocks act's own `mongo:7` service — stop it for a full act run.)
+- **Live mail-account verification (CR-OA-020) is a release-time test, not a CI gate** — the mail client
+  ships tested only against in-process fakes. Set up real Gmail/Fastmail/Yahoo accounts (secrets via the
+  vault/keyring resolver) to exercise the real adapters + the XOAUTH2 path end-to-end, as a release-branch
+  step. Keep it out of the pytest gate (no creds on runners).
+- **Minor follow-up:** bump `actions/checkout@v4` → `@v5` and `setup-python@v5` → `@v6` (Node-20 deprecation
+  warning; non-blocking).
 
-- **Vendor the release-gate script into the repo for CI — a remote runner can't reach `~/.claude`.**
-  `~/.claude/scripts/skill-release-gate.py` is a **generic cross-project ecosystem tool** (config-driven,
-  shared across skill-bundle projects) — but because a GitHub runner has no `~/.claude`, the workflow **must
-  run a repo-local copy**. Decision (2026-07-26): keep a copy at **`scripts/skill-release-gate.py`** and point
-  the CI `test` job at `python3 scripts/skill-release-gate.py --project-dir .` (done in CR-OA-018's
-  `.github/workflows/ci.yml`). The home copy stays the canonical/generic source — **keep the vendored copy in
-  sync** with it (refresh on ecosystem updates). Each project still carries its own **`.skill-release.toml`**
-  (engine + lifecycle/AXI checks); the script only reads that. If the generic tool is ever published as an
-  installable package, CI could `pip`-install it instead of vendoring — until then, the repo copy is required.
-- **The stale store-count bug was in OUR in-repo `.skill-release.toml` (not the script) — FIXED 7 → 8.**
-  Two checks failed because the config predated CR-OA-015's `orders` store: `[engine.wheel_glob_counts]`
-  `"vidushi_oa/schema/*.json" = 7` and the lifecycle check `"setup provisions 7 collections"` /
-  `expect = ["initialized[7]"]`. **8 is correct** (contacts, invoices, warranties, cases, products,
-  subscriptions, insurance, orders) — the repo pytest suite already expects 8. Bumped all three to 8 in
-  `bugfix/skill-release-toml-store-count`. The generic script reads the count from config; ideally the check
-  should derive from the engine's `STORES` rather than a literal. Phase 1 (`agentskills validate`) already PASSED.
-- **Test the CI workflow locally with `act`** (nektos/act) before pushing — `act -n`/`act --list` to
-  validate structure, or a full run to exercise the jobs in Docker. Catches the gate-script-path issue and
-  other runner-only problems without burning GitHub Actions minutes.
-- **Live mail-account verification (CR-OA-020) is a release-time test, not a CI gate.** The embedded mail
-  client (`mail-*` verbs + Gmail/Fastmail/Yahoo adapters + XOAUTH2) ships tested only against in-process
-  fakes — no live credentials in the suite (a deliberate CR-020 decision). **During the release**, set up a
-  live-account verification test (a real Gmail/Fastmail/Yahoo account each, secrets via the vault/keyring
-  resolver, `VIDUSHI_SECRET_BACKEND`) to exercise the real adapters end-to-end — this also finally exercises
-  the real `_default_adapter_factory` against live servers and the deferred Fastmail JMAP-vs-app-password
-  auth-mode path (see CR-OA-020 "Deferred follow-ups"). Keep it out of the pytest gate (no creds on runners);
-  run it as a release-branch qualification step alongside `no-mistakes` + AXI validation.
+## Release cutover — closes the full development cycle
 
-## Release cutover — the last step that closes the full development cycle
-
-The release "completes the circle": ship the package, prune the now-redundant local setup, reinstall from
-the package alone, with **agent state preserved throughout**.
-
-- **Preserve agent state — do NOT lose it.** Prior-session state lives in two places that must stay readable
-  by the released architecture: the **Mongo `vidushi_oa` store** ([[mongo-preexisting-data-migration]]) and
-  the **`data/*.jsonl` snapshots**. The JSONL are **chezmoi-versioned** (the user's dotfile state, gitignored
-  in this repo) — the user **keeps the same data** to preserve the agent's state, and it must read cleanly
-  after release. (This is also why the import-parity test generates its own throwaway fixtures instead of
-  depending on that personal data.) Local backend stays `VIDUSHI_BACKEND=mongo`; the JSONL are the chezmoi mirror.
-- **LAST step BEFORE release — prune redundant `~/.claude` artifacts** superseded by the bundle: the **7 legacy
-  standalone skills** + the **`inbox-analyst` agent** (AGENTS.md "Replacement path" — the unified
-  `skills/vidushi-oa/` supersedes them all), plus any **local scripts now shipped in the package/repo** (no
-  duplication). Do this only once the bundle is verified.
-- **AFTER release — reinstall via the new installer schema:** `uv tool install vidushi-oa` (engine) +
-  `npx skills add ./skills/vidushi-oa` (skill) + `voa setup`; confirm the pruned environment works **from the
-  package alone** and the preserved state is still readable. That closes the cycle.
+- **Preserve agent state — do NOT lose it.** Prior-session state lives in the **Mongo `vidushi_oa` store**
+  ([[mongo-preexisting-data-migration]]) + the **chezmoi-versioned `data/*.jsonl` snapshots** (gitignored
+  here). The user **keeps the same data**; local backend stays `VIDUSHI_BACKEND=mongo`.
+- **Prune redundant `~/.claude` artifacts** superseded by the bundle: the 7 legacy standalone skills + the
+  `inbox-analyst` agent (AGENTS.md "Replacement path"), + any local scripts now shipped in the package.
+- **Reinstall from the published artifacts** (now possible — 1.0.0 is on PyPI): `uv tool install vidushi-oa`
+  (engine) + `npx skills add anthill-tec/office_assistant/skills/vidushi-oa` (skill) + `voa setup`; confirm
+  the pruned environment works from the package alone and the preserved state still reads.
 
 ## Remote CI tracking
 
-Use the **`ci-monitor` skill** to watch GitHub Actions runs remotely after pushing (release/* → TestPyPI,
-master tag → PyPI) — track packaging/deploy execution without leaving the session.
+Use the **`ci-monitor` skill** to watch runs after pushing (main push → PyPI publish; `workflow_dispatch` →
+TestPyPI) — track packaging/deploy without leaving the session.
 
-**Why:** matches the git-flow release mechanism the user uses everywhere; the branch (master) is the gate.
-**How to apply:** when authoring any CI/CD publish workflow for this user, gate production publish to
-master (tag), automated; TestPyPI on release/*; never propose a manual-approval gate as "safer" — the
-git-flow model already gates it. See [[vercel-skills-bundle-packaging]] (CR-018 packaging context).
+**Why:** matches the git-flow release mechanism the user uses everywhere; **`main` is the gate**, automated,
+no manual-approval reviewer. TestPyPI is a manual dry-run. **How to apply:** when authoring any CI/CD publish
+workflow for this user, gate the production publish to a tagged, on-`main` commit (skip green otherwise);
+never propose a manual-approval gate. See [[vercel-skills-bundle-packaging]].
