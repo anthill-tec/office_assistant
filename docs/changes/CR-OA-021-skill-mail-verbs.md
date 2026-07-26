@@ -26,7 +26,13 @@ dual-mailbox merge + `[FM]`/`[GM]`/`[YH]` tagging move into the verb; the skill 
 searched from the verb's output. Where a harness already exposes a mail MCP (e.g. OpenClaw's `agent_mail`,
 Claude Code's FastmailMCP), the skill notes it MAY delegate to that as a documented **alternative** — but
 `voa mail-*` is the default, since it is the only path that yields the token-saving pre-processing
-(DN-mail-access Decision 1).
+(DN-mail-access Decision 1). The **deep-sweep mode**'s read path uses the same `voa mail-search` (a
+broad-window pass across the configured accounts): the merge / `[FM]`/`[GM]`/`[YH]` tag / TOON
+pre-processing now lives in the verb, so deep-sweep **reasons over returned rows** instead of issuing raw
+MCP searches — token-saving matters most on this, the heaviest read pass; its read-only guarantee
+(mutates nothing) is unchanged. `mail-get`'s real surface is `--account <name> --uid <uid>` (a row from
+`mail-search` carries both). MCP references that are **not** search — `draft_email` (draft-then-confirm),
+`create_event`/`compose_event` (calendar) — stay as-is; §S1 repoints *search* only.
 
 ### §S2 Safety contract over `voa` results
 The phishing / customs safety contract is unchanged but restated over `mail-search` output (the agent
@@ -47,6 +53,7 @@ orchestrates guidance + verification only; secrets flow user→`voa` directly.
 
 ### §S1
 - [ ] `SKILL.md` "Mailboxes & search" instructs `voa mail-search` (grep finds `mail-search`) and no longer instructs calling FastmailMCP / the Gmail connector for search; a Yahoo account is named alongside Fastmail + Gmail.
+- [ ] The **Deep-sweep mode** section reads via `voa mail-search` (grep finds `mail-search` in that section), not a raw MCP search; its read-only guarantee is restated unchanged (still no send/draft/delete/archive/label/mark-read/calendar/store writes).
 - [ ] `agentskills validate skills/vidushi-oa` exits `0`.
 
 ### §S3
