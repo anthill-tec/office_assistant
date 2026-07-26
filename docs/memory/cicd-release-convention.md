@@ -37,6 +37,18 @@ Full decision + rationale: `docs/research/DN-packaging-distribution.md` §6 (in-
 
 ## CI workflow — release-time TODOs + local testing
 
+- **PRINCIPLE (user, 2026-07-26): provision the CI environment to meet the tests' real requirements — do
+  NOT weaken/skip tests to pass in a deficient runner.** When a test passes locally but fails on the GitHub
+  runner because the runner lacks something, ADD the capability to CI; don't relax the assertion or skip.
+  Concretely for this repo: (a) mongo-backed tests → a `services: mongodb` container; (b) tests that use the
+  repo `.venv/bin/python` (e.g. `CleanVenvPackagingTest`'s `VENV_PYTHON`) → create + run the suite inside a
+  repo-root `.venv` on the runner (mirrors the local `.venv/bin/python -m pytest`); (c) the keyring-fallback
+  test → install a REAL storable keyring backend on the runner (`keyrings.alt`, pointed at a hermetic temp
+  file) so the fallback actually stores and the warning names `keyring`; (d) the snapshot import-parity test →
+  the test itself GENERATES synthetic `data/*.jsonl` fixtures at setUp and tears them down (never depend on the
+  user's gitignored personal `data/*.jsonl`, never assert a hardcoded row count). Weakening a test to green a
+  deficient env throws away the coverage the test encodes.
+
 - **Vendor the release-gate script into the repo for CI — a remote runner can't reach `~/.claude`.**
   `~/.claude/scripts/skill-release-gate.py` is a **generic cross-project ecosystem tool** (config-driven,
   shared across skill-bundle projects) — but because a GitHub runner has no `~/.claude`, the workflow **must
