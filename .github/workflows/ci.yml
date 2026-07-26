@@ -35,11 +35,23 @@ jobs:
       - name: Model-B release gate
         run: python3 ~/.claude/scripts/skill-release-gate.py --project-dir .
 
+  # Publishing REQUIRES all of the following to be configured before it can (or will) run:
+  #   (a) a GitHub Environment named `pypi` with required reviewers — the manual approval
+  #       gate that pauses this job until a human approves the deployment;
+  #   (b) PyPI trusted publishing (OIDC) configured for this repo — no stored long-lived
+  #       token is used (see `permissions: id-token: write` below);
+  #   (c) the repository being public (a prerequisite for PyPI trusted publishing).
+  # Until (a), (b), and (c) are in place this job does not — and cannot — publish.
   publish:
     name: Publish to PyPI
     needs: test
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/vidushi-oa
+    permissions:
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
