@@ -7,17 +7,17 @@ rows/fields needed.
 ## Installing the skill bundle
 
 From the **repo root**, install the skill + engine together (full detail — incl. the public
-`pip install vidushi-oa` path, gated on the OSS-license/PyPI decision — in `../README.md` → **Install**):
+`uv tool install vidushi-oa` path, gated on the OSS-license/PyPI decision — in `../README.md` → **Install**):
 ```bash
 npx skills add ./skills/vidushi-oa      # the vidushi-oa skill (flat-layout vercel/skills bundle)
-pip install -e .                        # the voa engine
+uv tool install --editable .            # the voa engine
 voa setup                               # provision the local MongoDB
 ```
 The shape gate `agentskills validate skills/vidushi-oa` (see **Release gate** below) confirms the bundle.
 
 ## `voa` — data store CLI (`pymongo`, MongoDB-backed)
 
-The console command is **`voa`** (`pip install vidushi-oa`, or in-repo `python -m venv .venv && .venv/bin/pip install -e .`). The in-repo
+The console command is **`voa`** (`uv tool install vidushi-oa`, or in-repo `uv tool install --editable .`). The in-repo
 `scripts/store.py` stays a path-compat shim (`python3 scripts/store.py <verb>` == `voa <verb>`).
 
 Types: `contacts` · `invoices` · `warranties` · `cases` · `products` · `subscriptions` · `insurance`

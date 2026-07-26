@@ -163,12 +163,12 @@ def _toon_shape(rec, type_):
 
 
 def expand(rec, fields):
-    from vidushi_oa import mongo as oa_mongo
+    from vidushi_oa.backends import get_backend, query as Q
     for f in fields:
         store = FK_MAP.get(f)
         ref = getp(rec, f)
         if store and ref:
-            rec[f + "_obj"] = oa_mongo.coll(store).find_one({"id": ref}, {"_id": 0})
+            rec[f + "_obj"] = get_backend().store(store).find_one(Q.cond("id", "eq", ref))
     return rec
 
 
@@ -243,37 +243,36 @@ def _coerce_scalar(v):
 
 
 def _mongo_filter(a):
-    """Translate the query flags into a MongoDB filter document (all AND-ed)."""
-    f = {}
+    """Translate the query flags into a neutral filter node plus an optional native `extra`.
+
+    Returns `(Q.all_(*conds), native_extra)`: `--where`/`--contains`/`--after`/`--before`
+    become neutral `Cond`s AND-ed together; `--filter` (native Mongo passthrough) is returned
+    verbatim as `native_extra` for the backend to AND in, else None."""
+    from vidushi_oa.backends import query as Q
+    conds = []
     for w in (a.where or []):
         k, _, v = w.partition("=")
         if v in ("None", "null"):
-            f[k] = {"$in": [None]}          # null-or-missing
+            conds.append(Q.cond(k, "eq", None))          # null-or-missing
         else:
-            f[k] = _coerce_scalar(v)
+            conds.append(Q.cond(k, "eq", _coerce_scalar(v)))
     for c in (a.contains or []):
         k, _, sub = c.partition("=")
-        f[k] = {"$regex": re.escape(sub), "$options": "i"}  # matches strings + array-of-string elements
+        conds.append(Q.cond(k, "contains", sub))         # matches strings + array-of-string elements
     for w in (getattr(a, "after", None) or []):
         k, _, d = w.partition("=")
-        cur = f.get(k)
-        if not isinstance(cur, dict):
-            cur = f[k] = {}
-        cur["$gte"] = d                     # ISO date >= bound (inclusive)
+        conds.append(Q.cond(k, "gte", d))                # ISO date >= bound (inclusive)
     for w in (getattr(a, "before", None) or []):
         k, _, d = w.partition("=")
-        cur = f.get(k)
-        if not isinstance(cur, dict):
-            cur = f[k] = {}
-        cur["$lte"] = d                     # ISO date <= bound (inclusive)
-    if getattr(a, "filter", None):
-        f.update(json.loads(a.filter))      # native Mongo passthrough
-    return f
+        conds.append(Q.cond(k, "lte", d))                # ISO date <= bound (inclusive)
+    extra = json.loads(a.filter) if getattr(a, "filter", None) else None  # native Mongo passthrough
+    return Q.all_(*conds), extra
 
 
 def cmd_query(a):
-    from vidushi_oa import mongo as oa_mongo
-    docs = list(oa_mongo.coll(a.type).find(_mongo_filter(a), {"_id": 0}))
+    from vidushi_oa.backends import get_backend
+    query, extra = _mongo_filter(a)
+    docs = get_backend().store(a.type).find(query, extra=extra)
     if a.sort:
         docs.sort(key=lambda r: (getp(r, a.sort) is None, str(getp(r, a.sort))))
     if a.limit:
@@ -324,8 +323,8 @@ def _query_next(type_, rows):
 
 
 def cmd_get(a):
-    from vidushi_oa import mongo as oa_mongo
-    r = oa_mongo.coll(a.type).find_one({"id": a.id}, {"_id": 0})
+    from vidushi_oa.backends import get_backend, query as Q
+    r = get_backend().store(a.type).find_one(Q.cond("id", "eq", a.id))
     if r is None:
         out({"error": "not found", "type": a.type, "id": a.id}); sys.exit(1)
     if a.expand:
@@ -350,12 +349,13 @@ def _get_next(type_, rec):
 
 
 def cmd_add(a):
-    from vidushi_oa import mongo as oa_mongo
-    from pymongo.errors import DuplicateKeyError
+    from vidushi_oa.backends import get_backend, query as Q
+    backend = get_backend()
+    store = backend.store(a.type)
+    dup_error = backend.dup_error
     payload = json.loads(a.json)
     recs = payload if isinstance(payload, list) else [payload]
-    coll = oa_mongo.coll(a.type)
-    existing = {d["id"] for d in coll.find({}, {"id": 1, "_id": 0})}
+    existing = {d["id"] for d in store.find(Q.ALL, fields=["id"])}
     added, skipped = [], []
     for rec in recs:
         rec["id"] = rec.get("id") or gen_id(a.type, rec, existing)
@@ -363,41 +363,38 @@ def cmd_add(a):
             skipped.append(rec["id"]); continue
         rec.setdefault("updated", today())
         try:
-            coll.insert_one(dict(rec))
-        except DuplicateKeyError:
+            store.insert(rec)
+        except dup_error:
             skipped.append(rec["id"]); continue
         existing.add(rec["id"]); added.append(rec["id"])
     out({"added": added, "skipped": skipped})
 
 
 def cmd_update(a):
-    from vidushi_oa import mongo as oa_mongo
-    coll = oa_mongo.coll(a.type)
+    from vidushi_oa.backends import get_backend, query as Q
+    store = get_backend().store(a.type)
     patch = json.loads(a.json) if a.json else {}
-    upd = {"$set": {**patch, "updated": today()}}
-    if a.append_log is not None:
-        upd["$push"] = {"log": {"date": today(), "note": a.append_log}}
-    res = coll.update_one({"id": a.id}, upd)
-    if res.matched_count == 0:
+    push = {"log": [{"date": today(), "note": a.append_log}]} if a.append_log is not None else {}
+    matched = store.update(Q.cond("id", "eq", a.id),
+                           Q.Update(set={**patch, "updated": today()}, push=push))
+    if matched == 0:
         out({"error": "not found", "id": a.id}); sys.exit(1)
     out({"updated": a.id})
 
 
 def cmd_rm(a):
-    from vidushi_oa import mongo as oa_mongo
-    coll = oa_mongo.coll(a.type)
-    coll.delete_one({"id": a.id})
-    out({"removed": a.id, "remaining": coll.count_documents({})})
+    from vidushi_oa.backends import get_backend, query as Q
+    store = get_backend().store(a.type)
+    store.delete(Q.cond("id", "eq", a.id))
+    out({"removed": a.id, "remaining": store.count(Q.ALL)})
 
 
 def cmd_stats(a):
-    from vidushi_oa import mongo as oa_mongo
-    coll = oa_mongo.coll(a.type)
-    total = coll.count_documents({})
+    from vidushi_oa.backends import get_backend, query as Q
+    store = get_backend().store(a.type)
+    total = store.count(Q.ALL)
     if a.by:
-        counts = {}
-        for doc in coll.aggregate([{"$group": {"_id": f"${a.by}", "n": {"$sum": 1}}}]):
-            counts[str(doc["_id"])] = doc["n"]
+        counts = store.count_by(a.by)
         env = {"type": a.type, "total": total, "by": a.by, "counts": counts}
     else:
         env = {"type": a.type, "total": total}
@@ -408,27 +405,29 @@ def cmd_stats(a):
 
 # ── Tracking-state verbs ──────────────────────────────────────────────────────
 def cmd_set_status(a):
-    from vidushi_oa import mongo as oa_mongo
+    from vidushi_oa.backends import get_backend, query as Q
     status = a.status.upper()
     if status not in STATUSES:
         out({"error": "invalid status", "given": a.status, "allowed": STATUSES}); sys.exit(1)
-    coll = oa_mongo.coll(a.type)
+    store = get_backend().store(a.type)
     if a.id:
-        f = {"id": a.id}
+        query = Q.cond("id", "eq", a.id)
+        many = False
     elif a.where or a.contains:
-        f = _mongo_filter(a)
+        query, _ = _mongo_filter(a)
+        many = True
     else:
         out({"error": "give <id> or --where/--contains"}); sys.exit(1)
-    ids = [d["id"] for d in coll.find(f, {"id": 1, "_id": 0})]
+    ids = [d["id"] for d in store.find(query, fields=["id"])]
     if not ids:
         out({"error": "no targets matched"}); sys.exit(1)
-    coll.update_many(f, {"$set": {"status": status, "updated": today()}})
+    store.update(query, Q.Update(set={"status": status, "updated": today()}), many=many)
     out({"status": status, "count": len(ids), "ids": ids})
 
 
 def cmd_action_add(a):
-    from vidushi_oa import mongo as oa_mongo
-    coll = oa_mongo.coll(a.type)
+    from vidushi_oa.backends import get_backend, query as Q
+    store = get_backend().store(a.type)
     known = ACTION_SETS.get(a.type, [])
     if known and a.action not in known:
         sys.stderr.write(f"warn: '{a.action}' not in {a.type} action set {known}\n")
@@ -436,46 +435,51 @@ def cmd_action_add(a):
     if a.detail: act["detail"] = a.detail
     if a.owner:  act["owner"] = a.owner
     if a.due:    act["due"] = a.due
-    res = coll.update_one({"id": a.id}, {"$push": {"actions": act}, "$set": {"updated": today()}})
-    if res.matched_count == 0:
+    matched = store.update(Q.cond("id", "eq", a.id),
+                           Q.Update(set={"updated": today()}, push={"actions": [act]}))
+    if matched == 0:
         out({"error": "not found", "id": a.id}); sys.exit(1)
     out({"id": a.id, "action": a.action, "status": "OPEN"})
 
 
 def cmd_action_resolve(a):
-    from vidushi_oa import mongo as oa_mongo
-    coll = oa_mongo.coll(a.type)
-    res = coll.update_one(
-        {"id": a.id, "actions": {"$elemMatch": {"action": a.action, "status": "OPEN"}}},
-        {"$set": {"actions.$.status": "RESOLVED", "actions.$.resolved": today(), "updated": today()}},
-    )
-    if res.matched_count == 0:
+    from vidushi_oa.backends import get_backend, query as Q
+    store = get_backend().store(a.type)
+    matched = store.update(
+        Q.cond("id", "eq", a.id),
+        Q.Update(set={"updated": today()},
+                 resolve=("actions",
+                          (Q.cond("action", "eq", a.action), Q.cond("status", "eq", "OPEN")),
+                          {"status": "RESOLVED", "resolved": today()})))
+    if matched == 0:
         out({"error": "no OPEN action", "id": a.id, "action": a.action}); sys.exit(1)
     out({"id": a.id, "action": a.action, "status": "RESOLVED"})
 
 
 def cmd_doc_add(a):
-    from vidushi_oa import mongo as oa_mongo
-    coll = oa_mongo.coll(a.type)
+    from vidushi_oa.backends import get_backend, query as Q
+    store = get_backend().store(a.type)
     known = DOC_ASSETS.get(a.type, [])
     if known and a.asset_type not in known:
         sys.stderr.write(f"warn: '{a.asset_type}' not in {a.type} document-asset set {known}\n")
     doc = {"type": a.asset_type, "path": a.path}
     if a.number: doc["number"] = a.number
     if a.date:   doc["date"] = a.date
-    res = coll.update_one({"id": a.id}, {"$push": {"documents": doc}, "$set": {"updated": today()}})
-    if res.matched_count == 0:
+    matched = store.update(Q.cond("id", "eq", a.id),
+                           Q.Update(set={"updated": today()}, push={"documents": [doc]}))
+    if matched == 0:
         out({"error": "not found", "id": a.id}); sys.exit(1)
     out({"id": a.id, "document": doc})
 
 
 def cmd_attention(a):
-    from vidushi_oa import mongo as oa_mongo
+    from vidushi_oa.backends import get_backend, query as Q
     types = [a.type] if a.type else list(STORES.keys())
     res = []
-    query = {"$or": [{"actions.status": "OPEN"}, {"status": {"$in": list(ATTENTION_STATUSES)}}]}
+    query = Q.any_(Q.elem("actions", Q.cond("status", "eq", "OPEN")),
+                   Q.cond("status", "in", list(ATTENTION_STATUSES)))
     for t in types:
-        for d in oa_mongo.coll(t).find(query, {"_id": 0}):
+        for d in get_backend().store(t).find(query):
             opens = _open_actions(d)
             res.append({"type": t, "id": d.get("id"),
                         "name": d.get("vendor") or d.get("product") or d.get("provider") or d.get("merchant"),
@@ -489,18 +493,19 @@ def cmd_attention(a):
 
 
 def cmd_warranty_sweep(a):
-    """Recompute past-due warranties to EXPIRED via the transition engine on Mongo;
+    """Recompute past-due warranties to EXPIRED via the transition engine on the active backend;
     each `expire` transition opens a renew-or-extend action. The `status != EXPIRED`
     filter makes a repeat sweep idempotent (already-expired warranties are skipped)."""
-    from vidushi_oa import mongo as oa_mongo, transitions
-    coll = oa_mongo.coll("warranties")
+    from vidushi_oa import transitions
+    from vidushi_oa.backends import get_backend, query as Q
+    store = get_backend().store("warranties")
     now = today(); changed = []
-    for doc in coll.find({"expiry": {"$lt": now}, "status": {"$ne": "EXPIRED"}}, {"_id": 0}):
+    for doc in store.find(Q.all_(Q.cond("expiry", "lt", now), Q.cond("status", "ne", "EXPIRED"))):
         tr = transitions.find_transition("warranties", doc.get("status"), "expire")
         if tr is None:
             continue
         if not a.dry_run:
-            _apply_transition(coll, doc, tr)
+            _apply_transition(store, doc, tr)
         changed.append(doc["id"])
     out({"expired": changed, "count": len(changed), "dry_run": bool(a.dry_run)})
 
@@ -508,26 +513,29 @@ def cmd_warranty_sweep(a):
 def cmd_due_sweep(a):
     """Mark recurring-store docs (subscriptions, insurance, ...) DUE when their
     renewal trigger — EITHER `renews` OR `expiry` — falls within the 30-day
-    lookahead, via the transition engine on Mongo; each `renewal-window`
+    lookahead, via the transition engine on the active backend; each `renewal-window`
     transition opens the domain action (e.g. cancel-before-charge for
     subscriptions, renew-policy for insurance, which carries `expiry` not
     `renews`). Recurring stores are discovered dynamically as those that declare a
     `renewal-window` transition. The `status != DUE` filter makes a repeat sweep
     idempotent (already-due docs are skipped)."""
-    from vidushi_oa import mongo as oa_mongo, transitions
+    from vidushi_oa import transitions
+    from vidushi_oa.backends import get_backend, query as Q
     cutoff = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
     recurring = [t for t in STORES if transitions.find_transition(t, "IN_PROGRESS", "renewal-window")]
     due = {}
     count = 0
     for t in recurring:
-        coll = oa_mongo.coll(t)
+        store = get_backend().store(t)
         ids = []
-        for doc in coll.find({"$or": [{"renews": {"$lte": cutoff}}, {"expiry": {"$lte": cutoff}}], "status": {"$ne": "DUE"}}, {"_id": 0}):
+        for doc in store.find(Q.all_(
+                Q.any_(Q.cond("renews", "lte", cutoff), Q.cond("expiry", "lte", cutoff)),
+                Q.cond("status", "ne", "DUE"))):
             tr = transitions.find_transition(t, doc.get("status"), "renewal-window")
             if tr is None:
                 continue
             if not a.dry_run:
-                _apply_transition(coll, doc, tr)
+                _apply_transition(store, doc, tr)
             ids.append(doc["id"])
         due[t] = ids
         count += len(ids)
@@ -540,31 +548,32 @@ def cmd_delivery_sweep(a):
     so `attention` surfaces it. Unlike warranty/due-sweep the status is NOT the idempotency
     key (a stuck order stays IN_PROGRESS); instead the query excludes orders already carrying
     an OPEN `stuck-chase`, so a repeat sweep opens none. `--dry-run` writes nothing."""
-    from vidushi_oa import mongo as oa_mongo
+    from vidushi_oa.backends import get_backend, query as Q
     now = today()
     cutoff = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
-    coll = oa_mongo.coll("orders")
-    query = {
-        "status": {"$in": ["NEW", "UNKNOWN", "IN_PROGRESS"]},
-        "$or": [{"last_event_date": {"$lt": cutoff}}, {"eta": {"$lt": now}}],
-        "actions": {"$not": {"$elemMatch": {"action": "stuck-chase", "status": "OPEN"}}},
-    }
+    store = get_backend().store("orders")
+    query = Q.all_(
+        Q.cond("status", "in", ["NEW", "UNKNOWN", "IN_PROGRESS"]),
+        Q.any_(Q.cond("last_event_date", "lt", cutoff), Q.cond("eta", "lt", now)),
+        Q.none_(Q.elem("actions", Q.cond("action", "eq", "stuck-chase"), Q.cond("status", "eq", "OPEN"))),
+    )
     chased = []
-    for doc in coll.find(query, {"_id": 0}):
+    for doc in store.find(query):
         if not a.dry_run:
-            coll.update_one(
-                {"id": doc["id"]},
-                {"$push": {"actions": {"action": "stuck-chase", "status": "OPEN",
-                                       "owner": "user", "opened": now}},
-                 "$set": {"updated": now}})
+            store.update(
+                Q.cond("id", "eq", doc["id"]),
+                Q.Update(set={"updated": now},
+                         push={"actions": [{"action": "stuck-chase", "status": "OPEN",
+                                            "owner": "user", "opened": now}]}))
         chased.append(doc["id"])
     out({"chased": chased, "count": len(chased), "dry_run": bool(a.dry_run)})
 
 
-def _apply_transition(coll, doc, tr):
-    """Apply one declarative transition to a Mongo doc: set status->`tr["to"]`
+def _apply_transition(store, doc, tr):
+    """Apply one declarative transition to a doc via the neutral Store: set status->`tr["to"]`
     (+ updated), fire the transition's effects (open-action / require-doc pushes,
     resolve-action flips OPEN->RESOLVED). Shared by `event` and `warranty-sweep`."""
+    from vidushi_oa.backends import query as Q
     now = today()
     set_fields = {"status": tr["to"], "updated": now}
     pushes = []
@@ -588,30 +597,31 @@ def _apply_transition(coll, doc, tr):
             set_fields["stage"] = effect.get("stage")
         elif op == "resolve-action":
             resolves.append(effect.get("action"))
-    update = {"$set": set_fields}
-    if pushes:
-        update["$push"] = {"actions": {"$each": pushes}}
-    coll.update_one({"id": doc["id"]}, update)
+    store.update(Q.cond("id", "eq", doc["id"]),
+                 Q.Update(set=set_fields, push={"actions": pushes} if pushes else {}))
     for slug_name in resolves:
-        coll.update_one(
-            {"id": doc["id"], "actions": {"$elemMatch": {"action": slug_name, "status": "OPEN"}}},
-            {"$set": {"actions.$.status": "RESOLVED", "actions.$.resolved": now}})
+        store.update(
+            Q.cond("id", "eq", doc["id"]),
+            Q.Update(resolve=("actions",
+                              (Q.cond("action", "eq", slug_name), Q.cond("status", "eq", "OPEN")),
+                              {"status": "RESOLVED", "resolved": now})))
 
 
 def cmd_event(a):
     """Drive a doc through the declarative transition table: look up (status, event),
     apply the matching transition (set status + fire effects), reject an unmatched
-    (from, event) pair leaving the Mongo doc untouched."""
-    from vidushi_oa import mongo as oa_mongo, transitions
-    coll = oa_mongo.coll(a.type)
-    doc = coll.find_one({"id": a.id}, {"_id": 0})
+    (from, event) pair leaving the stored doc untouched."""
+    from vidushi_oa import transitions
+    from vidushi_oa.backends import get_backend, query as Q
+    store = get_backend().store(a.type)
+    doc = store.find_one(Q.cond("id", "eq", a.id))
     if doc is None:
         out({"error": "not found", "id": a.id}); sys.exit(1)
     tr = transitions.find_transition(a.type, doc.get("status"), a.event)
     if tr is None:
         out({"error": "illegal transition", "id": a.id,
              "from": doc.get("status"), "event": a.event}); sys.exit(1)
-    _apply_transition(coll, doc, tr)
+    _apply_transition(store, doc, tr)
     out({"id": a.id, "event": a.event, "from": tr["from"], "to": tr["to"]})
 
 
@@ -623,31 +633,22 @@ def _load_schema(t):
 
 
 def _apply_validators():
-    """Attach each store's `$jsonSchema` validator to its collection (idempotent)."""
-    from vidushi_oa import mongo as oa_mongo
-    db = oa_mongo.db()
-    existing = set(db.list_collection_names())
-    for t in STORES:
-        if t not in existing:
-            db.create_collection(t)
-            existing.add(t)
-        db.command("collMod", t, validator={"$jsonSchema": _load_schema(t)},
-                   validationLevel="moderate", validationAction="error")
-    return list(STORES)
+    """Provision each store's collection + `$jsonSchema` validator via the active backend."""
+    from vidushi_oa.backends import get_backend
+    return get_backend().provision({t: _load_schema(t) for t in STORES})
 
 
 def cmd_apply_validators(a):
-    """Attach each store's `$jsonSchema` validator to its MongoDB collection (idempotent)."""
-    from vidushi_oa import mongo as oa_mongo
+    """Attach each store's `$jsonSchema` validator to its collection (idempotent)."""
+    from vidushi_oa.backends import get_backend
     done = _apply_validators()
-    out({"validated": done, "db": oa_mongo.db().name})
+    out({"validated": done, "db": get_backend().db_name()})
 
 
 def _nonconforming_ids(t):
     """Ids of documents in collection `t` that do NOT match the store's $jsonSchema."""
-    from vidushi_oa import mongo as oa_mongo
-    return [d["id"] for d in oa_mongo.coll(t).find(
-        {"$nor": [{"$jsonSchema": _load_schema(t)}]}, {"id": 1, "_id": 0})]
+    from vidushi_oa.backends import get_backend
+    return get_backend().store(t).nonconforming(_load_schema(t))
 
 
 def cmd_validate(a):
@@ -662,57 +663,43 @@ def cmd_validate(a):
 def cmd_import(a):
     """Read each store's JSONL from DATA (honouring VIDUSHI_DATA_DIR) and upsert every
     record into Mongo by `id` (idempotent — re-running creates no duplicates)."""
-    from vidushi_oa import mongo as oa_mongo
+    from vidushi_oa.backends import get_backend
     types = [a.type] if a.type else list(STORES)
     imported = {}
     for t in types:
-        coll = oa_mongo.coll(t)
+        store = get_backend().store(t)
         n = 0
         for rec in load(t):
-            coll.replace_one({"id": rec["id"]}, rec, upsert=True)
+            store.replace(rec["id"], rec)
             n += 1
         imported[t] = n
     out({"imported": imported})
 
 
 def cmd_init(a):
-    """Create each store's MongoDB collection + a unique index on `id`, then attach
-    the `$jsonSchema` validators (idempotent)."""
-    from vidushi_oa import mongo as oa_mongo
+    """Create each store's collection + a unique index on `id`, then attach the
+    `$jsonSchema` validators (idempotent)."""
+    from vidushi_oa.backends import get_backend
+    backend = get_backend()
     done = []
     for t in STORES:
-        oa_mongo.coll(t).create_index("id", unique=True)
+        backend.store(t).ensure_id_index()
         done.append(t)
     _apply_validators()
-    out({"initialized": done, "db": oa_mongo.db().name})
+    out({"initialized": done, "db": backend.db_name()})
 
 
 def cmd_setup(a):
-    """Verify the VIDUSHI_MONGO_URI connection (short timeout, fails fast with
-    actionable guidance if unreachable); with --check that is all. Otherwise run the
-    `init` provisioning (collections + unique `id` indexes + `$jsonSchema` validators)."""
-    from pymongo import MongoClient
-    from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+    """Probe the active backend's readiness (fails fast with actionable guidance if not
+    ready); with --check that is all. Otherwise run the `init` provisioning (collections +
+    unique `id` indexes + `$jsonSchema` validators)."""
+    from vidushi_oa.backends import get_backend
 
-    uri = os.environ.get("VIDUSHI_MONGO_URI", "mongodb://127.0.0.1:27017")
-    db_name = os.environ.get("VIDUSHI_MONGO_DB", "vidushi_oa")
-    probe = MongoClient(uri, serverSelectionTimeoutMS=2000)
-    try:
-        probe.admin.command("ping")
-    except (ServerSelectionTimeoutError, ConnectionFailure) as e:
-        print(
-            f"Cannot reach MongoDB at {uri}: {e}\n"
-            f"Start a local mongod (default port 27017) — e.g. via your service manager "
-            f"(`systemctl start mongod`) or `mongod --dbpath <dir>` — then retry. "
-            f"To point elsewhere set VIDUSHI_MONGO_URI (e.g. "
-            f"VIDUSHI_MONGO_URI=mongodb://host:27017).",
-            file=sys.stderr,
-        )
+    ok, message = get_backend().check()
+    if not ok:
+        print(message, file=sys.stderr)
         sys.exit(1)
-    finally:
-        probe.close()
-
-    print(f"Mongo reachable at {uri} — db {db_name}")
+    print(message)
     if getattr(a, "check", False):
         return
     cmd_init(a)
@@ -723,11 +710,11 @@ def cmd_snapshot(a):
     (honouring VIDUSHI_DATA_DIR). One JSON object per line, `_id` stripped, keys ordered
     `id` first then the rest sorted -> byte-identical output across repeated runs.
     Writes atomically (tmp file + os.replace)."""
-    from vidushi_oa import mongo as oa_mongo
+    from vidushi_oa.backends import get_backend, query as Q
     types = [a.type] if a.type else list(STORES)
     counts = {}
     for t in types:
-        docs = list(oa_mongo.coll(t).find({}, {"_id": 0}))
+        docs = get_backend().store(t).find(Q.ALL)
         target = path(t)
         tmp = target + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -821,7 +808,7 @@ def main():
     if len(sys.argv) == 1:
         env = os.environ.get("VIDUSHI_FORMAT")
         _FMT = env if env in ("toon", "json") else "toon"
-        print("office_assistant store (scripts/store.py) — MongoDB-backed "
+        print("vidushi-oa store (scripts/store.py) — local "
               "personal-admin data CLI. Rows needing attention:")
         cmd_attention(argparse.Namespace(type=None))
         return
@@ -835,7 +822,12 @@ def main():
             env = os.environ.get("VIDUSHI_FORMAT")
             fmt_choice = env if env in ("toon", "json") else "toon"   # env, else default; garbage env -> toon
     _FMT = fmt_choice
-    a.func(a)
+    try:
+        a.func(a)
+    except ValueError as e:            # unknown VIDUSHI_BACKEND from get_backend()
+        out({"error": str(e)}); sys.exit(1)
+    except NotImplementedError as e:   # e.g. sqlite --filter (mongo-only)
+        out({"error": str(e)}); sys.exit(1)
 
 
 if __name__ == "__main__":

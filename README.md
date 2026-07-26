@@ -1,6 +1,6 @@
 # Vidushi OA
 
-**Version 0.1.0** · engine `pip install vidushi-oa` (console `voa`) + the portable `vidushi-oa` skill.
+**Version 0.1.0** · engine `uv tool install vidushi-oa` (console `voa`) + the portable `vidushi-oa` skill.
 
 **Vidushi OA** is a personal office assistant that reads your mail (Fastmail + Gmail) and runs the
 everyday admin lifecycle around the things you buy and pay for — subscriptions, purchases & deliveries,
@@ -9,7 +9,7 @@ invoices, warranties, support cases, and product references.
 It is **a set of defined roles, not just code.** Each role is a Claude *skill* (or *agent*) with a
 clear job; they all read and write one shared **data + document store** that lives in this folder.
 The only program here is the **`voa`** CLI (the installable `vidushi-oa` package) — the behaviour lives
-in the roles. Get started: `pip install vidushi-oa` (or, in-repo, `python -m venv .venv && .venv/bin/pip install -e .`), then `voa setup`.
+in the roles. Get started: `uv tool install vidushi-oa` (or, in-repo, `uv tool install --editable .`), then `voa setup`.
 
 ---
 
@@ -54,19 +54,23 @@ provides the `voa` CLI). Install both, then `voa setup`.
 **Local / dev (works today):**
 ```bash
 npx skills add ./skills/vidushi-oa                    # add the skill from this repo
-python -m venv .venv && .venv/bin/pip install -e .    # the engine (voa), editable/in-repo
+uv tool install --editable .                          # the engine (voa), editable/in-repo
 voa setup                                             # verify/provision the local MongoDB
 agentskills validate skills/vidushi-oa                # confirm the bundle shape (exits 0)
 ```
 
 **Public (one-liner, once published):**
 ```bash
-pip install vidushi-oa
+uv tool install vidushi-oa
 npx skills add github.com/antojk/office_assistant//skills/vidushi-oa
 voa setup
 ```
-> The public path is **gated on the OSS-license decision + PyPI publish**: `pip install vidushi-oa`
+> The public path is **gated on the OSS-license decision + PyPI publish**: `uv tool install vidushi-oa`
 > is not yet on PyPI and the repo is not yet public. Until then, use the local/dev path above.
+
+> **Backend.** SQLite is the default backend — zero-config, no server, nothing to provision. MongoDB is
+> opt-in: install the extra with `uv tool install "vidushi-oa[mongo]"` and select it with
+> `VIDUSHI_BACKEND=mongo`.
 
 The unified `skills/vidushi-oa/` skill **supersedes** the seven legacy `~/.claude/skills/` skills +
 the `inbox-analyst` agent; after installing and verifying it, remove those legacy files (see
@@ -76,8 +80,9 @@ the `inbox-analyst` agent; after installing and verifying it, remove those legac
 
 ## The data store
 
-Everything the roles learn is kept in **MongoDB** (db `vidushi_oa`) and accessed through the
-**`voa`** CLI — never directly. `voa snapshot` mirrors it to `data/*.jsonl` for versioning.
+Everything the roles learn is kept in the **active backend** — SQLite by default (db `vidushi_oa`,
+zero-config), or MongoDB opt-in (`VIDUSHI_BACKEND=mongo`) — and accessed through the **`voa`** CLI,
+never directly. `voa snapshot` mirrors the store to `data/*.jsonl` for versioning.
 
 Seven stores form a small **relational model**, joined by foreign keys:
 
@@ -112,13 +117,13 @@ voa query warranties --fields product,expiry --sort expiry
 The in-repo `scripts/store.py` remains a path-compat shim (`python3 scripts/store.py <verb>`).
 Full field reference: `data/schema.md`. CLI details: `scripts/README.md`.
 
-> **Local `.venv` dependency.** On externally-managed Pythons (Arch/PEP 668) the in-repo install lives in
-> a repo `.venv` (editable: `python -m venv .venv && .venv/bin/pip install -e .`). The Claude Code
+> **Local `.venv` dependency.** The primary install path is `uv tool install vidushi-oa` (persistent,
+> isolated). On externally-managed Pythons (Arch/PEP 668) an in-repo editable install can instead live in
+> a repo `.venv` (`python -m venv .venv && .venv/bin/pip install -e .`). The Claude Code
 > **SessionStart** hook in `.claude/settings.json` prefers `"$CLAUDE_PROJECT_DIR/.venv/bin/python"` when
 > that venv exists (the system `python3` can't see the editable install) and otherwise falls back to
-> system `python3` — so a global `pip install vidushi-oa` still works and a missing `.venv` no longer
-> breaks session start. To use the venv path, rebuild the environment with the command above (then
-> `voa setup`).
+> system `python3` — so a `uv tool install vidushi-oa` on PATH still works and a missing `.venv` no longer
+> breaks session start.
 
 ---
 
