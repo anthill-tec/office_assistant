@@ -14,11 +14,14 @@ This file drives the REAL default path (no injected `adapter_factory`) end to
 end so that regression is caught. No live mail/network: every adapter
 constructs lazily (no connection is opened in `__init__`), so this is hermetic.
 """
+import json
+
 import pytest
 
 from vidushi_oa.mail.factory import _default_adapter_factory, build_client
 from vidushi_oa.mail.imap import GmailImapAdapter, YahooImapAdapter
 from vidushi_oa.mail.jmap import JmapAdapter
+from vidushi_oa.mail.xoauth2 import GmailXoauth2Adapter
 
 
 class FakeResolver:
@@ -26,6 +29,14 @@ class FakeResolver:
 
     def resolve(self, ref):
         return f"secret-for-{ref}"
+
+
+class FakeBlobResolver:
+    """Resolver returning the XOAUTH2 JSON credential blob for any ref."""
+
+    def resolve(self, ref):
+        return json.dumps({"client_id": "cid", "client_secret": "csecret",
+                           "refresh_token": "rtok"})
 
 
 def test_default_adapter_factory_builds_gmail_imap_adapter_with_resolved_password():
@@ -64,6 +75,69 @@ def test_default_adapter_factory_builds_fastmail_jmap_adapter_without_keyerror()
 
     assert isinstance(adapter, JmapAdapter)
     assert adapter.token == "secret-for-r3"
+
+
+def test_default_adapter_factory_builds_gmail_xoauth2_adapter_with_refreshed_token():
+    """Gmail + `auth_mode="xoauth2"` resolves the JSON credential blob, mints an
+    access token via an injected transport (no network), and returns a
+    `GmailXoauth2Adapter` carrying that token — the CLI-reachable XOAUTH2 path."""
+    calls = {}
+
+    def fake_transport(method, url, headers, body):
+        calls["hit"] = True
+        return 200, {"access_token": "minted-access-token"}
+
+    adapter = _default_adapter_factory(
+        provider="gmail", account="gx", address="me@workspace.com",
+        secret_ref="rx", resolver=FakeBlobResolver(),
+        auth_mode="xoauth2", transport=fake_transport,
+    )
+
+    assert isinstance(adapter, GmailXoauth2Adapter)
+    assert adapter.host == "imap.gmail.com"
+    assert adapter.user == "me@workspace.com"
+    assert adapter.access_token == "minted-access-token"
+    assert adapter.source_tag == "[GM]"
+    assert calls.get("hit") is True
+
+
+def test_default_adapter_factory_gmail_defaults_to_password_when_auth_mode_absent():
+    """A gmail account with no `auth_mode` (legacy entry / default) still builds the
+    password-based `GmailImapAdapter`, never the XOAUTH2 path."""
+    adapter = _default_adapter_factory(
+        provider="gmail", account="g1", address="me@gmail.com",
+        secret_ref="r1", resolver=FakeResolver(),
+    )
+
+    assert isinstance(adapter, GmailImapAdapter)
+    assert not isinstance(adapter, GmailXoauth2Adapter)
+    assert adapter.password == "secret-for-r1"
+
+
+def test_build_client_wires_gmail_xoauth2_account_end_to_end(tmp_path, monkeypatch):
+    """`build_client` honours a persisted `auth_mode="xoauth2"` gmail account and
+    hands the factory the XOAUTH2 path — the registry -> factory -> adapter wiring
+    the CLI relies on."""
+    from vidushi_oa.mail import accounts
+
+    config_path = tmp_path / "accounts.json"
+    monkeypatch.setenv("VIDUSHI_MAIL_CONFIG", str(config_path))
+    accounts.add_account("gmail_ws", "gmail", "me@workspace.com", "ref-x",
+                         auth_mode="xoauth2")
+
+    def fake_transport(method, url, headers, body):
+        return 200, {"access_token": "wired-token"}
+
+    def factory(**kw):
+        return _default_adapter_factory(transport=fake_transport, **kw)
+
+    client = build_client(config_path=str(config_path), resolver=FakeBlobResolver(),
+                          adapter_factory=factory)
+
+    adapter = client._adapters["gmail_ws"]
+    assert isinstance(adapter, GmailXoauth2Adapter)
+    assert adapter.access_token == "wired-token"
+    assert adapter.source_tag == "[GM]"
 
 
 def test_default_adapter_factory_rejects_unsupported_provider():

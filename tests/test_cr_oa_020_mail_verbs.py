@@ -358,6 +358,7 @@ def test_add_account_then_load_accounts_round_trips_a_reference_only_entry(tmp_p
         "provider": "fastmail",
         "address": "user@fastmail.com",
         "secret_ref": "keyring:fastmail-main",
+        "auth_mode": "password",
     }]
 
 
@@ -409,7 +410,7 @@ def test_accounts_file_contains_exactly_the_reference_only_schema_no_secret_mate
 
     loaded = accounts.load_accounts()
     assert len(loaded) == 1
-    assert set(loaded[0].keys()) == {"name", "provider", "address", "secret_ref"}
+    assert set(loaded[0].keys()) == {"name", "provider", "address", "secret_ref", "auth_mode"}
 
 
 # ─────────────────────────── cmd_mail_auth (direct-call) ───────────────────────────
@@ -430,7 +431,8 @@ def test_cmd_mail_auth_persists_only_a_reference_never_a_secret(tmp_path, monkey
     assert entry["provider"] == "fastmail"
     assert entry["address"] == "user@fastmail.com"
     assert entry["secret_ref"] == "keyring:fastmail-main"
-    assert set(entry.keys()) == {"name", "provider", "address", "secret_ref"}
+    assert entry["auth_mode"] == "password"
+    assert set(entry.keys()) == {"name", "provider", "address", "secret_ref", "auth_mode"}
 
     captured = capsys.readouterr().out
     assert "fastmail" in captured
@@ -478,7 +480,8 @@ def test_build_client_wires_adapters_by_provider_and_stamps_the_right_source_tag
 
     seen_providers = {}
 
-    def fake_adapter_factory(provider, account, address, secret_ref, resolver):
+    def fake_adapter_factory(provider, account, address, secret_ref, resolver,
+                             auth_mode="password"):
         seen_providers[account] = provider
         return FakeAdapter(account, "", set())
 
@@ -504,7 +507,8 @@ def test_build_client_never_eagerly_resolves_the_secret(tmp_path, monkeypatch):
     monkeypatch.setenv("VIDUSHI_MAIL_CONFIG", str(config_path))
     accounts.add_account("gmail_main", "gmail", "user@gmail.com", "keyring:gmail-main")
 
-    def fake_adapter_factory(provider, account, address, secret_ref, resolver):
+    def fake_adapter_factory(provider, account, address, secret_ref, resolver,
+                             auth_mode="password"):
         return FakeAdapter(account, "", set())
 
     resolver = mock.Mock()

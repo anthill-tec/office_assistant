@@ -805,7 +805,11 @@ def cmd_mail_auth(a):
     (§S5). Without it, the raw secret is obtained WITHOUT touching argv — a hidden
     prompt when interactive, else one line of stdin (the non-interactive/CI escape) —
     stored through a ``SecretResolver`` under a DERIVED reference
-    ``vidushi-oa/{provider}:{address}``, and only that reference is persisted."""
+    ``vidushi-oa/{provider}:{address}``, and only that reference is persisted.
+
+    ``--auth-mode xoauth2`` (Gmail only) records that the secret is a JSON blob
+    ``{client_id, client_secret, refresh_token}`` driving the XOAUTH2 refresh-token
+    flow; it too is entered via the hidden prompt / stdin, never as a CLI arg."""
     from vidushi_oa.mail import accounts
     from vidushi_oa.mail.secrets import SecretResolver, BACKEND_ENV
     if a.provider not in _MAIL_PROVIDERS:
@@ -814,9 +818,11 @@ def cmd_mail_auth(a):
         sys.exit(1)
     name = f"{a.provider}:{a.address}"
 
+    auth_mode = getattr(a, "auth_mode", "password")
     if a.secret_ref:
         secret_ref = a.secret_ref
-        accounts.add_account(name, a.provider, a.address, secret_ref)
+        accounts.add_account(name, a.provider, a.address, secret_ref,
+                             auth_mode=auth_mode)
     else:
         if sys.stdin.isatty():
             secret = getpass.getpass(f"Secret for {name}: ")
@@ -833,10 +839,10 @@ def cmd_mail_auth(a):
                 f"vidushi-oa: no vault (1Password/Bitwarden) provisioned; "
                 f"stored the secret in the '{primary.name}' backend instead.\n")
         accounts.add_account(name=name, provider=a.provider, address=a.address,
-                             secret_ref=secret_ref)
+                             secret_ref=secret_ref, auth_mode=auth_mode)
 
     out({"status": "registered", "name": name, "provider": a.provider,
-         "address": a.address, "secret_ref": secret_ref,
+         "address": a.address, "secret_ref": secret_ref, "auth_mode": auth_mode,
          "source_tag": SOURCE_TAGS[a.provider]})
 
 
@@ -874,6 +880,7 @@ def cmd_doctor(a):
             f"`voa mail-auth --provider {entry.get('provider')} "
             f"--address {entry.get('address')}` to store it")
         rows.append({"account": entry.get("name"), "provider": entry.get("provider"),
+                     "auth_mode": entry.get("auth_mode", "password"),
                      "kind": kind, "resolves": resolves, "hint": hint})
 
     out({"engine": __version__,
@@ -969,6 +976,10 @@ def main():
     mge.add_argument("--uid", required=True); read_json(mge); mge.set_defaults(func=cmd_mail_get)
     mau = add_parser("mail-auth"); mau.add_argument("--provider", required=True)
     mau.add_argument("--address", required=True)
+    mau.add_argument("--auth-mode", dest="auth_mode",
+                     choices=["password", "xoauth2"], default="password",
+                     help="gmail only: 'xoauth2' expects the secret to be a JSON blob "
+                          "{client_id, client_secret, refresh_token}; default 'password'.")
     mau.add_argument("--secret-ref", dest="secret_ref", default=None,
                      help="credential reference (op://…/keyring/file). Omit to be prompted "
                           "(hidden) or to pipe the secret on stdin; it is stored under a "
@@ -1003,6 +1014,8 @@ def main():
     except ValueError as e:            # unknown VIDUSHI_BACKEND from get_backend()
         out({"error": str(e)}); sys.exit(1)
     except NotImplementedError as e:   # e.g. sqlite --filter (mongo-only)
+        out({"error": str(e)}); sys.exit(1)
+    except LookupError as e:           # unresolvable mail secret_ref (mail-* verbs)
         out({"error": str(e)}); sys.exit(1)
 
 

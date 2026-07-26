@@ -151,9 +151,12 @@ class MailAuthDoctorTest(unittest.TestCase):
         accounts = json.loads(raw_accounts)
         self.assertEqual(len(accounts), 1)
         entry = accounts[0]
-        self.assertEqual(set(entry.keys()), {"name", "provider", "address", "secret_ref"})
+        self.assertEqual(set(entry.keys()),
+                         {"name", "provider", "address", "secret_ref", "auth_mode"})
         self.assertEqual(entry["provider"], "gmail")
         self.assertEqual(entry["address"], "me@x.com")
+        self.assertEqual(entry["auth_mode"], "password",
+                         "default mail-auth must persist auth_mode 'password'")
         derived_ref = entry["secret_ref"]
         self.assertEqual(derived_ref, "vidushi-oa/gmail:me@x.com",
                           "the derived secret_ref must follow vidushi-oa/{provider}:{address}")
@@ -189,6 +192,50 @@ class MailAuthDoctorTest(unittest.TestCase):
         self.assertEqual(payload.get("address"), "me2@x.com")
         self.assertNotIn(SENTINEL, r.stdout)
         self.assertNotIn(SENTINEL, r.stderr)
+
+    def test_mail_auth_xoauth2_persists_auth_mode_and_reference_without_leaking_secret(self):
+        # Gmail XOAUTH2: the entered secret is a JSON credential blob; only a derived
+        # reference + auth_mode="xoauth2" must land in the registry, never the blob.
+        blob = json.dumps({"client_id": "cid", "client_secret": SENTINEL,
+                           "refresh_token": "rtok"})
+        r = self._run(["mail-auth", "--provider", "gmail", "--address", "ws@x.com",
+                       "--auth-mode", "xoauth2"], input_=blob + "\n")
+        self.assertEqual(r.returncode, 0, f"xoauth2 mail-auth must exit 0; stderr={r.stderr!r}")
+
+        with open(self.accounts_path, encoding="utf-8") as f:
+            raw_accounts = f.read()
+        accounts = json.loads(raw_accounts)
+        self.assertEqual(len(accounts), 1)
+        entry = accounts[0]
+        self.assertEqual(entry["provider"], "gmail")
+        self.assertEqual(entry["auth_mode"], "xoauth2")
+        self.assertEqual(entry["secret_ref"], "vidushi-oa/gmail:ws@x.com")
+
+        # The credential blob (and its embedded sentinel) never reaches any user-facing
+        # artifact — only the tmp file backend legitimately holds it.
+        self.assertNotIn(SENTINEL, raw_accounts)
+        self.assertNotIn(SENTINEL, r.stdout)
+        self.assertNotIn(SENTINEL, r.stderr)
+
+    def test_mail_accounts_unresolvable_secret_is_structured_error_not_traceback(self):
+        # A configured account whose secret_ref cannot be resolved (file backend, no
+        # secret seeded) makes build_client raise LookupError during eager resolution;
+        # the mail-* verbs must render that as a structured error + exit 1, no traceback.
+        self._seed_accounts([
+            {"name": "gmail:x@x.com", "provider": "gmail", "address": "x@x.com",
+             "secret_ref": "vidushi-oa/gmail:x@x.com"},
+        ])
+        env = self._doctor_env()
+        env["VIDUSHI_FORMAT"] = "json"
+        r = subprocess.run([sys.executable, STORE, "mail-accounts", "--json"],
+                           capture_output=True, text=True, env=env)
+
+        self.assertNotEqual(r.returncode, 0,
+                            "mail-accounts must exit non-zero when a secret_ref cannot resolve")
+        self.assertNotIn("Traceback", r.stdout)
+        self.assertNotIn("Traceback", r.stderr)
+        payload = json.loads(r.stdout.strip())
+        self.assertIn("error", payload)
 
     # ------------------------------------------------------------------
     # AC-b — keyring fallback + warning, no crash

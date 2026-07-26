@@ -8,16 +8,22 @@ Secret resolution is LAZY: `build_client` itself never calls `resolver.resolve`.
 The default `adapter_factory` resolves the secret only when it actually builds a
 concrete adapter (and even then, per-account, when `build_client` runs).
 """
+import json
+
 from vidushi_oa.mail.accounts import load_accounts
 from vidushi_oa.mail.base import SOURCE_TAGS
 from vidushi_oa.mail.client import MailClient
 
 
-def _default_adapter_factory(provider, account, address, secret_ref, resolver):
+def _default_adapter_factory(provider, account, address, secret_ref, resolver,
+                             auth_mode="password", transport=None):
     """Real adapter construction (not exercised by the §S5 test suite).
 
     Resolves the secret reference through `resolver` and builds the concrete
-    provider adapter.
+    provider adapter. For `gmail` with `auth_mode == "xoauth2"` the resolved
+    secret is a JSON blob `{client_id, client_secret, refresh_token}` that mints a
+    short-lived access token (via `refresh_access_token`, `transport` defaulting to
+    the stdlib urllib transport) for a `GmailXoauth2Adapter`.
     """
     from vidushi_oa.mail.imap import GmailImapAdapter, YahooImapAdapter
     from vidushi_oa.mail.jmap import fastmail_adapter
@@ -26,6 +32,16 @@ def _default_adapter_factory(provider, account, address, secret_ref, resolver):
     resolver = resolver or SecretResolver()
     secret = resolver.resolve(secret_ref)
     if provider == "gmail":
+        if auth_mode == "xoauth2":
+            from vidushi_oa.mail.xoauth2 import (GmailXoauth2Adapter,
+                                                 refresh_access_token)
+            creds = json.loads(secret)
+            access_token = refresh_access_token(
+                creds["client_id"], creds["client_secret"],
+                creds["refresh_token"], transport=transport,
+            )
+            return GmailXoauth2Adapter(account, SOURCE_TAGS["gmail"],
+                                       "imap.gmail.com", address, access_token)
         return GmailImapAdapter(account, SOURCE_TAGS["gmail"],
                                 "imap.gmail.com", address, secret)
     if provider == "yahoo":
@@ -45,9 +61,9 @@ def build_client(config_path=None, resolver=None, adapter_factory=None) -> MailC
     """Build a `MailClient` wired from the configured accounts.
 
     For each account the `adapter_factory` is called by keyword with
-    `provider`/`account`/`address`/`secret_ref`/`resolver`; the returned adapter's
-    `.source_tag` is stamped from the provider and it is registered under the
-    account name. No secret is resolved here.
+    `provider`/`account`/`address`/`secret_ref`/`resolver`/`auth_mode`; the returned
+    adapter's `.source_tag` is stamped from the provider and it is registered under
+    the account name. No secret is resolved here.
     """
     factory = adapter_factory or _default_adapter_factory
     client = MailClient()
@@ -59,6 +75,7 @@ def build_client(config_path=None, resolver=None, adapter_factory=None) -> MailC
             address=entry["address"],
             secret_ref=entry["secret_ref"],
             resolver=resolver,
+            auth_mode=entry.get("auth_mode", "password"),
         )
         adapter.source_tag = SOURCE_TAGS.get(provider, adapter.source_tag)
         client.register(entry["name"], adapter)
