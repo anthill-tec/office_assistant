@@ -67,14 +67,17 @@ Make `pyproject.toml` PyPI-ready (metadata, license, long-description) and docum
 vidushi-oa`. Add a GitHub Actions workflow with a **two-tier publish strategy matching git-flow**
 (user-directed 2026-07-26):
 - a `test` job builds the wheel + runs the pytest suite + the release gate on **every push**;
-- a **test-publish** job publishes to **TestPyPI** when a **`release/*`** branch is pushed — this is where
-  packaging + deploy are validated during `git flow release`, before any production publish;
-- a **production** job publishes to **PyPI** only on a **master version tag** (`refs/tags/…`), behind a
-  **manual-approval GitHub Environment** (`pypi`, required reviewers) + OIDC trusted publishing — never an
-  automatic publish.
+- a **test-publish** job publishes to **TestPyPI** when a **`release/*`** branch is pushed — where packaging
+  + deploy are validated during `git flow release` (the branch also hosts the release-qualification steps —
+  the `no-mistakes` workflow + AXI validation for AXI-catalog submission — run by the orchestrator, not CI);
+- a **production** job publishes to **PyPI automatically on a master version tag** (`refs/tags/…`) — **gated
+  to master only** (git-flow discipline: master receives merges solely via `release finish`, so that
+  ceremony is the deliberate act) via OIDC trusted publishing (`id-token: write` + an `environment: pypi`
+  for trusted-publisher scoping). No manual-reviewer gate — automated production release from master is the
+  house model.
 This CR **authors and parse-validates** the workflow + lands the packaging; the workflow is **first
-exercised at release time on the release branch** (the repo flip-to-public + the TestPyPI/PyPI credential
-setup are release-time ops, not inside this CR). No live publish happens inside this CR.
+exercised at release time on the release branch** (the repo flip-to-public + the TestPyPI/PyPI
+trusted-publisher setup are release-time ops, not inside this CR). No live publish happens inside this CR.
 
 ### §S7 Skill + docs wiring
 Repoint the engine-install instructions in `skills/vidushi-oa/SKILL.md`, `README.md`, and
@@ -107,7 +110,7 @@ are updated.
 
 ### §S6
 - [ ] `uv tool install` from the built wheel yields an on-PATH `voa` that runs `voa --help` (exit 0) in a clean environment; `README.md` documents the command.
-- [ ] A GitHub Actions workflow file exists whose parsed structure confirms: a `test` job (on push) that builds the wheel + runs pytest + the release gate; a **test-publish** job gated to **`release/*`** branches targeting **TestPyPI**; and a **production** publish job gated to a **version tag** targeting **PyPI**, behind a manual-approval Environment (`pypi`) + `id-token: write` (OIDC) — no ungated auto-publish.
+- [ ] A GitHub Actions workflow file exists whose parsed structure confirms: a `test` job (on push) that builds the wheel + runs pytest + the release gate; a **test-publish** job gated to **`release/*`** branches targeting **TestPyPI**; and a **production** publish job gated to a **version tag** targeting **PyPI**, automated (no manual-reviewer gate — gated to master only) with `id-token: write` (OIDC) + `environment: pypi` for trusted-publisher scoping.
 
 ### §S7
 - [ ] `skills/vidushi-oa/SKILL.md`, `README.md`, and `scripts/README.md` name `uv tool install vidushi-oa` as the engine install (grep), and state SQLite as the default backend with `[mongo]` as the opt-in; `agentskills validate skills/vidushi-oa` still exits 0.
