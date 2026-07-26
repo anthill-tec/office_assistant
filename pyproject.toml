@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 mongo = ["pymongo>=4.16"]
 sqlite = ["jsonschema>=4"]
+mail = ["keyring>=24"]
 
 [project.scripts]
 voa = "vidushi_oa.cli:main"
