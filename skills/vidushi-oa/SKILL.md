@@ -24,7 +24,7 @@ skill works the same on any harness without them.
 The **`vidushi-oa` engine** is a prerequisite. Install and provision it, then use this skill:
 
 ```bash
-pip install vidushi-oa   # installs the `voa` CLI (the store engine)
+uv tool install vidushi-oa   # installs the `voa` CLI (the store engine)
 voa setup                # verify/provision the local MongoDB, create collections + validators
 ```
 
