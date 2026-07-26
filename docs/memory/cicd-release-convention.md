@@ -42,6 +42,14 @@ Full decision + rationale: `docs/research/DN-packaging-distribution.md` §6 (in-
   GitHub runner**. During release, **copy `skill-release-gate.py` into the project** (e.g. `scripts/`) and
   point the workflow at the repo-relative path, so the gate runs in CI. (CR-OA-018 only authors +
   parse-validates the workflow; this is the release-time fix.)
+- **When vendoring, bump the gate's stale store count 7 → 8.** The home copy of `skill-release-gate.py`
+  hard-codes **7** collections/schemas (it predates CR-OA-015's `orders` store), so two checks FAIL against
+  the current engine: *"wheel bundles 7x vidushi_oa/schema/*.json (found 8)"* and *"setup provisions 7
+  collections (found 8: …,orders)"*. **8 is correct** (contacts, invoices, warranties, cases, products,
+  subscriptions, insurance, orders) — the repo pytest suite already expects 8. Update the vendored copy to 8
+  (and thereafter derive it from the engine's `STORES` rather than a literal). Phase 1 (`agentskills validate`
+  the skill bundle) already PASSES — only these two stale-count assertions fail, and they do **not** reflect
+  a defect in engine or skill code.
 - **Test the CI workflow locally with `act`** (nektos/act) before pushing — `act -n`/`act --list` to
   validate structure, or a full run to exercise the jobs in Docker. Catches the gate-script-path issue and
   other runner-only problems without burning GitHub Actions minutes.

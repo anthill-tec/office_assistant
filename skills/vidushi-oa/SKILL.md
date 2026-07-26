@@ -43,18 +43,32 @@ model; `voa … --expand <fk>` resolves them inline. `acct` splits `personal` vs
 
 ## Mailboxes & search (always search BOTH)
 
-Search **both** mailboxes every pass, merge/de-dupe by id, and **tag every finding with its
-source — `[FM]` Fastmail or `[GM]` Gmail** — and state which mailboxes were searched.
+Drive all mail read/fetch through the **`voa mail-*`** verbs — the embedded mail client does the
+multi-mailbox work so the skill reasons over pre-processed rows, not raw email JSON (the
+token-saving payoff):
 
-- **Fastmail** — via FastmailMCP. `search_email` uses Gmail-style qualifiers but **rejects
-  parenthesized `subject:(A OR B)` groups** — issue single-phrase queries and merge yourself.
-  The user files mail into folders (`Subscriptions`, `Shipping`, `Purchases`, `Electronics/*`)
-  and uses **per-merchant masked aliases**, so the recipient alias is a reliable provider key.
-- **Gmail** — account `antojk@gmail.com`, via the **claude.ai Gmail connector**. `search_threads`
-  supports full standard Gmail syntax — `OR`, parentheses, `category:` (purchases/updates/
-  promotions), `newer_than:3m`. `category:purchases` is the best single filter for order/billing
-  mail; key Gmail items on sender + category, not aliases. If the connector can't load, tell the
-  user to re-authenticate the claude.ai Gmail connector and continue Fastmail-only, saying so.
+- **`voa mail-search '<query>'` [`--accounts a,b`]** — searches every configured account, **merges
+  + de-dupes by Message-ID**, **source-tags each row `[FM]` Fastmail / `[GM]` Gmail / `[YH]` Yahoo**,
+  and returns compact **TOON**. The verb owns the dual/tri-mailbox merge and tagging; the skill just
+  **states which accounts were searched** (from the `--accounts` arg, or from `voa mail-accounts`
+  when it searched them all). Provider-specific query power lives *behind* the verb — it maps a
+  portable query to Gmail `X-GM-RAW`, Fastmail JMAP filters, and Yahoo/IMAP `SEARCH` server-side
+  (see [`references/search-recipes.md`](references/search-recipes.md) for query forms).
+- **`voa mail-get --account <name> --uid <uid>`** — fetch one full message; a `mail-search` row
+  carries both the account name and the uid.
+- **`voa mail-accounts`** — lists which providers are actually configured (`[FM]` Fastmail,
+  `[GM]` Gmail, `[YH]` Yahoo — any subset). **`voa doctor`** diagnoses per-account connectivity when
+  a search returns nothing or errors (it replaces the old "re-authenticate the connector" step); see
+  [`references/mail-setup.md`](references/mail-setup.md) to add or re-auth an account.
+
+The user files mail into folders (`Subscriptions`, `Shipping`, `Purchases`, `Electronics/*`) and
+uses **per-merchant masked aliases** on Fastmail, so the recipient alias is a reliable provider key;
+Gmail (`antojk@gmail.com`) items key on sender + `category:` instead.
+
+> A harness mail MCP (FastmailMCP, a Gmail connector, or OpenClaw's `agent_mail`) is **not**
+> required and is never the default — `voa mail-*` is. The skill **MAY** delegate to such a mail
+> service as a documented **alternative**, but only `voa mail-*` yields the token-saving merge / tag
+> / TOON pre-processing, so it stays the default path.
 
 ## Safety contract (non-negotiable — survives across all domains)
 
@@ -184,10 +198,13 @@ voa action-resolve cases case_dell raise-ticket            # resolve it as the c
 ## Deep-sweep mode (read-only)
 
 **Deep-sweep** is a **mode** of this skill: a heavy, autonomous, **read-only** cross-mailbox pass
-over both Fastmail and Gmail (subscriptions / purchases / customs / invoices / warranties / general
-triage) that returns **structured findings + recommended actions** and **mutates nothing** — no
-send, **reply, draft**, delete/trash, archive, file/move (`update_email`), label, **mark-read**,
-pay, calendar write (`create_event`/`compose_event`), or store/memory/file write. If it cannot do
+that reads via **`voa mail-search`** — a broad-window pass across the configured accounts — and
+**reasons over the returned rows** (the merge / `[FM]`/`[GM]`/`[YH]` tag / TOON pre-processing now
+lives in the verb, which matters most on this, the heaviest read pass). Covering subscriptions /
+purchases / customs / invoices / warranties / general triage, it returns **structured findings +
+recommended actions** and **mutates nothing** — no send, **reply, draft**, delete/trash, archive,
+file/move (`update_email`), label, **mark-read**, pay, calendar write (`create_event`/`compose_event`),
+or store/memory/file write. If it cannot do
 something read-only, it **says so and stops — it never improvises a workaround that writes**. The
 main thread then executes any side effects (persist via `voa`, create reminders, **draft** mail).
 Because it is a **mode**, it ports across harnesses — a skill mode travels where a separate agent would not.
@@ -220,8 +237,10 @@ for the main thread to execute) → **Flags** (suspected phishing/scam — never
 
 Operational detail lives in `references/` so this body stays lean — load the file for the task at hand:
 
-- [`references/search-recipes.md`](references/search-recipes.md) — per-domain Fastmail single-phrase
-  queries + Gmail rich queries for both mailboxes.
+- [`references/search-recipes.md`](references/search-recipes.md) — per-domain `voa mail-search`
+  query forms (portable qualifiers → each provider's server-side search) across all configured accounts.
+- [`references/mail-setup.md`](references/mail-setup.md) — agent-guided, secret-free mailbox onboarding:
+  per-provider credential generation → interactive `voa mail-auth` → `voa doctor` verify.
 - [`references/carriers-and-customs.md`](references/carriers-and-customs.md) — carrier roster
   (Delhivery, DTDC, Blue Dart, India Post, Ekart, Shadowfax, FedEx, DHL, UPS, Aramex) + FPO / ICEGATE
   customs handling.
