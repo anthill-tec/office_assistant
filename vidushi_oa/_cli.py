@@ -30,7 +30,7 @@ Tracking-state framework (see schema.md "Tracking state framework"):
 
 Fields support dotted paths (e.g. source.email_id). Output is compact JSON on stdout; warnings to stderr.
 """
-import argparse, json, os, sys, datetime, re, getpass
+import argparse, json, os, sys, datetime, re, getpass, imaplib, urllib.error
 
 # Module-level seam: tests monkeypatch `vidushi_oa._cli.build_client`; the
 # `cmd_mail_*` handlers call it (no args) to obtain a wired `MailClient`.
@@ -740,14 +740,39 @@ def _mail_row(msg):
             "sender": msg.sender, "date": msg.date}
 
 
+def _mail_client_or_exit():
+    """Build the mail client for a mail-* verb, rendering an unresolvable
+    `secret_ref` (`LookupError` from secret resolution) as a structured error +
+    exit 1 (no traceback). Scoped to the mail verbs on purpose: a `LookupError`
+    from any other command handler still surfaces as a real traceback at its
+    fault site rather than being masked as a cryptic error payload."""
+    try:
+        return build_client()
+    except LookupError as e:
+        out({"error": str(e)})
+        sys.exit(1)
+
+
 def cmd_mail_search(a):
     """Server-side search across the configured accounts, merged + de-duped by
     `Message-ID` (by the client), field-projected, TOON-enveloped (`--json` -> a
-    bare array with no tally/next)."""
-    client = build_client()
+    bare array with no tally/next). Fail-soft: one bad account (revoked token, down
+    host) is surfaced in `failed_accounts` alongside the healthy results (exit 0);
+    only a total wipeout — every selected account failed — is a structured error +
+    exit 1 (no traceback), per AXI #6."""
+    client = _mail_client_or_exit()
     msgs = client.search(a.query, accounts=getattr(a, "accounts", None))
+    failures = client.last_failures
+    if failures and client.last_succeeded == 0:
+        out({"error": "all selected accounts failed", "failed_accounts": failures})
+        sys.exit(1)
     rows = [_mail_row(m) for m in msgs]
     if _FMT == "json":
+        if failures:
+            detail = ", ".join(
+                f"{f['account']} ({f['error']})" for f in failures)
+            sys.stderr.write(
+                f"warn: mail-search: {len(failures)} account(s) failed: {detail}\n")
         out(rows)
         return
     tally = {}
@@ -755,27 +780,75 @@ def cmd_mail_search(a):
         tag = r["source_tag"].strip("[]")   # "[GM]" -> "GM" (bracket-free TOON map key)
         tally[tag] = tally.get(tag, 0) + 1
     nxt = [f"mail-search {a.query} --accounts <name>", "mail-accounts"]
-    out({"count": len(rows), "tally": {"source_tag": tally}, "results": rows, "next": nxt})
+    envelope = {"count": len(rows), "tally": {"source_tag": tally}, "results": rows}
+    if failures:
+        envelope["failed_accounts"] = failures
+    envelope["next"] = nxt
+    out(envelope)
 
 
 def cmd_mail_accounts(a):
-    """List the configured accounts + their adapter capabilities."""
+    """List the configured accounts + their adapter capabilities. Fail-soft: an
+    account whose `secret_ref` cannot be resolved is skipped from the listing and
+    surfaced in `failed_accounts` (TOON) / a stderr warning (`--json`), never a
+    traceback — the healthy accounts still list. Only a total wipeout — every
+    configured account failed to build — is a structured error + exit 1 (no
+    traceback), symmetric with `mail-search`."""
+    client = _mail_client_or_exit()
     rows = [{"account": name, "capabilities": sorted(caps)}
-            for name, caps in build_client().accounts()]
+            for name, caps in client.accounts()]
+    failures = client.build_failures
+    if failures and not rows:
+        out({"error": "all configured accounts failed", "failed_accounts": failures})
+        sys.exit(1)
     if _FMT == "json":
+        if failures:
+            detail = ", ".join(
+                f"{f['account']} ({f['error']})" for f in failures)
+            sys.stderr.write(
+                f"warn: mail-accounts: {len(failures)} account(s) failed: {detail}\n")
         out(rows)
     else:
-        out({"results": rows, "next": ["mail-search <query>"]})
+        envelope = {"results": rows}
+        if failures:
+            envelope["failed_accounts"] = failures
+        envelope["next"] = ["mail-search <query>"]
+        out(envelope)
 
 
 def cmd_mail_get(a):
     """Fetch one message by `--account` + `--uid` via that account's adapter. An
-    unknown account or uid is a structured error + exit 1 (no traceback)."""
-    client = build_client()
+    unknown account or uid — or an adapter that cannot fetch by uid (JMAP) — is a
+    structured error + exit 1 (no traceback), across every real adapter contract:
+    `ImapAdapter` returns None for an unknown uid, `JmapAdapter` raises
+    `NotImplementedError`. A live fetch/connect failure (down host, DNS failure,
+    bad app-password, or a network-down XOAUTH2 refresh — `imaplib.IMAP4.error` /
+    `OSError` / `urllib.error.URLError`) is rendered structurally too, never as a
+    raw traceback."""
+    client = _mail_client_or_exit()
+    adapter = client._adapters.get(a.account)
+    if adapter is None:
+        build_failure = next(
+            (f for f in client.build_failures if f["account"] == a.account), None)
+        error = build_failure["error"] if build_failure else "unknown account"
+        out({"error": error, "account": a.account, "uid": a.uid})
+        sys.exit(1)
     try:
-        adapter = client._adapters[a.account]
         msg = adapter.fetch_message(a.uid)
     except KeyError:
+        msg = None
+    except NotImplementedError:
+        out({"error": "mail-get is not supported for this account",
+             "account": a.account, "uid": a.uid})
+        sys.exit(1)
+    except LookupError as e:
+        out({"error": str(e), "account": a.account, "uid": a.uid})
+        sys.exit(1)
+    except (imaplib.IMAP4.error, OSError, urllib.error.URLError) as e:
+        out({"error": str(e) or e.__class__.__name__,
+             "account": a.account, "uid": a.uid})
+        sys.exit(1)
+    if msg is None:
         out({"error": "message not found", "account": a.account, "uid": a.uid})
         sys.exit(1)
     row = _mail_row(msg)
@@ -793,7 +866,11 @@ def cmd_mail_auth(a):
     (§S5). Without it, the raw secret is obtained WITHOUT touching argv — a hidden
     prompt when interactive, else one line of stdin (the non-interactive/CI escape) —
     stored through a ``SecretResolver`` under a DERIVED reference
-    ``vidushi-oa/{provider}:{address}``, and only that reference is persisted."""
+    ``vidushi-oa/{provider}:{address}``, and only that reference is persisted.
+
+    ``--auth-mode xoauth2`` (Gmail only) records that the secret is a JSON blob
+    ``{client_id, client_secret, refresh_token}`` driving the XOAUTH2 refresh-token
+    flow; it too is entered via the hidden prompt / stdin, never as a CLI arg."""
     from vidushi_oa.mail import accounts
     from vidushi_oa.mail.secrets import SecretResolver, BACKEND_ENV
     if a.provider not in _MAIL_PROVIDERS:
@@ -802,9 +879,15 @@ def cmd_mail_auth(a):
         sys.exit(1)
     name = f"{a.provider}:{a.address}"
 
+    auth_mode = getattr(a, "auth_mode", "password")
+    if auth_mode == "xoauth2" and a.provider != "gmail":
+        out({"error": "xoauth2 auth-mode is supported for the gmail provider only",
+             "provider": a.provider})
+        sys.exit(1)
     if a.secret_ref:
         secret_ref = a.secret_ref
-        accounts.add_account(name, a.provider, a.address, secret_ref)
+        accounts.add_account(name, a.provider, a.address, secret_ref,
+                             auth_mode=auth_mode)
     else:
         if sys.stdin.isatty():
             secret = getpass.getpass(f"Secret for {name}: ")
@@ -821,10 +904,10 @@ def cmd_mail_auth(a):
                 f"vidushi-oa: no vault (1Password/Bitwarden) provisioned; "
                 f"stored the secret in the '{primary.name}' backend instead.\n")
         accounts.add_account(name=name, provider=a.provider, address=a.address,
-                             secret_ref=secret_ref)
+                             secret_ref=secret_ref, auth_mode=auth_mode)
 
     out({"status": "registered", "name": name, "provider": a.provider,
-         "address": a.address, "secret_ref": secret_ref,
+         "address": a.address, "secret_ref": secret_ref, "auth_mode": auth_mode,
          "source_tag": SOURCE_TAGS[a.provider]})
 
 
@@ -862,6 +945,7 @@ def cmd_doctor(a):
             f"`voa mail-auth --provider {entry.get('provider')} "
             f"--address {entry.get('address')}` to store it")
         rows.append({"account": entry.get("name"), "provider": entry.get("provider"),
+                     "auth_mode": entry.get("auth_mode", "password"),
                      "kind": kind, "resolves": resolves, "hint": hint})
 
     out({"engine": __version__,
@@ -957,6 +1041,10 @@ def main():
     mge.add_argument("--uid", required=True); read_json(mge); mge.set_defaults(func=cmd_mail_get)
     mau = add_parser("mail-auth"); mau.add_argument("--provider", required=True)
     mau.add_argument("--address", required=True)
+    mau.add_argument("--auth-mode", dest="auth_mode",
+                     choices=["password", "xoauth2"], default="password",
+                     help="gmail only: 'xoauth2' expects the secret to be a JSON blob "
+                          "{client_id, client_secret, refresh_token}; default 'password'.")
     mau.add_argument("--secret-ref", dest="secret_ref", default=None,
                      help="credential reference (op://…/keyring/file). Omit to be prompted "
                           "(hidden) or to pipe the secret on stdin; it is stored under a "

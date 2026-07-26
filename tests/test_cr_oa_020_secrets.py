@@ -230,6 +230,12 @@ class OnePasswordBackendTest(_SecretsTestBase):
         with self.assertRaises(NotImplementedError):
             OnePasswordBackend().set("op://voa-secrets/fastmail/token", "anything")
 
+    def test_get_returns_none_when_op_cli_absent_from_path(self):
+        # PATH is the empty bin dir (no `op`): get() must not leak the
+        # subprocess FileNotFoundError, it returns None like any empty backend.
+        value = OnePasswordBackend().get("op://voa-secrets/fastmail/token")
+        self.assertIsNone(value)
+
 
 class BitwardenBackendTest(_SecretsTestBase):
     """§S4 AC: `BitwardenBackend.available()` gates on BOTH the `bw` CLI being
@@ -326,6 +332,13 @@ class SecretResolverOnePasswordRefTest(_SecretsTestBase):
 
         self.assertEqual(value, FAKE_OP_SECRET)
         spy.assert_called_once_with(mock.ANY, ref)
+
+    def test_resolve_of_an_op_ref_raises_lookup_error_when_op_cli_absent(self):
+        # PATH is the empty bin dir (no `op`): the op:// fast-path must surface a
+        # clean LookupError, never an uncaught FileNotFoundError traceback.
+        resolver = SecretResolver()
+        with self.assertRaises(LookupError):
+            resolver.resolve("op://voa-secrets/fastmail/token")
 
 
 class SecretResolverPrecedenceTest(_SecretsTestBase):

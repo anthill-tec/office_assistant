@@ -52,11 +52,13 @@ Design pinned here for GREEN (see also the final RED report):
 
 No live mail/creds — everything below uses in-process fakes.
 """
+import imaplib
 import json
 import os
 import stat
 import subprocess
 import sys
+import urllib.error
 from argparse import Namespace
 
 import pytest
@@ -100,6 +102,31 @@ class FakeAdapter(MailAdapter):
             if m.uid == uid:
                 return m
         raise KeyError(uid)
+
+    def list_folders(self):
+        return ["INBOX"]
+
+
+class FailingAdapter(MailAdapter):
+    """No network — `search` always raises (simulating a revoked XOAUTH2 token or a
+    down IMAP host) so `MailClient`'s per-adapter isolation and the `cmd_mail_search`
+    partial/total-failure branches can be exercised. `capabilities()`/`list_folders`
+    stay offline so a failing account never trips up `mail-accounts`."""
+
+    def __init__(self, account, source_tag, caps, error):
+        self.account = account
+        self.source_tag = source_tag
+        self._caps = set(caps)
+        self._error = error
+
+    def capabilities(self):
+        return set(self._caps)
+
+    def search(self, query, folder=None, limit=None):
+        raise self._error
+
+    def fetch_message(self, uid, folder=None):
+        raise self._error
 
     def list_folders(self):
         return ["INBOX"]
@@ -219,6 +246,150 @@ def test_mail_search_json_mode_yields_bare_array_with_no_tally_or_next(monkeypat
     assert "next" not in raw
 
 
+def test_mail_search_revoked_xoauth2_token_is_a_structured_error_not_a_traceback(monkeypatch, capsys):
+    """A revoked/expired Gmail refresh token surfaces (lazily, at search time) as a
+    `LookupError` from `refresh_access_token` — `cmd_mail_search` must render it as a
+    structured error + exit 1, no traceback."""
+    from vidushi_oa.mail.xoauth2 import GmailXoauth2Adapter, refresh_access_token
+
+    def _err_transport(method, url, headers, body):
+        return (400, {"error": "invalid_grant"})
+
+    def _token_provider():
+        return refresh_access_token("cid", "sec", "refresh-xyz", transport=_err_transport)
+
+    def _no_conn(host, port):
+        raise AssertionError("must not connect once the token refresh fails")
+
+    adapter = GmailXoauth2Adapter(
+        account="gmail_work", source_tag="[GM]", host="imap.gmail.com",
+        user="me@workspace.example", access_token=_token_provider,
+        conn_factory=_no_conn,
+    )
+    monkeypatch.setattr(cli, "build_client", lambda **kw: MailClient({"gmail_work": adapter}))
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_search(Namespace(query="invoice", accounts=None))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    assert "error" in json.loads(captured.out.strip())
+
+
+def test_mail_search_one_bad_account_still_returns_the_healthy_account_results(monkeypatch, capsys):
+    """Per-adapter isolation: one account raising (a revoked xoauth2 token -> LookupError)
+    must NOT blank the fan-out — the healthy account's rows come back, the failure is
+    surfaced in `failed_accounts`, and the verb exits 0 (partial success)."""
+    gmail = FakeAdapter("gmail_main", "[GM]", {"raw_query"}, messages=[GM_ONE])
+    yahoo = FailingAdapter("yahoo_main", "[YH]", {"legacy_only"},
+                           LookupError("token refresh failed; re-run voa mail-auth"))
+    client = MailClient({"gmail_main": gmail, "yahoo_main": yahoo})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "toon"
+
+    cli.cmd_mail_search(Namespace(query="invoice", accounts=None))
+
+    from vidushi_oa import toon as oa_toon
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    payload = oa_toon.from_toon(captured.out)
+    assert payload["count"] == 1
+    assert payload["results"][0]["id"] == GM_ONE.id
+    failed = {row["account"]: row["error"] for row in payload["failed_accounts"]}
+    assert list(failed) == ["yahoo_main"]
+    assert "voa mail-auth" in failed["yahoo_main"]
+
+
+def test_mail_search_json_partial_failure_warns_on_stderr_keeps_bare_array(monkeypatch, capsys):
+    """Under `--json` (AXI decision-B) stdout stays a bare array of the healthy rows,
+    but a partial fan-out failure must still be visible to machine consumers: the
+    failed account(s) + reason are written to STDERR, and the verb exits 0."""
+    gmail = FakeAdapter("gmail_main", "[GM]", {"raw_query"}, messages=[GM_ONE])
+    yahoo = FailingAdapter("yahoo_main", "[YH]", {"legacy_only"},
+                           LookupError("token refresh failed; re-run voa mail-auth"))
+    client = MailClient({"gmail_main": gmail, "yahoo_main": yahoo})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    cli.cmd_mail_search(Namespace(query="invoice", accounts=None))
+
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    rows = json.loads(captured.out.strip())
+    assert isinstance(rows, list), f"--json stdout must stay a bare array, got {captured.out!r}"
+    assert [r["id"] for r in rows] == [GM_ONE.id]
+    assert "failed_accounts" not in captured.out, "decision-B: no envelope keys on stdout"
+    assert "yahoo_main" in captured.err
+    assert "voa mail-auth" in captured.err
+
+
+def test_mail_search_build_time_failure_folds_into_failed_accounts(monkeypatch, capsys):
+    """An account that failed to BUILD (unresolvable `secret_ref` — recorded in
+    `client.build_failures`, never registered) is surfaced in `failed_accounts`
+    next to the healthy account's rows, exit 0 — matching the connection-time
+    isolation so one stale secret can't blank the whole search."""
+    gmail = FakeAdapter("gmail_main", "[GM]", {"raw_query"}, messages=[GM_ONE])
+    client = MailClient({"gmail_main": gmail})
+    client.build_failures = [
+        {"account": "yahoo_main", "error": "secret_ref 'op://Vault/yahoo' could not be resolved"}]
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "toon"
+
+    cli.cmd_mail_search(Namespace(query="invoice", accounts=None))
+
+    from vidushi_oa import toon as oa_toon
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    payload = oa_toon.from_toon(captured.out)
+    assert payload["count"] == 1
+    assert payload["results"][0]["id"] == GM_ONE.id
+    assert {row["account"] for row in payload["failed_accounts"]} == {"yahoo_main"}
+
+
+def test_mail_search_all_accounts_failing_to_build_is_a_structured_error_exit_1(monkeypatch, capsys):
+    """Total wipeout at BUILD time — every account's secret_ref is unresolvable so
+    none register — is still a structured error + exit 1 (no traceback)."""
+    client = MailClient({})
+    client.build_failures = [
+        {"account": "gmail_main", "error": "secret unresolved"},
+        {"account": "yahoo_main", "error": "op CLI missing"},
+    ]
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_search(Namespace(query="invoice", accounts=None))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    payload = json.loads(captured.out.strip())
+    assert "error" in payload
+    assert {row["account"] for row in payload["failed_accounts"]} == {"gmail_main", "yahoo_main"}
+
+
+def test_mail_search_all_accounts_failing_is_a_structured_error_exit_1(monkeypatch, capsys):
+    """Total wipeout — every selected account fails — is a structured error + exit 1
+    (no traceback), never an empty-but-successful-looking result set."""
+    gmail = FailingAdapter("gmail_main", "[GM]", {"raw_query"}, LookupError("token revoked"))
+    yahoo = FailingAdapter("yahoo_main", "[YH]", {"legacy_only"}, OSError("host unreachable"))
+    client = MailClient({"gmail_main": gmail, "yahoo_main": yahoo})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_search(Namespace(query="invoice", accounts=None))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    payload = json.loads(captured.out.strip())
+    assert "error" in payload
+    assert {row["account"] for row in payload["failed_accounts"]} == {"gmail_main", "yahoo_main"}
+
+
 # ─────────────────────────── mail-accounts (direct-call, fakes) ───────────────────────────
 
 def test_mail_accounts_lists_every_registered_account_with_its_capabilities(monkeypatch, capsys):
@@ -234,6 +405,61 @@ def test_mail_accounts_lists_every_registered_account_with_its_capabilities(monk
     assert set(by_account.keys()) == {"gmail_main", "fastmail_main", "yahoo_main"}
     assert sorted(by_account["gmail_main"]["capabilities"]) == sorted(["raw_query", "server_threads"])
     assert sorted(by_account["fastmail_main"]["capabilities"]) == ["server_side_categories"]
+
+
+def test_mail_accounts_stays_offline_even_when_an_account_would_fail_a_search(monkeypatch, capsys):
+    """`mail-accounts` is a pure capability listing — it must never trigger an
+    adapter's `search`, so a revoked/unreachable account is still listed cleanly."""
+    yahoo = FailingAdapter("yahoo_main", "[YH]", {"legacy_only"}, LookupError("token revoked"))
+    client = MailClient({"yahoo_main": yahoo})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    cli.cmd_mail_accounts(Namespace())
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    results = payload["results"] if isinstance(payload, dict) else payload
+    assert [row["account"] for row in results] == ["yahoo_main"]
+
+
+def test_mail_accounts_surfaces_a_build_failed_account(monkeypatch, capsys):
+    """An account whose `secret_ref` couldn't resolve at build time is skipped from
+    the listing but surfaced in `failed_accounts`, never a traceback — the healthy
+    accounts still list."""
+    gmail = FakeAdapter("gmail_main", "[GM]", {"raw_query"}, messages=[])
+    client = MailClient({"gmail_main": gmail})
+    client.build_failures = [
+        {"account": "yahoo_main", "error": "secret_ref could not be resolved"}]
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "toon"
+
+    cli.cmd_mail_accounts(Namespace())
+
+    from vidushi_oa import toon as oa_toon
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    payload = oa_toon.from_toon(captured.out)
+    assert [row["account"] for row in payload["results"]] == ["gmail_main"]
+    assert {row["account"] for row in payload["failed_accounts"]} == {"yahoo_main"}
+
+
+def test_mail_accounts_json_build_failure_warns_on_stderr_keeps_bare_array(monkeypatch, capsys):
+    """Under `--json` the accounts listing stays a bare array on stdout, but a
+    build-failed account is surfaced to machine consumers on STDERR."""
+    gmail = FakeAdapter("gmail_main", "[GM]", {"raw_query"}, messages=[])
+    client = MailClient({"gmail_main": gmail})
+    client.build_failures = [
+        {"account": "yahoo_main", "error": "secret_ref could not be resolved"}]
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    cli.cmd_mail_accounts(Namespace())
+
+    captured = capsys.readouterr()
+    rows = json.loads(captured.out.strip())
+    assert [row["account"] for row in rows] == ["gmail_main"]
+    assert "failed_accounts" not in captured.out
+    assert "yahoo_main" in captured.err
 
 
 # ─────────────────────────── mail-get (direct-call, fakes) ───────────────────────────
@@ -280,6 +506,112 @@ def test_mail_get_unknown_uid_is_a_structured_error_not_a_traceback(monkeypatch,
     assert "error" in payload
 
 
+def test_mail_get_imap_none_return_for_unknown_uid_is_a_structured_error(monkeypatch, capsys):
+    """The real `ImapAdapter.fetch_message` returns None (not KeyError) for an unknown
+    uid — `cmd_mail_get` must still emit a structured error + exit 1, no traceback."""
+    from vidushi_oa.mail.imap import ImapAdapter
+
+    class _EmptyIMAP:
+        def login(self, user, password):
+            return ("OK", [b"Logged in"])
+
+        def select(self, mailbox="INBOX", readonly=False):
+            return ("OK", [b"1"])
+
+        def uid(self, command, *args):
+            return ("OK", [])  # FETCH of an unknown uid yields no message -> None
+
+    adapter = ImapAdapter("gmail_main", "[GM]", host="imap.example.com",
+                          user="me", password="pw",
+                          conn_factory=lambda host, port: _EmptyIMAP())
+    monkeypatch.setattr(cli, "build_client", lambda **kw: MailClient({"gmail_main": adapter}))
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_get(Namespace(account="gmail_main", uid="404"))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    assert json.loads(captured.out.strip())["error"] == "message not found"
+
+
+def test_mail_get_jmap_not_implemented_is_a_structured_error(monkeypatch, capsys):
+    """`JmapAdapter.fetch_message` raises `NotImplementedError` — `cmd_mail_get` must
+    render that as a structured error + exit 1, not a leaked traceback."""
+    from vidushi_oa.mail.jmap import JmapAdapter
+
+    adapter = JmapAdapter("fastmail_main", "[FM]", token="tok", transport=lambda *a, **k: (200, {}))
+    monkeypatch.setattr(cli, "build_client", lambda **kw: MailClient({"fastmail_main": adapter}))
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_get(Namespace(account="fastmail_main", uid="1"))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    assert "error" in json.loads(captured.out.strip())
+
+
+@pytest.mark.parametrize("error", [
+    imaplib.IMAP4.error("SELECT failed"),
+    OSError("host unreachable"),
+    urllib.error.URLError("network down"),
+])
+def test_mail_get_live_fetch_failure_is_a_structured_error_not_a_traceback(monkeypatch, capsys, error):
+    """A live fetch/connect failure — down host, DNS failure, bad app-password, or a
+    network-down XOAUTH2 refresh (`imaplib.IMAP4.error` / `OSError` /
+    `urllib.error.URLError`) — must render structurally + exit 1, never a traceback,
+    symmetric with `cmd_mail_search`."""
+    adapter = FailingAdapter("gmail_main", "[GM]", {"raw_query"}, error)
+    monkeypatch.setattr(cli, "build_client", lambda **kw: MailClient({"gmail_main": adapter}))
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_get(Namespace(account="gmail_main", uid="1"))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    assert "error" in json.loads(captured.out.strip())
+
+
+def test_mail_get_unknown_account_is_a_structured_error(monkeypatch, capsys):
+    client = _build_fake_client()
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_get(Namespace(account="no_such_account", uid="1"))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    assert "error" in json.loads(captured.out.strip())
+
+
+def test_mail_get_build_failed_account_reports_the_build_failure_reason(monkeypatch, capsys):
+    """`mail-get` targeting an account that failed to BUILD (unresolvable secret_ref)
+    reports the build-failure reason + exit 1, never a traceback or a misleading
+    'unknown account'."""
+    client = MailClient({})
+    client.build_failures = [
+        {"account": "yahoo_main", "error": "secret_ref 'op://Vault/yahoo' could not be resolved"}]
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_get(Namespace(account="yahoo_main", uid="1"))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    payload = json.loads(captured.out.strip())
+    assert payload["account"] == "yahoo_main"
+    assert "could not be resolved" in payload["error"]
+
+
 # ─────────────────────────── vidushi_oa.mail.accounts (reference-only registry) ───────────
 
 def test_add_account_then_load_accounts_round_trips_a_reference_only_entry(tmp_path, monkeypatch):
@@ -296,6 +628,7 @@ def test_add_account_then_load_accounts_round_trips_a_reference_only_entry(tmp_p
         "provider": "fastmail",
         "address": "user@fastmail.com",
         "secret_ref": "keyring:fastmail-main",
+        "auth_mode": "password",
     }]
 
 
@@ -347,7 +680,7 @@ def test_accounts_file_contains_exactly_the_reference_only_schema_no_secret_mate
 
     loaded = accounts.load_accounts()
     assert len(loaded) == 1
-    assert set(loaded[0].keys()) == {"name", "provider", "address", "secret_ref"}
+    assert set(loaded[0].keys()) == {"name", "provider", "address", "secret_ref", "auth_mode"}
 
 
 # ─────────────────────────── cmd_mail_auth (direct-call) ───────────────────────────
@@ -368,7 +701,8 @@ def test_cmd_mail_auth_persists_only_a_reference_never_a_secret(tmp_path, monkey
     assert entry["provider"] == "fastmail"
     assert entry["address"] == "user@fastmail.com"
     assert entry["secret_ref"] == "keyring:fastmail-main"
-    assert set(entry.keys()) == {"name", "provider", "address", "secret_ref"}
+    assert entry["auth_mode"] == "password"
+    assert set(entry.keys()) == {"name", "provider", "address", "secret_ref", "auth_mode"}
 
     captured = capsys.readouterr().out
     assert "fastmail" in captured
@@ -416,7 +750,8 @@ def test_build_client_wires_adapters_by_provider_and_stamps_the_right_source_tag
 
     seen_providers = {}
 
-    def fake_adapter_factory(provider, account, address, secret_ref, resolver):
+    def fake_adapter_factory(provider, account, address, secret_ref, resolver,
+                             auth_mode="password"):
         seen_providers[account] = provider
         return FakeAdapter(account, "", set())
 
@@ -442,7 +777,8 @@ def test_build_client_never_eagerly_resolves_the_secret(tmp_path, monkeypatch):
     monkeypatch.setenv("VIDUSHI_MAIL_CONFIG", str(config_path))
     accounts.add_account("gmail_main", "gmail", "user@gmail.com", "keyring:gmail-main")
 
-    def fake_adapter_factory(provider, account, address, secret_ref, resolver):
+    def fake_adapter_factory(provider, account, address, secret_ref, resolver,
+                             auth_mode="password"):
         return FakeAdapter(account, "", set())
 
     resolver = mock.Mock()

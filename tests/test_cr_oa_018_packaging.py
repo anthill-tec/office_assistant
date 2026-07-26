@@ -9,7 +9,7 @@ Verifies the NEW-contract ACs before licensing/CI land:
   §S6 a GitHub Actions workflow under `.github/workflows/` that (a) triggers on push,
       (b) has a job whose steps build the wheel, run pytest, AND invoke the Model-B
       release gate (`skill-release-gate.py`), and (c) has a job that publishes to PyPI
-      gated on a version tag.
+      gated on a main push, with the SemVer tag as a safety check.
 
 Today NEITHER a top-level `LICENSE` file NOR any `.github/workflows/*.yml` exist, and
 `pyproject.toml` declares no license/classifiers at all — every test below MUST fail
@@ -164,11 +164,11 @@ class CIWorkflowTest(unittest.TestCase):
         Three jobs are required:
           - `test` (runs on push): builds the wheel, runs pytest, runs the
             Model-B release gate.
-          - a test-publish job gated to `release/*` branches, whose publish
+          - a test-publish job gated to manual `workflow_dispatch`, whose publish
             step targets TestPyPI.
-          - a production publish job gated to a version tag, with
-            `permissions.id-token: write`, an `environment` named `pypi`
-            (OIDC trusted-publisher scoping), and a
+          - a production publish job gated to a main push (SemVer tag as a
+            safety check), with `permissions.id-token: write`, an `environment`
+            named `pypi` (OIDC trusted-publisher scoping), and a
             `pypa/gh-action-pypi-publish` step.
 
         Manual-reviewer / required-approval gating is a repo setting, not
@@ -220,14 +220,14 @@ class CIWorkflowTest(unittest.TestCase):
             f"pytest, AND invoke skill-release-gate.py; jobs found: {job_blobs}",
         )
 
-        # --- job 2: test-publish — gated to release/* branches, publishes to TestPyPI ---
+        # --- job 2: test-publish — gated to manual workflow_dispatch, publishes to TestPyPI ---
         test_publish_job = None
         for job_name, job in jobs.items():
             if not isinstance(job, dict) or job_name == test_job:
                 continue
             job_if = job.get("if", "")
-            gated_to_release_branch = isinstance(job_if, str) and "refs/heads/release/" in job_if
-            if not gated_to_release_branch:
+            gated_to_dispatch = isinstance(job_if, str) and "workflow_dispatch" in job_if
+            if not gated_to_dispatch:
                 continue
             steps = job.get("steps") or []
             targets_testpypi = False
@@ -251,20 +251,21 @@ class CIWorkflowTest(unittest.TestCase):
                 break
         self.assertIsNotNone(
             test_publish_job,
-            "expected a test-publish job gated to release/* branches (job 'if' containing "
-            "'refs/heads/release/') whose publish step targets TestPyPI (a "
+            "expected a test-publish job gated to manual workflow_dispatch (job 'if' containing "
+            "'workflow_dispatch') whose publish step targets TestPyPI (a "
             "with.repository-url/repository_url containing 'test.pypi.org', or a step "
             f"referencing 'testpypi'); jobs found: {list(jobs.keys())}",
         )
 
-        # --- job 3: production publish — gated to a version tag, OIDC-scoped ---
+        # --- job 3: production publish — gated to a main push; the SemVer tag is a
+        # release SAFETY CHECK (not the trigger); OIDC-scoped ---
         production_job = None
         for job_name, job in jobs.items():
             if not isinstance(job, dict) or job_name in (test_job, test_publish_job):
                 continue
             job_if = job.get("if", "")
-            gated_to_tag = isinstance(job_if, str) and "refs/tags/" in job_if
-            if not gated_to_tag:
+            gated_to_main = isinstance(job_if, str) and "refs/heads/main" in job_if
+            if not gated_to_main:
                 continue
             permissions = job.get("permissions") or {}
             has_id_token_write = (
@@ -279,15 +280,24 @@ class CIWorkflowTest(unittest.TestCase):
             environment_is_pypi = env_name == "pypi"
             blob = job_blobs[job_name]
             uses_gh_action_pypi_publish = "pypa/gh-action-pypi-publish" in blob
-            if has_id_token_write and environment_is_pypi and uses_gh_action_pypi_publish:
+            # the SemVer tag is a release SAFETY CHECK — a step asserting main HEAD carries a
+            # SemVer tag reachable from origin/main (hatch-vcs makes the version == the tag), and
+            # skipping the publish (staying green) on ordinary untagged main commits
+            has_tag_safety_check = "git tag --points-at" in blob
+            if (
+                has_id_token_write
+                and environment_is_pypi
+                and uses_gh_action_pypi_publish
+                and has_tag_safety_check
+            ):
                 production_job = job_name
                 break
         self.assertIsNotNone(
             production_job,
-            "expected a production publish job gated to a version tag (job 'if' containing "
-            "'refs/tags/') with permissions.id-token: write, an environment named 'pypi' "
-            "(OIDC trusted-publisher scoping), and a pypa/gh-action-pypi-publish step; "
-            f"jobs found: { {name: jobs[name] for name in jobs} }",
+            "expected a production publish job gated to a main push (job 'if' containing "
+            "'refs/heads/main') with a SemVer-tag safety-check step, permissions.id-token: "
+            "write, an environment named 'pypi' (OIDC trusted-publisher scoping), and a "
+            f"pypa/gh-action-pypi-publish step; jobs found: { {name: jobs[name] for name in jobs} }",
         )
 
 

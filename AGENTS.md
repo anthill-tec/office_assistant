@@ -24,7 +24,7 @@ Think of it as *a system of roles plus its persistent memory*: the one executabl
 
 ## Commands (the `voa` CLI — pluggable backend: SQLite default / Mongo opt-in)
 
-Types: `contacts` · `invoices` · `warranties` · `cases` · `products` · `subscriptions` · `insurance`. Full field schemas in `data/schema.md`.
+Types: `contacts` · `invoices` · `warranties` · `cases` · `products` · `subscriptions` · `insurance` · `orders`. Full field schemas in `data/schema.md`.
 
 ```bash
 # read — filter + project only what you need (dotted paths supported: source.email_id, registration.done)
@@ -46,6 +46,13 @@ voa event <type> <id> <event>        # fire a mapped state transition (transitio
 voa attention [<type>]               # rows with an OPEN action or a status needing attention
 voa warranty-sweep [--dry-run]       # expire past-term warranties (+ open renew-or-extend)
 voa due-sweep [--dry-run]            # flag subscriptions/insurance inside the renewal window
+voa delivery-sweep [--dry-run]       # chase orders stalled in transit (open stuck-chase)
+
+# embedded mail client (read-only) — search/fetch the configured mailboxes through voa itself
+voa mail-search '<query>' [--accounts a,b]         # server-side search across accounts, merged + de-duped by Message-ID (fail-soft: one bad account -> failed_accounts, not a wipeout)
+voa mail-accounts                    # list configured accounts + adapter capabilities
+voa mail-get --account <name> --uid <uid>          # fetch one full message by account + uid
+voa mail-auth --provider <p> --address <a> [--auth-mode password|xoauth2] [--secret-ref <ref>]   # register a credential REFERENCE (never the secret; prompt/stdin if --secret-ref omitted)
 
 # admin — active-backend provisioning, schema validation, migration + versioning
 voa setup [--check]                  # provision the active backend (SQLite default / Mongo), then init (--check diagnoses only)
@@ -53,6 +60,7 @@ voa init                             # create tables/collections + unique id ind
 voa validate [<type>]                # list docs that violate the validator ([] = clean)
 voa import [<type>]                  # data/*.jsonl -> active backend (idempotent upsert by id)
 voa snapshot [<type>]                # active backend -> data/*.jsonl (chezmoi-versioned; the migration bridge)
+voa doctor                           # diagnostic health read: engine version, store + secret backend, per-account resolution (absorbs setup --check)
 ```
 
 > The console command is **`voa`** (from `uv tool install vidushi-oa`, or in-repo `uv tool install --editable .`). The
@@ -66,7 +74,7 @@ IDs are auto-generated from anchor fields (`ven_<vendor>`, `doc_<vendor>_<number
 
 ## Architecture (the big picture)
 
-**Seven stores** (SQLite tables by default, or Mongo collections; mirrored to `data/*.jsonl` by `snapshot`) **form a small relational model**, joined by foreign keys and resolved with `voa … --expand`:
+**Eight stores** (SQLite tables by default, or Mongo collections; mirrored to `data/*.jsonl` by `snapshot`) **form a small relational model**, joined by foreign keys and resolved with `voa … --expand`:
 
 ```
 invoice (proof of purchase)  ──invoice_id──┐
@@ -81,9 +89,10 @@ case (claim/RMA) ── invoice_id / warranty_id / product_id / contact_id ─�
 - **`documents/<acct>/<vendor>/`** holds saved PDF copies (named `YYYY-MM-DD_<vendor>_<doctype>_<number>.pdf`); the invoice row's `file` points to it. The store row always pins the originating mail (`source`) even when no copy is saved.
 - **Products are keyed on the actual MANUFACTURER**, not the reseller (`bought_from`); their `links` must be manufacturer-official.
 - **`subscriptions` + `insurance`** are the recurring domains (billing/coverage that renews): `insurance` links a `product_id` (e.g. a vehicle's motor policy), and an `invoice` may carry a `subscription_id`. They ride the `DUE` status via `due-sweep`.
+- **`orders`** is the purchase-**fulfilment** lifecycle (ordered → shipped → delivered, incl. international/customs), keyed off its own delivery state machine and linked back via `invoice_id` / `product_id`; the proof-of-purchase document lives in `invoices`. It rides `delivery-sweep` for stalled shipments.
 - **Every row carries the shared lifecycle** — a `status` (NEW/UNKNOWN/IN_PROGRESS/COMPLETED, +EXPIRED for warranties, +DUE for recurring), a domain-specific `actions[]` set (each OPEN→RESOLVED), and `documents[]`. Transitions are locked into `transitions.py` and fired via `event`/the sweeps — see `data/schema.md`.
 
-**Data sources:** the skills search **two mailboxes** — Fastmail (FastmailMCP) and Gmail `antojk@gmail.com` (claude.ai connector) — and write findings here.
+**Data sources:** the skills read the user's mailboxes through the **embedded `voa mail-*` client** (Fastmail + Gmail `antojk@gmail.com`, searched server-side, then merged + de-duped) and write findings here. A harness mail MCP (FastmailMCP, a Gmail connector) is an optional **alternative**, never the default — only `voa mail-*` yields the token-saving merge/tag pass (CR-OA-020/021).
 
 ## Vidushi OA toolkit — roles
 

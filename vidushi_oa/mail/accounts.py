@@ -1,8 +1,11 @@
 """Reference-only mail-account registry (CR-OA-020 §S5).
 
 Persists the *configured mail accounts* as a small JSON list. Each entry carries
-EXACTLY `{name, provider, address, secret_ref}` — a pointer to where the secret
-lives (keyring/1Password/Bitwarden/file ref), NEVER the secret material itself.
+EXACTLY `{name, provider, address, secret_ref, auth_mode}` — a pointer to where the
+secret lives (keyring/1Password/Bitwarden/file ref), NEVER the secret material
+itself. `auth_mode` selects how the resolved secret authenticates (`password` —
+the default — or `xoauth2`, Gmail Workspace's refresh-token flow); entries written
+before `auth_mode` existed load as `password`.
 
 Path resolution: the `VIDUSHI_MAIL_CONFIG` env var wins; otherwise
 `$XDG_CONFIG_HOME/vidushi-oa/accounts.json` (falling back to
@@ -12,7 +15,7 @@ created with owner-only permissions (`0600` on the file).
 import json
 import os
 
-_ENTRY_KEYS = ("name", "provider", "address", "secret_ref")
+_ENTRY_KEYS = ("name", "provider", "address", "secret_ref", "auth_mode")
 
 
 def _config_path(path=None) -> str:
@@ -37,10 +40,14 @@ def load_accounts(path=None) -> list[dict]:
     return list(data)
 
 
-def add_account(name, provider, address, secret_ref, path=None) -> dict:
-    """Append a reference-only account entry and persist it (file mode `0600`).
+def add_account(name, provider, address, secret_ref, auth_mode="password",
+                path=None) -> dict:
+    """Upsert a reference-only account entry by name and persist it (mode `0600`).
 
-    Returns the stored entry. Existing entries are preserved in order.
+    Returns the stored entry. An existing entry with the same `name` is replaced
+    in place (order preserved) so re-running `voa mail-auth` to rotate a secret
+    stays idempotent; otherwise the entry is appended. `auth_mode` records how the
+    resolved secret authenticates (`password` default, or `xoauth2`).
     """
     target = _config_path(path)
     parent = os.path.dirname(target)
@@ -52,9 +59,15 @@ def add_account(name, provider, address, secret_ref, path=None) -> dict:
         "provider": provider,
         "address": address,
         "secret_ref": secret_ref,
+        "auth_mode": auth_mode,
     }
     accounts = load_accounts(target)
-    accounts.append(entry)
+    for i, existing in enumerate(accounts):
+        if existing.get("name") == name:
+            accounts[i] = entry
+            break
+    else:
+        accounts.append(entry)
 
     # Create the file owner-only before writing any content.
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
