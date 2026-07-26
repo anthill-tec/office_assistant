@@ -62,6 +62,15 @@ CLI_SRC = os.path.join(ROOT, "vidushi_oa", "_cli.py")
 
 SENTINEL = "S3NTINEL-SECRET"
 NULL_KEYRING = "keyring.backends.null.Keyring"
+# A REAL, storable, file-backed keyring from the `keyrings.alt` package (the `[test]` extra),
+# used for the ONE test that must prove the "falls back to keyring" path actually stores the
+# secret. `keyrings.alt` depends on `keyring`, so installing it guarantees `keyring` itself is
+# importable regardless of whether this project's own optional `mail` extra is installed —
+# unlike `keyring.backends.null.Keyring`, whose apparent "primary lands on keyring" behaviour
+# depends on that installation detail and whose set/get are no-ops that never really store
+# anything. Its file store is relocated under `XDG_DATA_HOME` to a fresh per-test tempdir so
+# it is fully hermetic and never touches the real OS keyring.
+ALT_FILE_KEYRING = "keyrings.alt.file.PlaintextKeyring"
 
 
 def _scrub_path_of(path_value, *names):
@@ -187,8 +196,17 @@ class MailAuthDoctorTest(unittest.TestCase):
 
     def test_mail_auth_falls_back_to_keyring_with_warning_when_no_vault_provisioned(self):
         # Auto-select the primary backend (no VIDUSHI_SECRET_BACKEND override): with op/bw
-        # absent from PATH, the resolver must land on keyring, not crash, and warn.
-        env_overrides = {"PYTHON_KEYRING_BACKEND": NULL_KEYRING}
+        # absent from PATH, the resolver must land on keyring, not crash, and warn. Point it at
+        # a REAL, storable, hermetic keyring (keyrings.alt's file-backed PlaintextKeyring,
+        # relocated under a fresh XDG_DATA_HOME tempdir) rather than the null no-op backend, so
+        # the fallback actually stores the secret and the "keyring" warning is proven true, not
+        # just emitted regardless of whether anything landed anywhere.
+        keyring_home = tempfile.mkdtemp(prefix="oa-cr020-keyring-")
+        self.addCleanup(shutil.rmtree, keyring_home, ignore_errors=True)
+        env_overrides = {
+            "PYTHON_KEYRING_BACKEND": ALT_FILE_KEYRING,
+            "XDG_DATA_HOME": keyring_home,
+        }
         env = dict(self.env)
         env.pop("VIDUSHI_SECRET_BACKEND", None)
         env.update(env_overrides)
@@ -205,6 +223,23 @@ class MailAuthDoctorTest(unittest.TestCase):
                        f"warning must name the keyring fallback destination; stderr={r.stderr!r}")
         self.assertNotIn(SENTINEL, r.stdout)
         self.assertNotIn(SENTINEL, r.stderr)
+
+        # Prove the secret actually landed in the (real, hermetic) keyring rather than the
+        # warning being emitted regardless of whether anything was really stored: resolve the
+        # derived ref back through the same SecretResolver chain, in the same keyring env.
+        # (Deliberately NOT grepped for the sentinel above -- the keyring's own tempdir store
+        # legitimately holds it by design, mirroring how the file backend is excluded.)
+        proof = subprocess.run(
+            [sys.executable, "-c",
+             "import sys\n"
+             "from vidushi_oa.mail.secrets import SecretResolver\n"
+             "print(SecretResolver().resolve(sys.argv[1]))\n",
+             "vidushi-oa/fastmail:me3@x.com"],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(proof.returncode, 0, proof.stderr)
+        self.assertEqual(proof.stdout.strip(), SENTINEL,
+                          "the secret must be retrievable from the real keyring backend it fell back to")
 
     # ------------------------------------------------------------------
     # AC-c — doctor: happy path, failing path, --json, exit codes, no secrets
