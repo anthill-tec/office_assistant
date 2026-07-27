@@ -48,6 +48,8 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-023](CR-OA-023-keyring-primary-os-aware-secret-setup.md) | Keyring-primary secret store + OS-aware `setup` (drop vault backends; keyring a base dep) | feature | PENDING | 020 | 10 |
 | [CR-OA-024](CR-OA-024-jmap-post-content-type-header.md) | Fastmail JMAP POST missing `Content-Type` header (400s every request) | bugfix | PENDING | 020 | 10 |
 | [CR-OA-025](CR-OA-025-gmail-xgmraw-quoted-phrase-escaping.md) | Gmail `X-GM-RAW` search mis-quotes embedded phrases + correct search hints | bugfix | PENDING | 020 | 10 |
+| [CR-OA-026](CR-OA-026-mail-search-expose-uid.md) | `mail-search` omits IMAP `uid` (+ account) → `mail-get` unusable | bugfix | PENDING | 020 | 10 |
+| [CR-OA-027](CR-OA-027-orders-order-date-nullable-validator.md) | `orders.order_date` validator rejects null despite documented `str\|null` | bugfix | PENDING | 015 | 10 |
 
 ## v0.1.0 milestone — Wave 6
 
@@ -155,11 +157,17 @@ split for every interactive step.
 - **025** fixes a **Gmail search bug** — `GmailImapAdapter.search()` wraps the `X-GM-RAW` arg in quotes
   without escaping embedded `"`, so any **quoted phrase** yields a malformed IMAP `SEARCH` (qualifiers/`OR`/
   parens are fine). Escapes/literals the arg so quoted phrases are **supported**, and corrects the
-  `mail-search` help + skill search-recipes guidance. Second local-use find.
+  `mail-search` help + skill search-recipes guidance.
+- **026** fixes a **blocking mail bug** — `_mail_row()` drops `uid` + `account`, so a `mail-search` row
+  can't be fed to `mail-get` (Message-ID passed as `--uid` → `BAD Could not parse command`). No message body
+  was openable from search. Exposes both already-present fields on the row.
+- **027** fixes a **doc/validator mismatch** — `orders.order_date` validator rejects null though
+  `data/schema.md` documents `str|null`; widens the validator to `["string","null"]`.
 
-**Order:** 024 + 025 (Gmail/Fastmail search bugs — smallest, unblock local use) → 023 → 022 (023 simplifies
-the secret resolver 022's send-capable creds ride on). Each via RED/GREEN/VERIFY → no-mistakes → a combined
-**1.1.0** `git flow release`.
+**Order:** the four bugfixes lead (unblock local use, smallest): **024** (Fastmail JMAP) + **026** (search
+uid) are the blocking pair, then **025** (Gmail quotes) + **027** (order_date) → then features **023**
+(secret store; 022's creds ride on it) → **022** (sending). Each via RED/GREEN/VERIFY → no-mistakes → a
+combined **1.1.0** `git flow release`.
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
@@ -183,12 +191,14 @@ end-to-end. Both 006 and 004 depend only on the now-shipped 003.)
   / 004 port onto pymongo — not to be redone.
 - `data/*.jsonl` stay as the `snapshot` target (chezmoi-versioned); they are NOT committed to the
   project repo (gitignored). Mongo data lives on the local instance only.
-- **Wave 10 → 1.1.0 (2026-07-27):** CR-022 + CR-023 + CR-024 + CR-025 authored this session (design phase,
-  on develop). **Next session builds the 1.1.0 minor release** from them **plus any further usability issues
-  the user surfaces during local Phase-1 use** — those get filed as new CRs/tasks at wave-open, not
-  mid-execution (user directive). CR-024 (Fastmail JMAP `Content-Type`) + CR-025 (Gmail `X-GM-RAW`
-  quoted-phrase escaping + search hints) are the first such issues — recorded as CRs per user directive
-  rather than hotfixed today. Vault-backend removal is the one breaking bit, accepted within the minor bump.
+- **Wave 10 → 1.1.0 (2026-07-27):** CR-022 + CR-023 + CR-024 + CR-025 + CR-026 + CR-027 authored this
+  session (design phase, on develop). **Next session builds the 1.1.0 minor release** from them **plus any
+  further usability issues the user surfaces during local Phase-1 use** — those get filed as new CRs/tasks
+  at wave-open, not mid-execution (user directive). The **four bugfixes 024–027** all came from a local
+  Phase-1 mail-path session (Fastmail JMAP `Content-Type`; Gmail `X-GM-RAW` quoting; `mail-search` missing
+  `uid`; `orders.order_date` validator) — recorded as CRs rather than hotfixed today. 024 + 026 are the
+  blocking pair (Fastmail reads / opening any message). Vault-backend removal (023) is the one breaking bit,
+  accepted within the minor bump.
 
 ## Follow-up tasks
 Small items (no design surface → tasks, not CRs) surfaced during execution:
