@@ -26,12 +26,22 @@ alongside the `Authorization` bearer. Both JMAP calls route through `_auth_heade
 (`jmap.py:78`) and the API `POST` (`jmap.py:103`) — so the header is present on the POST that Fastmail
 rejects today (harmless on the bodyless GET).
 
+### §S2 AXI-conformant response (CR-OA-017)
+With the header in place, a Fastmail search returns the standard AXI TOON envelope — `[FM]`-source-tagged rows
+merged + de-duped with the other accounts (DN §Decision 5). A JMAP call that **still** fails (bad/rotated
+token, non-200) must surface AXI-conformantly: **fail-soft** into `mail-search`'s `failed_accounts` (one bad
+account never wipes the merged result), and a structured error (no traceback) with the correct exit code —
+not the raw 400.
+
 ## Acceptance criteria
 
 ### §S1
 - [ ] `JmapAdapter._auth_headers()` returns a dict whose entries are exactly `Authorization: Bearer <token>` **and** `Content-Type: application/json` (assert both keys + values).
 - [ ] **Integration (production POST path):** driving `JmapAdapter` through its public fetch/search path with the injected fake `transport` captures the headers passed to the `POST` at the JMAP `api_url`, and those headers include `Content-Type: application/json`. The test exercises the real method (not `_auth_headers()` in isolation).
 - [ ] **Regression:** the existing JMAP session/query tests still pass with the added header (the GET path is unaffected).
+
+### §S2 (AXI conformance)
+- [ ] A fake JMAP endpoint returning a non-200 for one account makes `mail-search` record that account under `failed_accounts` (structured, no traceback) while still returning the merged rows from the other accounts; the successful Fastmail path yields `[FM]`-tagged rows inside the standard `{count, results, next}` envelope.
 
 ## Estimated size
 XS — a one-line header addition plus a RED test asserting the POST carries it.

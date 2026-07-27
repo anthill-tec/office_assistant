@@ -25,9 +25,18 @@ of through `voa`. Affects default, `--full`, and `--json` output.
 ### §S1 Expose `uid` + `account` on every mail-search row
 `_mail_row()` includes **`uid` (`msg.uid`)** and **`account` (`msg.account`)** alongside the existing fields,
 so each search row is directly consumable by `mail-get --account <account> --uid <uid>`. Present in **all
-three** output modes (default TOON, `--full`, `--json`). The `next[]` hint for a search result SHOULD show a
-runnable `mail-get --account <account> --uid <uid>` using the first row's real values (subject to the
-no-personal-data invariant — the values come from the row at runtime, not hardcoded).
+three** output modes (default TOON, `--full`, `--json`).
+
+### §S2 AXI-conformant response (CR-OA-017)
+The fix's response conforms to AXI, not merely carrying the field:
+- **Minimal default fields (#2):** `uid` + `account` are part of the **minimal default projection**, not
+  `--full`-only — the agent must be able to chain `mail-get` from the default TOON envelope without asking for
+  `--full`.
+- **Contextual next-command hint (#9):** `mail-search`'s `next[]` emits a **runnable**
+  `mail-get --account <account> --uid <uid>` built from the first row's real values (values come from the row
+  at runtime — the no-personal-data invariant holds: nothing hardcoded).
+- **Envelope + empty state (#1/#5):** rows stay inside the standard `{count, results, next}` TOON envelope; a
+  no-hits search returns the definitive empty state, not a bare list.
 
 ## Acceptance criteria
 
@@ -35,6 +44,10 @@ no-personal-data invariant — the values come from the row at runtime, not hard
 - [ ] `_mail_row(msg)` returns a dict containing `uid == msg.uid` and `account == msg.account`, in addition to `id`/`source_tag`/`subject`/`sender`/`date`.
 - [ ] A `mail-search` run (fake adapter returning a `Message` with `uid="42"`, `account="fastmail"`) emits rows carrying `uid: "42"` and `account: "fastmail"` in default TOON, `--full`, **and** `--json`.
 - [ ] **Integration (round-trip):** the `(account, uid)` taken from a `mail-search` row, passed to `mail-get --account <account> --uid <uid>` against the same fake adapter, resolves the message (no `UID FETCH` malformation) — asserting a search result is now directly openable.
+
+### §S2 (AXI conformance)
+- [ ] `uid` + `account` appear in the **default** TOON output (no `--full`, no `--fields`) — asserted on the minimal-default projection, not only under `--full`.
+- [ ] `mail-search`'s `next[]` contains a runnable `mail-get --account <account> --uid <uid>` string built from the first result row's actual `account`/`uid` (assert the exact interpolated command); with zero hits, `next[]` falls back to the search-refinement hint and `count` is `0` (definitive empty state).
 
 ## Estimated size
 XS — add two already-present fields to the row projection + a round-trip test.

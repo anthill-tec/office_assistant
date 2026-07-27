@@ -25,6 +25,10 @@ nullable-field convention already used by other optional date fields in the sche
 stays `str|null`; the two now agree. After the change, `voa add orders --json '{… "order_date": null}'` and
 `voa validate orders` both succeed.
 
+The responses stay **AXI-conformant (CR-OA-017):** `voa add` returns the standard TOON status envelope (the
+created id), and `voa validate orders` returns the **definitive empty state** (`[]`, AXI #5) when clean —
+never a bare/ambiguous output — with the correct exit code.
+
 ## Acceptance criteria
 
 ### §S1
@@ -32,6 +36,7 @@ stays `str|null`; the two now agree. After the change, `voa add orders --json '{
 - [ ] `voa add orders --json '{"id":"ord_x", ..., "order_date": null}'` succeeds and `voa validate orders` reports it clean (`[]`) — asserted against the active backend in the test harness.
 - [ ] **Regression:** a row with a string `order_date` (`"2026-07-01"`) still validates; a non-string/non-null value (e.g. a number) is still rejected.
 - [ ] `data/schema.md` and the validator agree — the doc's `str|null` matches the validator's `["string","null"]` (no doc edit needed beyond confirming alignment).
+- [ ] **AXI:** `voa validate orders` on a clean store returns the definitive empty state `[]` (AXI #5) with exit 0; `voa add orders … order_date:null` returns the TOON status envelope carrying the new id.
 
 ## Estimated size
 XS — one validator field change + a null-accepted / string-still-valid test pair.

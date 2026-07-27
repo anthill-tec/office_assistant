@@ -50,6 +50,7 @@ to `conn.uid(...)` — no live Gmail.
 ### §S2
 - [ ] `voa mail-search --help` (or its usage/error text) states the supported compound grammar and includes a **quoted-phrase** example.
 - [ ] `skills/vidushi-oa/references/search-recipes.md` contains a compound-query example **with a quoted phrase**, and contains no residual "avoid quoted phrases / quotes break Gmail" workaround wording.
+- [ ] **AXI conformance (CR-OA-017):** a quoted-phrase query now returns the standard `{count, results, next}` TOON envelope (`[GM]`-tagged rows); a residual server-side `BAD`/error from Gmail surfaces as a **structured** `mail-search` error / `failed_accounts` entry (no raw `Could not parse command` traceback), with the correct exit code.
 
 ## Estimated size
 S — a quoting/escaping fix in one method + RED tests for the quoted-phrase and quote-free cases (§S1), plus a
