@@ -21,3 +21,6 @@ Each file is one note with YAML frontmatter (`name`, `description`, `metadata.ty
   public GitHub repo (`npx skills`); the ecosystem doesn't bundle a pip package into a skill.
 - [mongo-preexisting-data-migration](mongo-preexisting-data-migration.md) — this machine's OA keeps its store on
   Mongo `vidushi_oa`@27017 (no forced SQLite migration); set `VIDUSHI_BACKEND=mongo` for CLI + SessionStart hook.
+- [external-data-sources-decisions](external-data-sources-decisions.md) — no consumer marketplace API exists;
+  **schema.org email extraction approved** (CR deferred) + **carrier-tracking aggregator** an opt-in option
+  (inclusion **decision deferred**). See `DN-external-data-sources.md`.
