@@ -47,6 +47,7 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-022](CR-OA-022-embedded-mail-sending.md) | Embedded mail *sending* in `voa` (draft-then-confirm, per-mailbox identity, store-linked) | feature | PENDING | 020 | 10 |
 | [CR-OA-023](CR-OA-023-keyring-primary-os-aware-secret-setup.md) | Keyring-primary secret store + OS-aware `setup` (drop vault backends; keyring a base dep) | feature | PENDING | 020 | 10 |
 | [CR-OA-024](CR-OA-024-jmap-post-content-type-header.md) | Fastmail JMAP POST missing `Content-Type` header (400s every request) | bugfix | PENDING | 020 | 10 |
+| [CR-OA-025](CR-OA-025-gmail-xgmraw-quoted-phrase-escaping.md) | Gmail `X-GM-RAW` search mis-quotes embedded phrases + correct search hints | bugfix | PENDING | 020 | 10 |
 
 ## v0.1.0 milestone — Wave 6
 
@@ -151,10 +152,14 @@ split for every interactive step.
 - **024** fixes a **Fastmail-blocking bug** shipped in 1.0.0 — `JmapAdapter._auth_headers()` omits
   `Content-Type: application/json`, so every Fastmail JMAP POST 400s (Gmail's IMAP path is unaffected). XS
   one-line fix; the first usability issue surfaced by local Phase-1 use.
+- **025** fixes a **Gmail search bug** — `GmailImapAdapter.search()` wraps the `X-GM-RAW` arg in quotes
+  without escaping embedded `"`, so any **quoted phrase** yields a malformed IMAP `SEARCH` (qualifiers/`OR`/
+  parens are fine). Escapes/literals the arg so quoted phrases are **supported**, and corrects the
+  `mail-search` help + skill search-recipes guidance. Second local-use find.
 
-**Order:** 024 (unblocks Fastmail — smallest) → 023 → 022 (023 simplifies the secret resolver 022's
-send-capable creds ride on). Each via RED/GREEN/VERIFY → no-mistakes → a combined **1.1.0** `git flow
-release`.
+**Order:** 024 + 025 (Gmail/Fastmail search bugs — smallest, unblock local use) → 023 → 022 (023 simplifies
+the secret resolver 022's send-capable creds ride on). Each via RED/GREEN/VERIFY → no-mistakes → a combined
+**1.1.0** `git flow release`.
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
@@ -178,12 +183,12 @@ end-to-end. Both 006 and 004 depend only on the now-shipped 003.)
   / 004 port onto pymongo — not to be redone.
 - `data/*.jsonl` stay as the `snapshot` target (chezmoi-versioned); they are NOT committed to the
   project repo (gitignored). Mongo data lives on the local instance only.
-- **Wave 10 → 1.1.0 (2026-07-27):** CR-022 + CR-023 + CR-024 authored this session (design phase, on
-  develop). **Next session builds the 1.1.0 minor release** from them **plus any further usability issues
+- **Wave 10 → 1.1.0 (2026-07-27):** CR-022 + CR-023 + CR-024 + CR-025 authored this session (design phase,
+  on develop). **Next session builds the 1.1.0 minor release** from them **plus any further usability issues
   the user surfaces during local Phase-1 use** — those get filed as new CRs/tasks at wave-open, not
-  mid-execution (user directive). CR-024 is the first such issue (Fastmail JMAP `Content-Type` — recorded
-  as a CR per user directive rather than hotfixed today). Vault-backend removal is the one breaking bit,
-  accepted within the minor bump.
+  mid-execution (user directive). CR-024 (Fastmail JMAP `Content-Type`) + CR-025 (Gmail `X-GM-RAW`
+  quoted-phrase escaping + search hints) are the first such issues — recorded as CRs per user directive
+  rather than hotfixed today. Vault-backend removal is the one breaking bit, accepted within the minor bump.
 
 ## Follow-up tasks
 Small items (no design surface → tasks, not CRs) surfaced during execution:
