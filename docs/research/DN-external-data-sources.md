@@ -49,7 +49,14 @@ new credentials and no external dependency** — a perfect fit for the "read mai
 and fully portable. Where markup is **absent**, voa falls back to the existing skill/LLM heuristic extraction
 — markup is an **enhancement, not a replacement**. Extraction is **read-only and agent-mediated**: it returns
 structured candidate rows (AXI TOON); writes still go through the normal `voa add/update` path the agent
-drives (no autonomous store writes). Implemented by **CR-OA-028**.
+drives (no autonomous store writes). Implemented by **CR-OA-028** — **added to this release (Wave 10 → 1.1.0)
+per user decision 2026-07-27.**
+
+> **Scope reality:** the mail client currently fetches **headers only** (bounded projection) and
+> `JmapAdapter.fetch_message` is unimplemented, so CR-OA-028 must **add in-engine HTML body retrieval** across
+> IMAP + JMAP. Token-frugality is preserved by consuming the body **in-engine** and returning only the compact
+> candidates — the raw body never reaches agent context. This makes it an **L** feature, not the trivial parse
+> it first appeared.
 
 Sources: schema.org email markup / Gmail (mailslurp.com/guides/email-schema, structured.email).
 

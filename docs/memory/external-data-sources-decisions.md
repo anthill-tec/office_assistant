@@ -13,13 +13,14 @@ Flipkart (affiliate/seller only) expose nothing for a buyer's own order/purchase
 scrapers need the user's marketplace password (rejected — never-enter-credentials). So **mail stays the data
 spine**; login-gated pages stay a browser fallback.
 
-**Two avenues came out of it — NO CRs authored yet (user directive: "don't create CRs immediately"):**
+**Two avenues came out of it:**
 
-1. **schema.org email-markup structured extraction — APPROVED direction (DN Decision 2).** Parse `Order` /
-   `Invoice` / `ParcelDelivery` JSON-LD (+ legacy microdata) from the emails voa already fetches → map to
-   `orders`/`invoices`/delivery fields. High-fidelity, deterministic, no new creds, portable; falls back to
-   heuristic extraction when markup is absent; read-only + agent-mediated writes. **CR is DEFERRED** — author
-   it when release-scoping is decided (candidate for a Wave 11 → 1.2.0, i.e. AFTER the current Wave 10 / 1.1.0).
+1. **schema.org email-markup structured extraction — IN THIS RELEASE → CR-OA-028, Wave 10 / 1.1.0 (user
+   decision 2026-07-27).** Parse `Order` / `Invoice` / `ParcelDelivery` JSON-LD (+ legacy microdata) → map to
+   `orders`/`invoices`/delivery candidates; read-only + agent-mediated writes; heuristic fallback when markup
+   absent. **Scope reality:** the mail client fetches **headers only** today and `JmapAdapter.fetch_message`
+   is unimplemented, so CR-028 must **add in-engine HTML body retrieval** (IMAP + JMAP), kept token-frugal by
+   returning only compact candidates (body never reaches agent context) → an **L** feature, not a trivial parse.
 
 2. **Carrier tracking via an aggregator — OPTION, opt-in, DECISION DEFERRED (DN Decision 3).** One AfterShip /
    EasyPost integration normalizes the whole mixed fleet (BlueDart / Delhivery / DTDC / India Post + DHL /

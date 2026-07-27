@@ -50,6 +50,7 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-025](CR-OA-025-gmail-xgmraw-quoted-phrase-escaping.md) | Gmail `X-GM-RAW` search mis-quotes embedded phrases + correct search hints | bugfix | PENDING | 020 | 10 |
 | [CR-OA-026](CR-OA-026-mail-search-expose-uid.md) | `mail-search` omits IMAP `uid` (+ account) → `mail-get` unusable | bugfix | PENDING | 020 | 10 |
 | [CR-OA-027](CR-OA-027-orders-order-date-nullable-validator.md) | `orders.order_date` validator rejects null despite documented `str\|null` | bugfix | PENDING | 015 | 10 |
+| [CR-OA-028](CR-OA-028-schema-org-email-extraction.md) | schema.org email-markup structured extraction (`voa mail-extract`) + in-engine body retrieval | feature | PENDING | 020, 024, 026 | 10 |
 
 ## v0.1.0 milestone — Wave 6
 
@@ -147,7 +148,14 @@ Wave 9 embedded mail **reading**; first real Phase-1 usage exposed two gaps. Des
   **doctor-driven remediation wizard** (agent guides, human performs the input steps), and the 0600 file
   becomes an **explicit confirmed** choice (no silent downgrade).
 
-Cross-cutting invariants threaded through both: **no personal data in the client** (field descriptions +
+- **028** adds **schema.org email-markup structured extraction** (`voa mail-extract`) — parse `Order` /
+  `Invoice` / `ParcelDelivery` JSON-LD + microdata from the emails voa fetches → store candidates (agent
+  writes). Requires **in-engine HTML body retrieval** (IMAP + implementing JMAP `fetch_message`), kept
+  token-frugal by returning only compact candidates. **L** feature; the marketplace-API research (DN-external-
+  data-sources) concluded mail markup is the fidelity upgrade. Carrier-tracking aggregator (Decision 3) is
+  **deferred** by user decision.
+
+Cross-cutting invariants threaded through all: **no personal data in the client** (field descriptions +
 artificial samples only; real values live in the user's config/keyring), and the **agent-guides / human-inputs**
 split for every interactive step.
 
@@ -166,8 +174,8 @@ split for every interactive step.
 
 **Order:** the four bugfixes lead (unblock local use, smallest): **024** (Fastmail JMAP) + **026** (search
 uid) are the blocking pair, then **025** (Gmail quotes) + **027** (order_date) → then features **023**
-(secret store; 022's creds ride on it) → **022** (sending). Each via RED/GREEN/VERIFY → no-mistakes → a
-combined **1.1.0** `git flow release`.
+(secret store; 022's creds ride on it) → **022** (sending) → **028** (schema.org extraction; rides 024's JMAP
+fix + 026's uid). Each via RED/GREEN/VERIFY → no-mistakes → a combined **1.1.0** `git flow release`.
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
@@ -191,14 +199,17 @@ end-to-end. Both 006 and 004 depend only on the now-shipped 003.)
   / 004 port onto pymongo — not to be redone.
 - `data/*.jsonl` stay as the `snapshot` target (chezmoi-versioned); they are NOT committed to the
   project repo (gitignored). Mongo data lives on the local instance only.
-- **Wave 10 → 1.1.0 (2026-07-27):** CR-022 + CR-023 + CR-024 + CR-025 + CR-026 + CR-027 authored this
+- **Wave 10 → 1.1.0 (2026-07-27):** CR-022 + CR-023 + CR-024 + CR-025 + CR-026 + CR-027 + CR-028 authored this
   session (design phase, on develop). **Next session builds the 1.1.0 minor release** from them **plus any
   further usability issues the user surfaces during local Phase-1 use** — those get filed as new CRs/tasks
   at wave-open, not mid-execution (user directive). The **four bugfixes 024–027** all came from a local
   Phase-1 mail-path session (Fastmail JMAP `Content-Type`; Gmail `X-GM-RAW` quoting; `mail-search` missing
   `uid`; `orders.order_date` validator) — recorded as CRs rather than hotfixed today. 024 + 026 are the
   blocking pair (Fastmail reads / opening any message). Vault-backend removal (023) is the one breaking bit,
-  accepted within the minor bump.
+  accepted within the minor bump. **028 (schema.org extraction)** was added to 1.1.0 per user decision
+  (2026-07-27); it depends on 024 (JMAP fix) + 026 (search uid) and adds in-engine body retrieval. The
+  **carrier-tracking aggregator** (DN-external-data-sources §Decision 3) is **deferred** — opt-in option, not
+  in this release.
 
 ## Follow-up tasks
 Small items (no design surface → tasks, not CRs) surfaced during execution:
