@@ -63,7 +63,7 @@ token-saving payoff):
 
 The user files mail into folders (`Subscriptions`, `Shipping`, `Purchases`, `Electronics/*`) and
 uses **per-merchant masked aliases** on Fastmail, so the recipient alias is a reliable provider key;
-Gmail (`antojk@gmail.com`) items key on sender + `category:` instead.
+Gmail (`you@gmail.com`) items key on sender + `category:` instead.
 
 > A harness mail MCP (FastmailMCP, a Gmail connector, or OpenClaw's `agent_mail`) is **not**
 > required and is never the default — `voa mail-*` is. The skill **MAY** delegate to such a mail
@@ -147,7 +147,7 @@ or **ICEGATE**, never the email link.
 Capture purchase **documents** — POs, invoices, receipts, credit notes — as the proof-of-purchase
 backbone. Extract `doc_type`, `vendor`, `number`, `date`, `amount`, `currency`, `tax_amount`,
 `gstin`, `order_ref`, `products`, and a pinned `source`. Split **personal vs business/GST**
-(`acct=business` if addressed to `antojk@anthilllabs.in` or the invoice shows a GSTIN). De-dupe
+(`acct=business` if addressed to `you@yourbusiness.example` or the invoice shows a GSTIN). De-dupe
 before `voa add invoices`. On explicit per-file confirmation, save a PDF copy under
 `documents/<acct>/<vendor>/<YYYY-MM-DD>_<vendor>_<doctype>_<number>.pdf` and `update` the row's
 `file`. Portal-only invoices (Amazon.in, vendor portals) come via the user's logged-in browser —

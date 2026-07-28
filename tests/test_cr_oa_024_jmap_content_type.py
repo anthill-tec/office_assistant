@@ -46,7 +46,7 @@ _CANNED_SESSION = {
     "apiUrl": API_URL,
     "accounts": {
         ACCOUNT_ID: {
-            "name": "new.book1604@fastmail.com",
+            "name": "you@fastmail.com",
             "isPersonal": True,
             "accountCapabilities": {"urn:ietf:params:jmap:mail": {}},
         },
@@ -144,9 +144,9 @@ _HEALTHY_POST_RESPONSE = {
                         "messageId": ["<healthy-1@fastmail.com>"],
                         "subject": "Healthy JMAP message",
                         "from": [{"name": "Sender", "email": "sender@fastmail.com"}],
-                        "to": [{"email": "new.book1604@fastmail.com"}],
+                        "to": [{"email": "you@fastmail.com"}],
                         "receivedAt": "2026-07-20T10:00:00Z",
-                        "deliveredTo": "new.book1604@fastmail.com",
+                        "deliveredTo": "you@fastmail.com",
                     },
                 ],
                 "notFound": [],

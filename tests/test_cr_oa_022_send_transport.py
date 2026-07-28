@@ -51,7 +51,7 @@ _CANNED_SESSION = {
     "apiUrl": API_URL,
     "accounts": {
         ACCOUNT_ID: {
-            "name": "new.book1604@fastmail.com",
+            "name": "you@fastmail.com",
             "isPersonal": True,
             "accountCapabilities": {"urn:ietf:params:jmap:mail": {}},
         },
