@@ -1,6 +1,6 @@
 # CR-OA-029 — Purge real personal identifiers from public surfaces + enforce the invariant repo-wide
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-28 on 1.1.0)
 **Type:** bugfix
 **Priority:** High
 **Depends on:** 023

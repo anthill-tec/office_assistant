@@ -1,6 +1,6 @@
 # CR-OA-026 — `mail-search` omits the IMAP `uid` (+ account) → `mail-get` unusable
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-28 on 1.1.0)
 **Type:** bugfix
 **Priority:** High
 **Depends on:** 020

@@ -1,6 +1,6 @@
 # CR-OA-023 — Keyring-primary secret store + OS-aware `setup` (drop the vault backends)
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-28 on 1.1.0)
 **Type:** feature
 **Priority:** High
 **Depends on:** 020

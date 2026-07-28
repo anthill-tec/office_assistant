@@ -44,14 +44,14 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-019](CR-OA-019-skill-mail-prerequisites.md) | Skill mail-access prerequisites (declared + orchestrated) | docs | SUPERSEDED (by 020) | 016 | 8 |
 | [CR-OA-020](CR-OA-020-embedded-mail-client.md) | Embedded mail client in `voa` (Gmail/Fastmail/Yahoo + vault-first creds) | feature | COMPLETED (2026-07-27) | 017 | 9 |
 | [CR-OA-021](CR-OA-021-skill-mail-verbs.md) | Skill revision — `Mailboxes & search` uses `voa mail-*` verbs | docs | COMPLETED (2026-07-27) | 016, 020 | 9 |
-| [CR-OA-022](CR-OA-022-embedded-mail-sending.md) | Embedded mail *sending* in `voa` (draft-then-confirm, per-mailbox identity, store-linked) | feature | PENDING | 020 | 10 |
-| [CR-OA-023](CR-OA-023-keyring-primary-os-aware-secret-setup.md) | Keyring-primary secret store + OS-aware `setup` (drop vault backends; keyring a base dep) | feature | PENDING | 020 | 10 |
-| [CR-OA-024](CR-OA-024-jmap-post-content-type-header.md) | Fastmail JMAP POST missing `Content-Type` header (400s every request) | bugfix | PENDING | 020 | 10 |
-| [CR-OA-025](CR-OA-025-gmail-xgmraw-quoted-phrase-escaping.md) | Gmail `X-GM-RAW` search mis-quotes embedded phrases + correct search hints | bugfix | PENDING | 020 | 10 |
-| [CR-OA-026](CR-OA-026-mail-search-expose-uid.md) | `mail-search` omits IMAP `uid` (+ account) → `mail-get` unusable | bugfix | PENDING | 020 | 10 |
-| [CR-OA-027](CR-OA-027-orders-order-date-nullable-validator.md) | `orders.order_date` validator rejects null despite documented `str\|null` | bugfix | PENDING | 015 | 10 |
-| [CR-OA-028](CR-OA-028-schema-org-email-extraction.md) | schema.org email-markup structured extraction (`voa mail-extract`) + in-engine body retrieval | feature | PENDING | 020, 024, 026 | 10 |
-| [CR-OA-029](CR-OA-029-purge-real-pii-from-public-surfaces.md) | Purge real personal identifiers from public surfaces (skill + tests) + enforce the no-personal-data invariant repo-wide | bugfix | PENDING | 023 | 10 |
+| [CR-OA-022](CR-OA-022-embedded-mail-sending.md) | Embedded mail *sending* in `voa` (draft-then-confirm, per-mailbox identity, store-linked) | feature | COMPLETED (2026-07-28) | 020 | 10 |
+| [CR-OA-023](CR-OA-023-keyring-primary-os-aware-secret-setup.md) | Keyring-primary secret store + OS-aware `setup` (drop vault backends; keyring a base dep) | feature | COMPLETED (2026-07-28) | 020 | 10 |
+| [CR-OA-024](CR-OA-024-jmap-post-content-type-header.md) | Fastmail JMAP POST missing `Content-Type` header (400s every request) | bugfix | COMPLETED (2026-07-28) | 020 | 10 |
+| [CR-OA-025](CR-OA-025-gmail-xgmraw-quoted-phrase-escaping.md) | Gmail `X-GM-RAW` search mis-quotes embedded phrases + correct search hints | bugfix | COMPLETED (2026-07-28) | 020 | 10 |
+| [CR-OA-026](CR-OA-026-mail-search-expose-uid.md) | `mail-search` omits IMAP `uid` (+ account) → `mail-get` unusable | bugfix | COMPLETED (2026-07-28) | 020 | 10 |
+| [CR-OA-027](CR-OA-027-orders-order-date-nullable-validator.md) | `orders.order_date` validator rejects null despite documented `str\|null` | bugfix | COMPLETED (2026-07-28) | 015 | 10 |
+| [CR-OA-028](CR-OA-028-schema-org-email-extraction.md) | schema.org email-markup structured extraction (`voa mail-extract`) + in-engine body retrieval | feature | COMPLETED (2026-07-28) | 020, 024, 026 | 10 |
+| [CR-OA-029](CR-OA-029-purge-real-pii-from-public-surfaces.md) | Purge real personal identifiers from public surfaces (skill + tests) + enforce the no-personal-data invariant repo-wide | bugfix | COMPLETED (2026-07-28) | 023 | 10 |
 
 ## v0.1.0 milestone — Wave 6
 
