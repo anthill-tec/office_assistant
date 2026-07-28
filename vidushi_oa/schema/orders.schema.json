@@ -23,7 +23,7 @@
       "bsonType": "string"
     },
     "order_date": {
-      "bsonType": "string"
+      "bsonType": ["string", "null"]
     },
     "carrier": {
       "bsonType": "string"
