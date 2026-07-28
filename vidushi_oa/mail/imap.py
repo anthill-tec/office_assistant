@@ -14,6 +14,7 @@ import email.utils
 import imaplib
 import re
 import smtplib
+import sys
 
 from vidushi_oa.mail.base import MailAdapter, Message
 
@@ -26,6 +27,9 @@ _THRID_RE = re.compile(rb"X-GM-THRID (\d+)")
 _APPENDUID_RE = re.compile(rb"APPENDUID (\d+) (\d+)")
 # RFC 6154 special-use attribute marking the mailbox sent mail is filed in.
 _SENT_ATTR_RE = re.compile(rb"\\Sent\b", re.IGNORECASE)
+# An RFC 3501 LIST line: `(attrs) delimiter name`, where the delimiter is a quoted
+# char or NIL and the name is either a quoted string or a bare atom.
+_LIST_LINE_RE = re.compile(rb'^\s*\([^)]*\)\s+(?:"[^"]*"|NIL)\s+(?P<name>.+?)\s*$')
 
 # SMTP submission (STARTTLS) port for every provider's message-submission agent.
 _SMTP_SUBMISSION_PORT = 587
@@ -90,9 +94,17 @@ class ImapAdapter(MailAdapter):
 
         A single IMAP `APPEND` stores the pre-rendered RFC 5322 bytes as a draft;
         the returned id is the server-assigned UID parsed from the `APPENDUID`
-        response code (falling back to the raw response text when absent)."""
+        response code (falling back to the raw response text when absent).
+
+        `imaplib` raises only on a tagged `BAD`, so a refusal (`NO [TRYCREATE]`,
+        `NO [OVERQUOTA]`) returns quietly and would otherwise be reported as a
+        successful draft whose id is the server's error text. The tagged status is
+        checked and a rejection raised structurally, mirroring the JMAP path."""
         conn = self._conn()
         typ, data = conn.append(folder, r"(\Draft)", None, raw_rfc822)
+        if typ != "OK":
+            raise RuntimeError(
+                f"IMAP APPEND to {folder!r} rejected: {typ} {_response_text(data)}")
         return _parse_append_uid(data)
 
     def send_draft(self, draft_id, folder="Drafts") -> str:
@@ -136,20 +148,39 @@ class ImapAdapter(MailAdapter):
 
         This is bookkeeping that runs AFTER delivery, so every step is best-effort:
         the message is already in the provider's hands, and reporting a mailbox
-        failure here would tell the user nothing was sent."""
+        failure here would tell the user nothing was sent.
+
+        The Drafts copy is destroyed ONLY once a Sent copy is confirmed to exist —
+        a confirmed-`OK` APPEND, or a provider that files its own. `imaplib` returns
+        a tagged `NO` (quota, permission, mailbox vanished between LIST and APPEND)
+        quietly rather than raising, so every tagged status on the path is read: on
+        any failure, or when the account advertises no Sent mailbox, the draft is
+        left exactly where it is so the message can never end up in neither
+        folder."""
         try:
             conn = self._conn()
             if not self.server_files_sent_copy:
                 sent = self._sent_mailbox_name()
-                if sent:
-                    conn.append(sent, "", None, raw_bytes)
+                if not sent:
+                    _warn(f"no \\Sent mailbox found; the sent message stays in {folder!r}")
+                    return
+                typ, data = conn.append(sent, r"(\Seen)", None, raw_bytes)
+                if typ != "OK":
+                    _warn(f"APPEND to {sent!r} rejected ({typ} {_response_text(data)}); "
+                          f"the sent message stays in {folder!r}")
+                    return
             conn.select(folder)
             conn.uid("STORE", str(draft_id), "-FLAGS", r"(\Draft)")
-            conn.uid("STORE", str(draft_id), "+FLAGS", r"(\Deleted)")
+            typ, data = conn.uid("STORE", str(draft_id), "+FLAGS", r"(\Deleted)")
+            if typ != "OK":
+                _warn(f"could not retire the {folder!r} copy of draft {draft_id} "
+                      f"({typ} {_response_text(data)})")
+                return
             # UID EXPUNGE removes only this draft; a bare EXPUNGE would also reap
             # anything else the user had flagged `\Deleted` in the folder.
             conn.uid("EXPUNGE", str(draft_id))
-        except (imaplib.IMAP4.error, OSError, ValueError):
+        except (imaplib.IMAP4.error, OSError, ValueError) as e:
+            _warn(f"mailbox bookkeeping after a delivered send failed: {e}")
             return
 
     def _sent_mailbox_name(self) -> str:
@@ -308,10 +339,36 @@ def _find_sent_mailbox(data) -> str:
     for line in data or []:
         if not isinstance(line, bytes) or not _SENT_ATTR_RE.search(line):
             continue
-        name = line.rsplit(b'"', 2)
-        if len(name) >= 2:
-            return name[-2].decode()
+        name = _list_mailbox_name(line)
+        if name:
+            return name
     return ""
+
+
+def _list_mailbox_name(line) -> str:
+    """The mailbox name from one IMAP LIST line, quoted or a bare atom.
+
+    A naive `rsplit(b'"')` yields the hierarchy delimiter for an unquoted name
+    (`(\\HasNoChildren \\Sent) "/" Sent`), so the attribute list and the delimiter
+    are consumed explicitly and only a genuinely quoted remainder is unquoted."""
+    match = _LIST_LINE_RE.match(line)
+    if not match:
+        return ""
+    name = match.group("name")
+    if len(name) >= 2 and name.startswith(b'"') and name.endswith(b'"'):
+        name = name[1:-1]
+    return name.decode(errors="replace")
+
+
+def _response_text(data) -> str:
+    """The human-readable text of a tagged IMAP response payload."""
+    parts = [chunk.decode(errors="replace") for chunk in data or []
+             if isinstance(chunk, bytes) and chunk.strip()]
+    return " ".join(parts)
+
+
+def _warn(message) -> None:
+    sys.stderr.write(f"warn: {message}\n")
 
 
 def _parse_uids(data) -> list:
@@ -331,9 +388,9 @@ def _parse_folders(data) -> list:
     for line in data or []:
         if not isinstance(line, bytes):
             continue
-        name = line.rsplit(b'"', 2)
-        if len(name) >= 2:
-            folders.append(name[-2].decode())
+        name = _list_mailbox_name(line)
+        if name:
+            folders.append(name)
     return folders
 
 

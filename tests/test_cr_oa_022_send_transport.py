@@ -151,7 +151,13 @@ class FakeImapConn:
     attributes, so the Sent mailbox can be resolved by role rather than by a
     hard-coded name. `list_error`, when set, is raised instead — the mailbox
     bookkeeping that follows a send must never turn a delivered message into a
-    failure."""
+    failure.
+
+    `append_responses` maps a mailbox name to the tagged response its APPEND
+    answers with, so a refusal (`NO [OVERQUOTA]`) can be exercised for one
+    mailbox only; `store_response` does the same for the UID `STORE` calls. Both
+    default to `OK` — imaplib returns a tagged `NO` quietly, so the adapter must
+    read the status rather than rely on an exception."""
 
     _DEFAULT_LIST = [
         b'(\\HasNoChildren) "/" "INBOX"',
@@ -160,8 +166,10 @@ class FakeImapConn:
     ]
 
     def __init__(self, append_response=None, fetch_body=None, list_response=None,
-                 list_error=None):
+                 list_error=None, append_responses=None, store_response=None):
         self.append_response = append_response or ("OK", [b"[APPENDUID 1 900] (Success)"])
+        self.append_responses = dict(append_responses or {})
+        self.store_response = store_response or ("OK", [b"Completed"])
         self.fetch_body = fetch_body
         self.list_response = list(
             self._DEFAULT_LIST if list_response is None else list_response)
@@ -171,7 +179,6 @@ class FakeImapConn:
         self.append_calls = []
         self.uid_calls = []
         self.list_calls = 0
-        self.expunge_calls = 0
 
     def login(self, user, password):
         self.login_calls.append((user, password))
@@ -183,7 +190,7 @@ class FakeImapConn:
 
     def append(self, mailbox, flags, date_time, message):
         self.append_calls.append((mailbox, flags, date_time, message))
-        return self.append_response
+        return self.append_responses.get(mailbox, self.append_response)
 
     def list(self, directory='""', pattern="*"):
         self.list_calls += 1
@@ -191,16 +198,14 @@ class FakeImapConn:
             raise self.list_error
         return ("OK", list(self.list_response))
 
-    def expunge(self):
-        self.expunge_calls += 1
-        return ("OK", [b"1"])
-
     def uid(self, command, *args):
         self.uid_calls.append((command, args))
         if command == "FETCH":
             uid = args[0]
             return ("OK", [(f"{uid} (BODY[] {{{len(self.fetch_body)}}}".encode(),
                             self.fetch_body), b")"])
+        if command == "STORE":
+            return self.store_response
         return ("OK", [b""])
 
 
@@ -259,6 +264,23 @@ class GmailCreateDraftImapAppendTest(unittest.TestCase):
         self.adapter.create_draft(raw)
 
         self.assertEqual(len(self.fake.append_calls), 1)
+
+    def test_a_refused_append_raises_instead_of_returning_a_bogus_draft_id(self):
+        """imaplib raises only on a tagged `BAD` — a `NO` comes back quietly, so a
+        refused APPEND would otherwise surface as a successful draft whose id is
+        the server's error text (parity with the JMAP `notCreated` handling)."""
+        fake = FakeImapConn(append_response=("NO", [b"[TRYCREATE] No such mailbox"]))
+        factory, _ = _make_conn_factory(fake)
+        adapter = GmailImapAdapter(
+            account="gmail_main", source_tag="[GM]", host="imap.gmail.com",
+            user="me@gmail.com", password="app-pw", conn_factory=factory,
+        )
+        raw = _build_raw_message("Draft subject", "me@gmail.com", "v@example.com", "Body")
+
+        with self.assertRaises(RuntimeError) as caught:
+            adapter.create_draft(raw)
+
+        self.assertIn("TRYCREATE", str(caught.exception))
 
 
 class GmailSendDraftSmtpTest(unittest.TestCase):
@@ -432,7 +454,41 @@ class ImapSendDraftFilesTheSentCopyTest(unittest.TestCase):
         stores = [args for command, args in fake.uid_calls if command == "STORE"]
         self.assertTrue(stores, "the Drafts copy must still be retired")
 
-    def test_an_account_with_no_sent_mailbox_still_retires_the_drafts_copy(self):
+    def test_the_filed_sent_copy_is_marked_read(self):
+        """Mail clients APPEND the sent copy `\\Seen` — a message the user wrote
+        must not land in Sent driving an unread badge."""
+        fake = FakeImapConn(fetch_body=self._draft_bytes())
+
+        self._send(self._yahoo(fake))
+
+        flags = [c for c in fake.append_calls if c[0] == "Sent"][0][1]
+        flags_text = flags.decode() if isinstance(flags, bytes) else str(flags or "")
+        self.assertIn("Seen", flags_text)
+
+    def test_an_unquoted_sent_mailbox_name_is_resolved_not_the_delimiter(self):
+        """IMAP permits an unquoted atom for the mailbox name; naive `rsplit('"')`
+        parsing returns the hierarchy delimiter instead and APPENDs to `/`."""
+        fake = FakeImapConn(
+            fetch_body=self._draft_bytes(),
+            list_response=[b'(\\HasNoChildren) "/" INBOX',
+                           b'(\\HasNoChildren \\Sent) "/" Sent'])
+
+        self._send(self._yahoo(fake))
+
+        self.assertEqual([c[0] for c in fake.append_calls], ["Sent"])
+
+    def test_the_drafts_copy_is_expunged_by_its_own_uid_only(self):
+        """A bare EXPUNGE would reap everything else the user had flagged
+        `\\Deleted` in Drafts, so the removal must be a UID EXPUNGE."""
+        fake = FakeImapConn(fetch_body=self._draft_bytes())
+
+        self._send(self._yahoo(fake))
+
+        self.assertIn(("EXPUNGE", ("901",)), fake.uid_calls)
+
+    def test_an_account_with_no_sent_mailbox_keeps_the_drafts_copy(self):
+        """No Sent copy was filed, so destroying the Drafts copy would leave the
+        sent message recorded in neither folder."""
         fake = FakeImapConn(fetch_body=self._draft_bytes(),
                             list_response=[b'(\\HasNoChildren) "/" "INBOX"'])
 
@@ -440,7 +496,46 @@ class ImapSendDraftFilesTheSentCopyTest(unittest.TestCase):
 
         self.assertTrue(message_id)
         self.assertEqual(fake.append_calls, [])
-        self.assertTrue([args for command, args in fake.uid_calls if command == "STORE"])
+        self.assertEqual([c for c in fake.uid_calls if c[0] == "EXPUNGE"], [],
+                         "the draft must survive when no Sent copy was filed")
+        deletes = [args for command, args in fake.uid_calls
+                   if command == "STORE" and args[1] == "+FLAGS"]
+        self.assertEqual(deletes, [], "the draft must not be flagged \\Deleted")
+
+    def test_a_refused_sent_append_keeps_the_drafts_copy(self):
+        """A tagged `NO` (quota, permission, mailbox vanished) files no Sent copy —
+        expunging the draft anyway would destroy the only remaining record."""
+        fake = FakeImapConn(fetch_body=self._draft_bytes(),
+                            append_responses={"Sent": ("NO", [b"[OVERQUOTA] Over quota"])})
+
+        _fake_smtp, message_id = self._send(self._yahoo(fake))
+
+        self.assertTrue(message_id, "a delivered message must still report its id")
+        self.assertEqual([c for c in fake.uid_calls if c[0] == "EXPUNGE"], [],
+                         "a refused Sent APPEND must not expunge the draft")
+
+    def test_a_refused_delete_flag_store_does_not_expunge(self):
+        fake = FakeImapConn(fetch_body=self._draft_bytes(),
+                            store_response=("NO", [b"Permission denied"]))
+
+        _fake_smtp, message_id = self._send(self._yahoo(fake))
+
+        self.assertTrue(message_id)
+        self.assertEqual([c for c in fake.uid_calls if c[0] == "EXPUNGE"], [])
+
+    def test_gmail_still_expunges_the_draft_the_server_filed_itself(self):
+        """Gmail files the Sent copy server-side, so the safety gate is satisfied
+        without an APPEND of our own."""
+        fake = FakeImapConn(fetch_body=self._draft_bytes("me@gmail.com"))
+        factory, _ = _make_conn_factory(fake)
+        adapter = GmailImapAdapter(
+            account="gmail_main", source_tag="[GM]", host="imap.gmail.com",
+            user="me@gmail.com", password="app-pw", conn_factory=factory,
+        )
+
+        self._send(adapter, "900")
+
+        self.assertIn(("EXPUNGE", ("900",)), fake.uid_calls)
 
     def test_a_mailbox_bookkeeping_failure_never_fails_a_delivered_send(self):
         """The message is already in the provider's hands by the time any of this
