@@ -41,6 +41,7 @@ Design pinned here for GREEN (see also the final RED report):
 No live mail/creds — everything below uses in-process fakes; no real order/personal
 data (fictitious merchant/order numbers only).
 """
+import imaplib
 import json
 import os
 import subprocess
@@ -116,6 +117,35 @@ class FakeHtmlAdapter(MailAdapter):
         return self._html
 
 
+class FakeRaisingHtmlAdapter(MailAdapter):
+    """No network — `fetch_html_body` RAISES instead of returning, mirroring a real
+    live-failure path: `JmapAdapter.fetch_html_body` raises `RuntimeError` on any
+    non-200 JMAP `Email/get` response (jmap.py), and `ImapAdapter.fetch_html_body`
+    raises `imaplib.IMAP4.error`/`OSError` when `conn.select()`/`conn.uid("FETCH", ...)`
+    hit a down host or a bad app-password. `cmd_mail_extract` must catch these the
+    same way `cmd_mail_get` does, never let them propagate as a raw traceback."""
+
+    def __init__(self, account, exc):
+        self.account = account
+        self.source_tag = "[FM]"
+        self._exc = exc
+
+    def capabilities(self):
+        return set()
+
+    def search(self, query, folder=None, limit=None):
+        return []
+
+    def fetch_message(self, uid, folder=None):
+        raise KeyError(uid)
+
+    def list_folders(self):
+        return ["INBOX"]
+
+    def fetch_html_body(self, uid, folder=None):
+        raise self._exc
+
+
 @pytest.fixture(autouse=True)
 def restore_cli_fmt():
     """`cmd_mail_extract` reads the module-global `cli._FMT` like every other
@@ -127,6 +157,11 @@ def restore_cli_fmt():
 
 def _client_with(html, account="fastmail_main"):
     adapter = FakeHtmlAdapter(account, html)
+    return MailClient({account: adapter})
+
+
+def _client_with_raising(exc, account="fastmail_main"):
+    adapter = FakeRaisingHtmlAdapter(account, exc)
     return MailClient({account: adapter})
 
 
@@ -245,6 +280,47 @@ def test_mail_extract_unknown_account_is_a_structured_error_exit_1(monkeypatch, 
     payload = json.loads(captured.out.strip())
     assert "error" in payload
     assert payload.get("account") == "no_such_account"
+
+
+@pytest.mark.parametrize(
+    "make_exc",
+    [
+        lambda: RuntimeError("JMAP Email/get failed: HTTP 503"),
+        lambda: OSError("[Errno 111] Connection refused"),
+        lambda: imaplib.IMAP4.error("bad app-password"),
+    ],
+    ids=["jmap_runtime_error", "imap_oserror", "imap4_error"],
+)
+def test_mail_extract_live_fetch_failure_is_a_structured_error_exit_1_not_a_traceback(
+        monkeypatch, capsys, make_exc):
+    """§S5 AXI conformance: `adapter.fetch_html_body(a.uid)` genuinely raises on a
+    live failure (JMAP non-200 -> RuntimeError; IMAP down-host/bad-app-password ->
+    imaplib.IMAP4.error/OSError). `cmd_mail_extract` currently has NO try/except
+    around that call, so the exception propagates uncaught instead of being
+    rendered as the structured `{"error": ..., "account": ..., "uid": ...}` + exit 1
+    payload `cmd_mail_get` produces for the same class of failure. This must FAIL
+    today because the raised exception is uncaught (no SystemExit, no structured
+    payload) rather than being converted into one."""
+    exc = make_exc()
+    client = _client_with_raising(exc, account="fastmail_main")
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_extract(Namespace(account="fastmail_main", uid="uid-live-fail"))
+
+    assert exc_info.value.code != 0, (
+        "a live fetch failure must exit non-zero, like cmd_mail_get's contract")
+
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err, (
+        f"a live fetch failure must never leak a raw traceback; got "
+        f"stdout={captured.out!r} stderr={captured.err!r}")
+
+    payload = json.loads(captured.out.strip())
+    assert "error" in payload, f"expected a structured error payload, got {payload}"
+    assert payload.get("account") == "fastmail_main"
+    assert payload.get("uid") == "uid-live-fail"
 
 
 def test_help_lists_mail_extract():
