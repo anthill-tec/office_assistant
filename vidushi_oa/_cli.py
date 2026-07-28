@@ -735,8 +735,9 @@ _MAIL_PROVIDERS = ("gmail", "yahoo", "fastmail")
 
 
 def _mail_row(msg):
-    """Project a `Message` to the AXI mail row: id/source_tag/subject/sender/date."""
-    return {"id": msg.id, "source_tag": msg.source_tag, "subject": msg.subject,
+    """Project a `Message` to the AXI mail row: id/uid/account/source_tag/subject/sender/date."""
+    return {"id": msg.id, "uid": msg.uid, "account": msg.account,
+            "source_tag": msg.source_tag, "subject": msg.subject,
             "sender": msg.sender, "date": msg.date}
 
 
