@@ -970,6 +970,25 @@ def _validate_from_or_exit(account, from_addr, **extra):
         sys.exit(1)
 
 
+# §S5 — the FK flags a draft can carry (flag name -> the STORE TYPE it targets) and,
+# per store type, the OPEN correspondence action a linked send resolves.
+_MAIL_FK_STORES = {"case": "cases", "invoice": "invoices",
+                   "warranty": "warranties", "order": "orders"}
+_CORRESPONDENCE_ACTION = {"cases": "raise-ticket"}
+
+
+def _save_draft_link(a, draft_id):
+    """If the draft carried an FK flag (`--case`/`--invoice`/…), persist a
+    draft_id -> (store type, row id) link so `mail-send` can record the sent message
+    on that row. Only the FIRST supplied FK is linked."""
+    from vidushi_oa.mail import draft_links
+    for flag, store_type in _MAIL_FK_STORES.items():
+        fk_id = getattr(a, flag, None)
+        if fk_id:
+            draft_links.save_link(draft_id, store_type, fk_id)
+            return
+
+
 def cmd_mail_draft(a):
     """Compose (§S2) and save a REAL draft via the account adapter's
     `create_draft(raw)`; emit a flat TOON/JSON status carrying the `draft` id.
@@ -982,6 +1001,7 @@ def cmd_mail_draft(a):
     _validate_from_or_exit(a.account, a.from_addr, to=a.to)
     raw = compose(a.from_addr, a.to, a.subject, a.body, cc=a.cc)
     draft_id = adapter.create_draft(raw)
+    _save_draft_link(a, draft_id)
     out({"status": "drafted", "draft": draft_id, "account": a.account})
 
 
@@ -1004,8 +1024,41 @@ def cmd_mail_send(a):
         sys.exit(1)
     adapter = _mail_adapter_or_exit(client, a.account, draft=a.draft)
     message_id = adapter.send_draft(a.draft)
-    out({"status": "sent", "message_id": message_id,
-         "draft": a.draft, "account": a.account})
+    linked = _record_sent_correspondence(a.draft, message_id)
+    status = {"status": "sent", "message_id": message_id,
+              "draft": a.draft, "account": a.account}
+    if linked:
+        status["linked"] = linked
+    out(status)
+
+
+def _record_sent_correspondence(draft_id, message_id):
+    """§S5 — if `draft_id` was linked to a store row, record the sent message as a
+    `correspondence` document on that row and resolve the row's mapped OPEN
+    correspondence action. Returns the linkage summary, or `None` for an unlinked
+    (inert) send."""
+    from vidushi_oa.mail import draft_links
+    from vidushi_oa.backends import get_backend, query as Q
+    link = draft_links.pop_link(draft_id)
+    if link is None:
+        return None
+    store_type, row_id = link["fk_field"], link["fk_id"]
+    store = get_backend().store(store_type)
+    doc = {"type": "correspondence", "message_id": message_id}
+    action = _CORRESPONDENCE_ACTION.get(store_type)
+    if action:
+        store.update(
+            Q.cond("id", "eq", row_id),
+            Q.Update(set={"updated": today()},
+                     push={"documents": [doc]},
+                     resolve=("actions",
+                              (Q.cond("action", "eq", action),
+                               Q.cond("status", "eq", "OPEN")),
+                              {"status": "RESOLVED", "resolved": today()})))
+    else:
+        store.update(Q.cond("id", "eq", row_id),
+                     Q.Update(set={"updated": today()}, push={"documents": [doc]}))
+    return {"type": store_type, "id": row_id, "action": action}
 
 
 def cmd_mail_reply(a):
@@ -1032,6 +1085,7 @@ def cmd_mail_reply(a):
     raw = compose(a.from_addr, to, subject, a.body,
                   in_reply_to=source.id, references=references)
     draft_id = adapter.create_draft(raw)
+    _save_draft_link(a, draft_id)
     out({"status": "drafted", "draft": draft_id, "account": a.account})
 
 
@@ -1357,6 +1411,9 @@ def main():
     mdr.add_argument("--cc", default=None)
     mdr.add_argument("--attach", default=None)
     mdr.add_argument("--case", default=None)
+    mdr.add_argument("--invoice", default=None)
+    mdr.add_argument("--warranty", default=None)
+    mdr.add_argument("--order", default=None)
     mdr.add_argument("--force", action="store_true", dest="force",
                      help="bypass the verified-recipient guard and draft to an "
                           "un-verified recipient anyway (still never sends).")
@@ -1372,6 +1429,9 @@ def main():
     mrp.add_argument("--body", required=True)
     mrp.add_argument("--attach", default=None)
     mrp.add_argument("--case", default=None)
+    mrp.add_argument("--invoice", default=None)
+    mrp.add_argument("--warranty", default=None)
+    mrp.add_argument("--order", default=None)
     mrp.add_argument("--force", action="store_true", dest="force",
                      help="bypass the verified-recipient guard and reply to an "
                           "un-verified sender anyway (still never sends).")
