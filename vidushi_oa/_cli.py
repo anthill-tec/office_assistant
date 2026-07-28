@@ -697,7 +697,16 @@ def cmd_init(a):
 def cmd_setup(a):
     """Probe the active backend's readiness (fails fast with actionable guidance if not
     ready); with --check that is all. Otherwise run the `init` provisioning (collections +
-    unique `id` indexes + `$jsonSchema` validators)."""
+    unique `id` indexes + `$jsonSchema` validators).
+
+    When ``--secret-backend`` is passed it instead runs the CR-OA-023 §S3 OS-aware
+    secret-provisioning + pre-flight path (a distinct concern from STORE provisioning)
+    and returns; a bare ``setup`` keeps the existing STORE ``check()``/``init`` behavior."""
+    secret_backend = a.secret_backend
+    if secret_backend:
+        _setup_secret_backend(secret_backend)
+        return
+
     from vidushi_oa.backends import get_backend
 
     ok, message = get_backend().check()
@@ -708,6 +717,53 @@ def cmd_setup(a):
     if getattr(a, "check", False):
         return
     cmd_init(a)
+
+
+def _setup_secret_backend(choice):
+    """OS-aware secret-backend provisioning + pre-flight (CR-OA-023 §S3).
+
+    ``choice`` is one of ``auto``/``keyring``/``file``:
+      - ``auto`` selects the OS keyring when a Secret-Service provider is reachable
+        (proven by the pre-flight round-trip); otherwise it emits OS-specific guidance
+        naming the provider and reports the gap WITHOUT silently writing a file secret.
+      - ``file`` is the explicit, confirmed file-backend choice.
+      - ``keyring`` forces the keyring and reports pre-flight success/failure.
+
+    The structured status carries ``secret_backend``, ``confirmed`` (an explicit
+    stated choice), and a ``preflight`` report ``{ok: bool}``; exit is non-zero when
+    no usable backend was provisioned."""
+    from vidushi_oa.mail.secrets import (
+        FileBackend, KeyringBackend, detect_desktop, keyring_guidance, preflight,
+    )
+
+    desktop = detect_desktop()
+
+    if choice == "file":
+        pf = preflight(FileBackend())
+        out({"secret_backend": "file", "confirmed": True,
+             "desktop": desktop, "preflight": pf})
+        sys.exit(0 if pf.get("ok") else 1)
+
+    if choice == "keyring":
+        pf = preflight(KeyringBackend())
+        out({"secret_backend": "keyring", "confirmed": True,
+             "desktop": desktop, "preflight": pf})
+        sys.exit(0 if pf.get("ok") else 1)
+
+    # choice == "auto": prove the keyring is reachable before selecting it.
+    pf = preflight(KeyringBackend())
+    if pf.get("ok"):
+        out({"secret_backend": "keyring", "confirmed": False,
+             "desktop": desktop, "preflight": pf})
+        return
+
+    # No reachable provider: name the OS-specific remedy + the explicit file escape
+    # hatch, and report the gap — never a silent downgrade to the file backend.
+    guidance = keyring_guidance(desktop)
+    sys.stderr.write("vidushi-oa: " + guidance + "\n")
+    out({"error": guidance, "desktop": desktop, "preflight": pf,
+         "next": ["setup --secret-backend file"]})
+    sys.exit(1)
 
 
 def cmd_snapshot(a):
@@ -901,12 +957,20 @@ def cmd_mail_auth(a):
         resolver = SecretResolver()
         primary = resolver._primary_backend()
         resolver.store(secret_ref, secret)
-        # §S4 fallback warning: no vault was provisioned, so the secret landed in
-        # the OS keyring (or the last-resort file) rather than 1Password/Bitwarden.
-        if not os.environ.get(BACKEND_ENV) and primary.name not in ("1password", "bitwarden"):
-            sys.stderr.write(
-                f"vidushi-oa: no vault (1Password/Bitwarden) provisioned; "
-                f"stored the secret in the '{primary.name}' backend instead.\n")
+        # CR-OA-023 §S3: with no backend pinned (VIDUSHI_SECRET_BACKEND unset) the
+        # backend was auto-selected under the keyring->file model — report which
+        # backend the secret landed in so reaching the last-resort file backend is
+        # never a silent downgrade (no vault/1Password/Bitwarden concept anymore).
+        if not os.environ.get(BACKEND_ENV):
+            if primary.name == "file":
+                sys.stderr.write(
+                    "vidushi-oa: no OS keyring provider was reachable; stored the secret "
+                    "in the last-resort 0600 'file' backend. Run 'voa setup "
+                    "--secret-backend auto' for OS-specific keyring guidance.\n")
+            else:
+                sys.stderr.write(
+                    f"vidushi-oa: no secret backend pinned; stored the secret in the "
+                    f"auto-selected '{primary.name}' backend.\n")
         accounts.add_account(name=name, provider=a.provider, address=a.address,
                              secret_ref=secret_ref, auth_mode=auth_mode)
 
@@ -1032,6 +1096,12 @@ def main():
     sn.set_defaults(func=cmd_snapshot)
     it = add_parser("init"); it.set_defaults(func=cmd_init)
     su = add_parser("setup"); su.add_argument("--check", action="store_true", dest="check")
+    su.add_argument("--secret-backend", dest="secret_backend",
+                    choices=["auto", "keyring", "file"], default=None,
+                    help="run OS-aware secret provisioning + pre-flight instead of STORE "
+                         "setup: 'auto' selects the OS keyring when a Secret-Service "
+                         "provider is reachable (else prints OS-specific guidance), "
+                         "'keyring' forces it, 'file' is the explicit 0600-file choice.")
     su.set_defaults(func=cmd_setup)
     av = add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
 
@@ -1060,8 +1130,13 @@ def main():
     mac = add_parser("mail-accounts"); read_json(mac); mac.set_defaults(func=cmd_mail_accounts)
     mge = add_parser("mail-get"); mge.add_argument("--account", required=True)
     mge.add_argument("--uid", required=True); read_json(mge); mge.set_defaults(func=cmd_mail_get)
-    mau = add_parser("mail-auth"); mau.add_argument("--provider", required=True)
-    mau.add_argument("--address", required=True)
+    mau = add_parser("mail-auth")
+    mau.add_argument("--provider", required=True,
+                     help="mail provider, e.g. fastmail / gmail / yahoo "
+                          "(one of the supported providers).")
+    mau.add_argument("--address", required=True,
+                     help="your mailbox address for this account, e.g. "
+                          "you@fastmail.com (a sample format only; supply your own).")
     mau.add_argument("--auth-mode", dest="auth_mode",
                      choices=["password", "xoauth2"], default="password",
                      help="gmail only: 'xoauth2' expects the secret to be a JSON blob "
