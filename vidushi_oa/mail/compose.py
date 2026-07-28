@@ -23,9 +23,12 @@ def _message_id_for(from_addr):
     RFC 5322 §3.6.4 wants the right-hand side to be a domain the sender owns, and
     the stdlib default (`socket.getfqdn()`) would additionally bake the user's
     machine name into every outbound message. Falls back to the stdlib default
-    only when *from_addr* carries no parsable domain.
+    only when *from_addr* carries no parsable domain — an address with no ``@``
+    has no domain part at all, so it must not be reused as one (``rpartition``
+    would hand back the whole local-part).
     """
-    domain = parseaddr(from_addr)[1].rpartition("@")[2].strip()
+    address = parseaddr(from_addr)[1]
+    domain = address.rpartition("@")[2].strip() if "@" in address else ""
     return make_msgid(domain=domain) if domain else make_msgid()
 
 

@@ -80,23 +80,6 @@ def _created_id(payload, method_name) -> str:
     raise RuntimeError(f"JMAP {method_name} returned no {method_name} response")
 
 
-def _already_existing_id(payload, method_name) -> str:
-    """Return the `existingId` an `alreadyExists` SetError names in `method_name`'s
-    response, or `""`.
-
-    An `Email/import` of a blob already filed in the target mailbox is answered with
-    an RFC 8621 §4.9 `alreadyExists` SetError carrying the id of the message that is
-    already there. That message IS the one the caller asked for, so the operation is
-    idempotent rather than failed — a SetError carrying no `existingId` names nothing
-    to return and stays a failure."""
-    for response in payload.get("methodResponses", []):
-        if response[0] == method_name:
-            for error in (response[1].get("notCreated") or {}).values():
-                if error.get("type") == "alreadyExists" and error.get("existingId"):
-                    return error["existingId"]
-    return ""
-
-
 def _queried_ids(payload, method_name) -> list:
     """Return the `ids` list `method_name` answered with in a JMAP `methodResponses`
     payload.
@@ -213,10 +196,11 @@ class JmapAdapter(MailAdapter):
         unresolvable Drafts mailbox fails fast instead of posting a
         guaranteed-invalid `mailboxIds: {}` the user would see as a saved draft.
 
-        Re-drafting the same message is idempotent: blob ids are content-addressed,
-        so an unchanged redraft hits the same blob and the server answers
-        `alreadyExists` naming the draft already in Drafts — which is the very
-        draft the caller wants, so its id is returned rather than raised."""
+        Every `Email/import` creates a new draft: `compose()` stamps a fresh
+        `Message-ID` and `Date` on each call, so a redraft never serialises to the
+        same bytes and never collides with the content-addressed blob of an earlier
+        one. Re-running `mail-draft` therefore yields a second draft rather than
+        resolving back to the first."""
         drafts_id = self._mailbox_id(api_url, account_id, _DRAFTS_ROLE)
         if not drafts_id:
             raise RuntimeError(
@@ -237,8 +221,7 @@ class JmapAdapter(MailAdapter):
         status, payload = self._transport("POST", api_url, self._auth_headers(), body)
         if status != 200:
             raise RuntimeError(f"JMAP Email/import failed: HTTP {status}")
-        existing_id = _already_existing_id(payload, "Email/import")
-        return existing_id or _created_id(payload, "Email/import")
+        return _created_id(payload, "Email/import")
 
     def _mailbox_id(self, api_url, account_id, role) -> str:
         """Resolve (and cache) the id of the mailbox carrying `role` via one
@@ -274,11 +257,15 @@ class JmapAdapter(MailAdapter):
         stops being a draft: the `$draft` keyword is cleared and, when the account
         has a `sent`-role mailbox, the email is moved into it. Without the patch the
         message would sit in Drafts flagged `$draft` forever and Sent would hold no
-        record of the correspondence. A missing Sent mailbox is not fatal here — a
-        submission needs no mailbox — so only the move is skipped."""
+        record of the correspondence. A submission needs no mailbox, so nothing about
+        the Sent lookup is fatal here: an account with no Sent mailbox — or one whose
+        `Mailbox/query` fails outright — still sends, and only the move is skipped."""
         api_url, account_id = self._session()
         update = {"keywords/$draft": None}
-        sent_id = self._mailbox_id(api_url, account_id, _SENT_ROLE)
+        try:
+            sent_id = self._mailbox_id(api_url, account_id, _SENT_ROLE)
+        except RuntimeError:
+            sent_id = ""
         if sent_id:
             update["mailboxIds"] = {sent_id: True}
         body = {

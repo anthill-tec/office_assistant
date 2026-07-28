@@ -74,8 +74,8 @@ class ComposeOriginatorHeadersTest(unittest.TestCase):
 
     Beyond RFC completeness this is what keeps two identical `voa mail-draft`
     runs from serialising to byte-identical RFC822: Fastmail/Cyrus blobIds are
-    content-addressed, so identical bytes collide on the same blob and the
-    second `Email/import` answers an `alreadyExists` SetError."""
+    content-addressed, so identical bytes would collide on one blob and the
+    second `Email/import` would be rejected instead of saving a draft."""
 
     def test_compose_sets_a_date_header(self):
         from vidushi_oa.mail.compose import compose
@@ -106,6 +106,21 @@ class ComposeOriginatorHeadersTest(unittest.TestCase):
             str(parsed["Message-ID"]).endswith("@fastmail.com>"),
             f"Message-ID must be scoped to the From domain; got {parsed['Message-ID']!r}",
         )
+
+    def test_a_from_address_with_no_domain_falls_back_to_the_stdlib_message_id(self):
+        """An address carrying no ``@`` has no domain to scope the Message-ID to —
+        reusing its local-part would mint an invalid right-hand side some MTAs
+        reject, so the stdlib default must take over."""
+        from vidushi_oa.mail.compose import compose
+
+        raw = compose(from_addr="nobody", to="v@y", subject="S", body="B")
+        parsed = _parse(raw)
+        message_id = str(parsed["Message-ID"])
+        self.assertFalse(
+            message_id.endswith("@nobody>"),
+            f"a domain-less From must not become the Message-ID domain; got {message_id!r}",
+        )
+        self.assertIn("@", message_id.strip("<>"))
 
     def test_two_identical_composes_are_not_byte_identical(self):
         from vidushi_oa.mail.compose import compose

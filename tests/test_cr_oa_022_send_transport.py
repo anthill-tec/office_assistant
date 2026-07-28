@@ -349,7 +349,7 @@ class AdapterCapabilitiesIncludeSendTest(unittest.TestCase):
         self.assertIn("send", adapter.capabilities())
 
     def test_jmap_capabilities_include_send(self):
-        transport = _JmapFakeTransport()
+        transport = _JmapSessionOnlyTransport()
         adapter = JmapAdapter(
             account="fastmail_main", source_tag="[FM]", token="secret-token",
             session_url=SESSION_URL, transport=transport,
@@ -358,45 +358,28 @@ class AdapterCapabilitiesIncludeSendTest(unittest.TestCase):
         self.assertIn("send", adapter.capabilities())
 
 
-class _JmapFakeTransport:
-    """Records every `(method, url, headers, body)` call and returns canned
-    `(status, dict)` tuples — no network. Distinct from
-    `tests/test_cr_oa_020_jmap.py`'s `FakeTransport` so each RED file stays
-    import-self-contained, but returns compatible session/response shapes."""
+class _JmapSessionOnlyTransport:
+    """Answers the session GET and nothing else — for the one test that inspects a
+    `JmapAdapter` without issuing a single JMAP call. Every test that does issue
+    calls uses `_JmapRoutingTransport`, which routes each one to its own response."""
 
-    def __init__(self, session_response=None, responses=None):
+    def __init__(self, session_response=None):
         self.session_response = session_response or _CANNED_SESSION
-        # A queue of canned POST responses, consumed in order; the last one
-        # repeats once exhausted so a test needn't enumerate every call.
-        self._responses = list(responses or [])
         self.calls = []
 
     def __call__(self, method, url, headers, body):
         self.calls.append((method, url, headers, body))
         if method == "GET":
             return 200, self.session_response
-        if self._responses:
-            response = self._responses.pop(0)
-        elif self.calls:
-            response = {"methodResponses": []}
-        else:
-            response = {"methodResponses": []}
-        return 200, response
-
-    def calls_of(self, method):
-        return [c for c in self.calls if c[0] == method]
-
-    def post_bodies(self):
-        return [c[3] for c in self.calls if c[0] == "POST"]
+        raise AssertionError(f"unexpected {method} to {url} on a session-only transport")
 
 
 class _JmapRoutingTransport:
     """Routes each call by URL / JMAP method name so the blob upload, the
     `Mailbox/query` and the `Email/import` each get their OWN canned response.
 
-    `_JmapFakeTransport`'s flat queue hands the same payload to all three, which
-    silently masks a draft carrying neither a real blob nor a real mailbox — the
-    exact wiring this fake exists to pin.
+    A flat one-payload-for-every-call fake silently masks a draft carrying neither
+    a real blob nor a real mailbox — the exact wiring this fake exists to pin.
 
     A `Mailbox/query` is additionally routed by its `filter.role`, so the
     `drafts` lookup and the `sent` lookup can answer with different ids: an
@@ -589,44 +572,25 @@ class JmapCreateDraftBlobImportTest(unittest.TestCase):
         self.assertIn("accountNotFound", str(ctx.exception))
 
 
-class JmapImportAlreadyExistsTest(unittest.TestCase):
-    """Re-drafting the same message must be idempotent, not a hard error.
+class JmapImportRejectionIsNeverSilentTest(unittest.TestCase):
+    """No `notCreated` SetError is quietly absorbed into a draft id.
 
-    Blob ids are content-addressed, so a repeated draft resolves to the same blob
-    and `Email/import` answers the RFC 8621 §4.9 `alreadyExists` SetError carrying
-    the `existingId` of the message already in Drafts. That is the draft the user
-    asked for — returning its id is the correct outcome, not exit 1."""
+    `compose()` stamps a unique `Message-ID`/`Date` per call, so a redraft never
+    collides with an earlier content-addressed blob and every import is expected to
+    create. A rejection of ANY type — `alreadyExists` included — therefore means no
+    draft was created for this call, and must surface rather than resolve to some
+    other message's id."""
 
-    _ALREADY_EXISTS = {
-        "methodResponses": [
-            ["Email/import",
-             {"accountId": ACCOUNT_ID,
-              "notCreated": {"draft": {"type": "alreadyExists",
-                                       "existingId": "Md-draft-existing"}}}, "0"],
-        ],
-    }
-
-    def test_already_exists_returns_the_existing_draft_id(self):
-        transport = _JmapRoutingTransport(api={"Email/import": self._ALREADY_EXISTS})
-        adapter = JmapAdapter(
-            account="fastmail_main", source_tag="[FM]", token="secret-token",
-            session_url=SESSION_URL, transport=transport,
-        )
-        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
-
-        self.assertEqual(adapter.create_draft(raw), "Md-draft-existing")
-
-    def test_already_exists_without_an_existing_id_still_raises(self):
-        """No `existingId` means no draft to point the user at — that is a real
-        failure, not something to paper over with an empty id."""
-        malformed = {
+    def test_an_already_exists_rejection_raises_rather_than_returning_another_id(self):
+        already_exists = {
             "methodResponses": [
                 ["Email/import",
                  {"accountId": ACCOUNT_ID,
-                  "notCreated": {"draft": {"type": "alreadyExists"}}}, "0"],
+                  "notCreated": {"draft": {"type": "alreadyExists",
+                                           "existingId": "Md-draft-existing"}}}, "0"],
             ],
         }
-        transport = _JmapRoutingTransport(api={"Email/import": malformed})
+        transport = _JmapRoutingTransport(api={"Email/import": already_exists})
         adapter = JmapAdapter(
             account="fastmail_main", source_tag="[FM]", token="secret-token",
             session_url=SESSION_URL, transport=transport,
@@ -696,6 +660,23 @@ class JmapSendDraftFilesTheSentMessageTest(unittest.TestCase):
             ],
         }
         transport = _JmapRoutingTransport(api={"Mailbox/query:sent": empty})
+
+        self.assertEqual(self._adapter(transport).send_draft("Md-draft-1"), "S-sent-1")
+
+        patch_object = transport.api_call("EmailSubmission/set")[1]["onSuccessUpdateEmail"]["#submission"]
+        self.assertNotIn("mailboxIds", patch_object)
+        self.assertIsNone(patch_object["keywords/$draft"])
+
+    def test_a_failed_sent_mailbox_query_does_not_block_the_submission(self):
+        """The Sent lookup is a convenience, not a precondition. A `Mailbox/query`
+        that fails at the method level must cost the user the move to Sent — never
+        the send itself, which needs no mailbox at all."""
+        errored = {
+            "methodResponses": [
+                ["error", {"type": "accountNotFound"}, "0"],
+            ],
+        }
+        transport = _JmapRoutingTransport(api={"Mailbox/query:sent": errored})
 
         self.assertEqual(self._adapter(transport).send_draft("Md-draft-1"), "S-sent-1")
 
