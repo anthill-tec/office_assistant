@@ -1036,7 +1036,24 @@ def main():
     av = add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
 
     # embedded mail client (CR-OA-020 §S5) — reference-only auth + read verbs
-    msr = add_parser("mail-search"); msr.add_argument("query")
+    msr = add_parser(
+        "mail-search",
+        description=(
+            "Search the configured mailboxes with a portable compound query, "
+            "merged + de-duped across accounts. Supported grammar: qualifiers "
+            "(subject:, from:, category:, newer_than:, has:attachment), the OR "
+            "operator, parenthesised groups, and quoted-phrase (\"exact phrase\") "
+            "matching. Example: category:purchases \"out for delivery\""
+        ),
+    )
+    msr.add_argument(
+        "query",
+        help=(
+            "portable compound query: qualifiers + OR + parenthesised groups + "
+            "quoted \"exact phrase\" matching, e.g. category:purchases "
+            "\"out for delivery\""
+        ),
+    )
     msr.add_argument("--accounts", type=lambda s: s.split(",") if s else None,
                      help="comma-separated account names to search (default: all)")
     read_json(msr); read_full(msr); msr.set_defaults(func=cmd_mail_search)

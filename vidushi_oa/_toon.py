@@ -1,6 +1,6 @@
-"""TOON encode/decode shim over the python-toon library (named oa_toon to avoid
-the import-name clash with the `toon` package it wraps; cf. oa_mongo.py)."""
-import toon
+"""Thin TOON encode/decode shim over the official `toon-format` library
+(imported as `toon_format`), exposing its `encode`/`decode` as `to_toon`/`from_toon`."""
+import toon_format as toon
 
 
 def to_toon(obj):

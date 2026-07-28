@@ -119,7 +119,8 @@ class GmailImapAdapter(ImapAdapter):
 
     def search(self, query, folder=None, limit=None) -> list:
         conn = self._conn()
-        typ, data = conn.uid("SEARCH", "X-GM-RAW", '"%s"' % query)
+        escaped = query.replace("\\", "\\\\").replace('"', '\\"')
+        typ, data = conn.uid("SEARCH", "X-GM-RAW", f'"{escaped}"')
         uids = _parse_uids(data)
         if limit is not None:
             uids = uids[:limit]
