@@ -145,5 +145,83 @@ class NoPersonalDataGuardTest(unittest.TestCase):
         )
 
 
+# The maintainer's personal Gmail address -- narrower scope than
+# `_REAL_PERSONAL_MARKERS` above: ONLY this exact literal, scanned across EVERY
+# tracked file in the repo (not just vidushi_oa/, skills/, tests/), per an explicit
+# user decision that this one address must never be published anywhere in this
+# public repo. The other markers (new.book1604@fastmail.com, antojk@anthilllabs.in,
+# the "Antony John" byline, the bare "antojk" username) are explicitly OUT of scope
+# for this guard and are left to the existing CR-OA-029 machinery above.
+_GMAIL_LITERAL = "antojk@gmail.com"
+
+# Only this guard file is excluded -- it must name the literal to check for it.
+_GMAIL_SELF_EXCLUDED_RELPATHS = (
+    os.path.join("tests", "test_cr_oa_029_no_personal_data.py"),
+)
+
+
+def _all_tracked_files():
+    """Return every tracked file in the repo (git ls-files, no path/dir filter)."""
+    out = subprocess.run(
+        ["git", "ls-files"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return [line for line in out.stdout.splitlines() if line.strip()]
+
+
+def _find_gmail_literal_hits():
+    """Scan every tracked file in the repo (excluding only this guard file) for the
+    literal maintainer personal Gmail address `antojk@gmail.com`.
+
+    Returns a list of "relpath:lineno: line text" strings so a failure lists every
+    offending file:line precisely (what GREEN needs to purge).
+    """
+    hits = []
+    for relpath in _all_tracked_files():
+        if relpath in _GMAIL_SELF_EXCLUDED_RELPATHS:
+            continue
+        abspath = os.path.join(ROOT, relpath)
+        try:
+            with open(abspath, "r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except (UnicodeDecodeError, IsADirectoryError, OSError):
+            # Skip binaries / unreadable entries -- they can't carry a text marker.
+            continue
+        for lineno, line in enumerate(lines, start=1):
+            if _GMAIL_LITERAL in line:
+                hits.append("%s:%d: %s" % (relpath, lineno, line.rstrip("\n")))
+    return hits
+
+
+class PersonalGmailAddressNeverPublishedTest(unittest.TestCase):
+    """The maintainer's personal Gmail `antojk@gmail.com` must NEVER be published
+    anywhere in this public repo.
+
+    Narrower than, and independent of, the CR-OA-029 `_REAL_PERSONAL_MARKERS` guard
+    above: that guard already flags the `antojk` substring but only within
+    `vidushi_oa/`, `skills/`, `tests/`, and it deliberately permits other
+    antojk-prefixed identifiers (the antojk@anthilllabs.in business address, the
+    bare antojk username). This test is scoped to ONLY the exact literal
+    `antojk@gmail.com`, scanned across EVERY tracked file in the repo (no
+    directory restriction), excluding only this guard file itself.
+
+    MUST FAIL today: the literal is still present in `AGENTS.md` and in
+    `docs/changes/CR-OA-029-purge-real-pii-from-public-surfaces.md`.
+    """
+
+    def test_gmail_literal_absent_from_all_tracked_files(self):
+        hits = _find_gmail_literal_hits()
+        self.assertEqual(
+            hits,
+            [],
+            "found the maintainer's personal Gmail address literal %r in %d "
+            "tracked file location(s) that must be purged:\n%s"
+            % (_GMAIL_LITERAL, len(hits), "\n".join(hits)),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
