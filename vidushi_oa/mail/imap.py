@@ -112,6 +112,36 @@ class ImapAdapter(MailAdapter):
         smtp.sendmail(from_addr, recipients, raw_bytes)
         return message_id
 
+    def fetch_html_body(self, uid, folder=None) -> "str | None":
+        """Fetch message `uid`'s decoded `text/html` part as a `str`, or `None`.
+
+        Selects `folder` (default `INBOX`), issues one UID `FETCH (BODY[])` — the
+        CR-022 `_fetch_draft_bytes` tuple shape — parses the raw RFC 5322 bytes and
+        walks the MIME tree for the first `text/html` part, decoding it with that
+        part's charset. Returns `None` when the message carries no html part (e.g.
+        a plain-text-only message); the body is consumed in-engine only and is
+        never surfaced in `Message`/the AXI mail row."""
+        conn = self._conn()
+        conn.select(folder or "INBOX")
+        typ, data = conn.uid("FETCH", str(uid), "(BODY[])")
+        raw = None
+        for item in data or []:
+            if isinstance(item, tuple) and len(item) == 2:
+                raw = item[1]
+                break
+        if raw is None:
+            return None
+        parsed = email.message_from_bytes(raw)
+        for part in parsed.walk():
+            if part.get_content_type() != "text/html":
+                continue
+            payload = part.get_payload(decode=True)
+            if payload is None:
+                continue
+            charset = part.get_content_charset() or "utf-8"
+            return payload.decode(charset, errors="replace")
+        return None
+
     def _fetch_draft_bytes(self, draft_id, folder="Drafts") -> bytes:
         """Fetch the raw RFC 5322 bytes of draft `draft_id` from `folder` by UID."""
         conn = self._conn()

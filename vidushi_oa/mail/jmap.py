@@ -183,8 +183,70 @@ class JmapAdapter(MailAdapter):
         message.delivered_to = item.get("deliveredTo", "")
         return message
 
+    def _email_get_list(self, payload) -> list:
+        """Return the first `Email/get` result `list` from a JMAP response."""
+        for response in payload.get("methodResponses", []):
+            if response[0] == "Email/get":
+                return response[1].get("list", [])
+        return []
+
+    def fetch_html_body(self, uid, folder=None) -> "str | None":
+        """Fetch message `uid`'s html body as a `str`, or `None`.
+
+        Issues one `Email/get` for `ids: [uid]` requesting the `htmlBody` structure
+        and its `bodyValues`, then resolves the html string from
+        `bodyValues[htmlBody[0]["partId"]]["value"]`. Returns `None` when the
+        message has no html body part. Extraction-only: the body is consumed
+        in-engine and never enters `Message`/the AXI mail row."""
+        api_url, account_id = self._session()
+        body = {
+            "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
+            "methodCalls": [
+                ["Email/get",
+                 {"accountId": account_id,
+                  "ids": [uid],
+                  "properties": ["htmlBody", "bodyValues"],
+                  "fetchHTMLBodyValues": True},
+                 "0"],
+            ],
+        }
+        status, payload = self._transport("POST", api_url, self._auth_headers(), body)
+        if status != 200:
+            raise RuntimeError(f"JMAP Email/get failed: HTTP {status}")
+        items = self._email_get_list(payload)
+        if not items:
+            return None
+        html_body = items[0].get("htmlBody") or []
+        if not html_body:
+            return None
+        part_id = html_body[0].get("partId")
+        value = (items[0].get("bodyValues") or {}).get(part_id)
+        if not value:
+            return None
+        return value.get("value")
+
     def fetch_message(self, uid, folder=None):
-        raise NotImplementedError("JmapAdapter.fetch_message is not implemented")
+        """Fetch a single `Message` for `uid` via one `Email/get`.
+
+        Requests the bounded header projection (`_EMAIL_PROPERTIES`) for `ids:
+        [uid]` and builds a `Message` from the result (mirrors `search()`'s
+        `_build_message`). Returns `None` when the id is not found."""
+        api_url, account_id = self._session()
+        body = {
+            "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
+            "methodCalls": [
+                ["Email/get",
+                 {"accountId": account_id,
+                  "ids": [uid],
+                  "properties": list(_EMAIL_PROPERTIES)},
+                 "0"],
+            ],
+        }
+        status, payload = self._transport("POST", api_url, self._auth_headers(), body)
+        if status != 200:
+            raise RuntimeError(f"JMAP Email/get failed: HTTP {status}")
+        items = self._email_get_list(payload)
+        return self._build_message(items[0]) if items else None
 
     def list_folders(self) -> list:
         raise NotImplementedError("JmapAdapter.list_folders is not implemented")
