@@ -1,6 +1,6 @@
 # CR-OA-022 — Embedded mail *sending* in `voa` (draft-then-confirm, per-mailbox identity, store-linked)
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-28 on 1.1.0)
 **Type:** feature
 **Priority:** High
 **Depends on:** 020

@@ -1,6 +1,6 @@
 # CR-OA-025 — Gmail `X-GM-RAW` search mis-quotes embedded phrases (malformed IMAP SEARCH)
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-28 on 1.1.0)
 **Type:** bugfix
 **Priority:** High
 **Depends on:** 020

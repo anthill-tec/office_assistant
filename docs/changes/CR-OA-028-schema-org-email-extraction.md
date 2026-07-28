@@ -1,6 +1,6 @@
 # CR-OA-028 — schema.org email-markup structured extraction (`voa mail-extract`)
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-28 on 1.1.0)
 **Type:** feature
 **Priority:** High
 **Depends on:** 020, 024, 026

@@ -1,6 +1,6 @@
 # CR-OA-027 — `orders.order_date` validator rejects null despite documented `str|null`
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-28 on 1.1.0)
 **Type:** bugfix
 **Priority:** Medium
 **Depends on:** 015

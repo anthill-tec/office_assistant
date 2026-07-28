@@ -1,6 +1,6 @@
 # CR-OA-024 — Fastmail JMAP POST missing `Content-Type` header (400s every request)
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-28 on 1.1.0)
 **Type:** bugfix
 **Priority:** High
 **Depends on:** 020
