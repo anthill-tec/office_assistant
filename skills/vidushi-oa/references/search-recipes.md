@@ -8,9 +8,10 @@ server-side search — Gmail `X-GM-RAW`, Fastmail JMAP filters, Yahoo/IMAP `SEAR
 
 **Portable qualifiers the verb accepts** (mapped per provider): `subject:`, `from:`, `to:`,
 `newer_than:` (`3m`/`6m`/`1y`), `has:attachment`, `category:` (`purchases`/`updates`/`promotions`;
-Gmail-native, ignored where a provider has no category model), and `OR` / parenthesised groups.
-`category:purchases` is the best single filter for order/billing mail; `has:attachment` narrows to
-document-bearing mail. Prefer one broad merged query over many single-phrase ones — the merge/tag
+Gmail-native, ignored where a provider has no category model), `OR` / parenthesised groups, and
+quoted `"exact phrase"` matching (a quoted phrase is matched as a contiguous phrase, e.g.
+`"out for delivery"`). `category:purchases` is the best single filter for order/billing mail;
+`has:attachment` narrows to document-bearing mail. Prefer one broad merged query over many single-phrase ones — the merge/tag
 is done for you. Fetch a full hit with `voa mail-get --account <name> --uid <uid>`.
 
 ## Subscription / recurring billing
