@@ -940,7 +940,20 @@ def cmd_mail_extract(a):
     `cmd_mail_get`."""
     client = _mail_client_or_exit()
     adapter = _mail_adapter_or_exit(client, a.account, uid=a.uid)
-    html = adapter.fetch_html_body(a.uid)
+    try:
+        html = adapter.fetch_html_body(a.uid)
+    except NotImplementedError:
+        out({"error": "mail-extract is not supported for this account",
+             "account": a.account, "uid": a.uid})
+        sys.exit(1)
+    except (LookupError, RuntimeError) as e:
+        out({"error": str(e) or e.__class__.__name__,
+             "account": a.account, "uid": a.uid})
+        sys.exit(1)
+    except (imaplib.IMAP4.error, OSError, urllib.error.URLError) as e:
+        out({"error": str(e) or e.__class__.__name__,
+             "account": a.account, "uid": a.uid})
+        sys.exit(1)
     entities = extract_schema_org(html or "")
     candidates = to_store_candidates(entities)
     if _FMT == "json":
