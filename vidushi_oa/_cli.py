@@ -989,6 +989,22 @@ def _save_draft_link(a, draft_id):
             return
 
 
+def _attachments_or_exit(path):
+    """Read the `--attach` file at *path* and return the ``[(basename, bytes)]``
+    list `compose(..., attachments=...)` expects, or `None` when no attachment was
+    requested. A missing/unreadable file is a structured error + exit 1 (no
+    traceback), consistent with the other mail verbs."""
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError as e:
+        out({"error": "attachment not readable", "path": path, "reason": str(e)})
+        sys.exit(1)
+    return [(os.path.basename(path), data)]
+
+
 def cmd_mail_draft(a):
     """Compose (§S2) and save a REAL draft via the account adapter's
     `create_draft(raw)`; emit a flat TOON/JSON status carrying the `draft` id.
@@ -999,7 +1015,12 @@ def cmd_mail_draft(a):
     _verified_recipient_or_exit(a.to, getattr(a, "force", False),
                                 account=a.account, to=a.to)
     _validate_from_or_exit(a.account, a.from_addr, to=a.to)
-    raw = compose(a.from_addr, a.to, a.subject, a.body, cc=a.cc)
+    attachments = _attachments_or_exit(getattr(a, "attach", None))
+    if attachments is None:
+        raw = compose(a.from_addr, a.to, a.subject, a.body, cc=a.cc)
+    else:
+        raw = compose(a.from_addr, a.to, a.subject, a.body, cc=a.cc,
+                      attachments=attachments)
     draft_id = adapter.create_draft(raw)
     _save_draft_link(a, draft_id)
     out({"status": "drafted", "draft": draft_id, "account": a.account})
@@ -1082,8 +1103,14 @@ def cmd_mail_reply(a):
     _verified_recipient_or_exit(to, getattr(a, "force", False),
                                 account=a.account, to=to)
     _validate_from_or_exit(a.account, a.from_addr, to=to)
-    raw = compose(a.from_addr, to, subject, a.body,
-                  in_reply_to=source.id, references=references)
+    attachments = _attachments_or_exit(getattr(a, "attach", None))
+    if attachments is None:
+        raw = compose(a.from_addr, to, subject, a.body,
+                      in_reply_to=source.id, references=references)
+    else:
+        raw = compose(a.from_addr, to, subject, a.body,
+                      in_reply_to=source.id, references=references,
+                      attachments=attachments)
     draft_id = adapter.create_draft(raw)
     _save_draft_link(a, draft_id)
     out({"status": "drafted", "draft": draft_id, "account": a.account})
