@@ -245,6 +245,90 @@ def test_mail_draft_to_a_verified_contact_saves_without_needing_force(monkeypatc
     )
 
 
+# 2b. The verified-recipient guard covers EVERY recipient the transport will address,
+#     not just `--to`: `send_draft` builds its SMTP RCPT list from the draft's
+#     `To` + `Cc`, so an unverified `--cc` (or a second address in a `--to` list)
+#     would otherwise be delivered to despite the guard.
+
+def test_mail_draft_cc_to_an_unverified_address_blocks_unless_forced(monkeypatch, capsys, tmp_path):
+    _isolate_backend(monkeypatch, tmp_path)
+    _seed_contact("ven_acme", "verified@acme.com")
+
+    adapter = RecordingAdapter("gmail_main", "[GM]", caps={"send"})
+    client = MailClient({"gmail_main": adapter})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    draft_kwargs = dict(
+        account="gmail_main", from_addr="me@gmail.com", to="verified@acme.com",
+        subject="Order query", body="Please help.", cc="unverified@evil.com",
+        attach=None, case=None,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_draft(Namespace(force=False, **draft_kwargs))
+
+    assert exc_info.value.code != 0, "an unverified Cc must exit non-zero"
+    assert adapter.draft_saves == 0, "an unverified Cc must not be drafted without --force"
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert "error" in payload, f"must be a structured error payload; got {payload!r}"
+    assert "unverified@evil.com" in payload["error"], (
+        f"structured error must name the unverified Cc; got {payload!r}"
+    )
+
+    # --force lets the SAME unverified Cc through, exactly as it does for --to.
+    cli.cmd_mail_draft(Namespace(force=True, **draft_kwargs))
+    assert adapter.draft_saves == 1, "--force must let the unverified Cc's draft through"
+    assert adapter.sends == 0, "mail-draft must still never send"
+
+
+def test_mail_draft_cc_to_a_verified_contact_saves_without_needing_force(monkeypatch, capsys, tmp_path):
+    _isolate_backend(monkeypatch, tmp_path)
+    _seed_contact("ven_acme", "verified@acme.com")
+    _seed_contact("ven_beta", "cc-team@beta.com", vendor="Beta")
+
+    adapter = RecordingAdapter("gmail_main", "[GM]", caps={"send"})
+    client = MailClient({"gmail_main": adapter})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    cli.cmd_mail_draft(Namespace(
+        account="gmail_main", from_addr="me@gmail.com", to="verified@acme.com",
+        subject="Order query", body="Please help.", cc="cc-team@beta.com",
+        attach=None, case=None, force=False,
+    ))
+
+    assert adapter.draft_saves == 1, "a verified Cc must save the draft without --force"
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert "error" not in payload, f"a verified Cc must not raise a guard error; got {payload!r}"
+
+
+def test_mail_draft_checks_every_address_in_a_recipient_list(monkeypatch, capsys, tmp_path):
+    """A single `--to`/`--cc` carries a comma-separated LIST with display names;
+    comparing the raw header value whole would verify none of them."""
+    _isolate_backend(monkeypatch, tmp_path)
+    _seed_contact("ven_acme", "verified@acme.com")
+
+    adapter = RecordingAdapter("gmail_main", "[GM]", caps={"send"})
+    client = MailClient({"gmail_main": adapter})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit):
+        cli.cmd_mail_draft(Namespace(
+            account="gmail_main", from_addr="me@gmail.com",
+            to="Acme Support <verified@acme.com>, smuggled@evil.com",
+            subject="Order query", body="Please help.", cc=None,
+            attach=None, case=None, force=False,
+        ))
+
+    assert adapter.draft_saves == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert "smuggled@evil.com" in payload["error"], (
+        f"every address in the list must be checked; got {payload!r}"
+    )
+
+
 # 3. From-identity guard: blocks a `--from` that is neither the account address nor a
 #    configured alias.
 

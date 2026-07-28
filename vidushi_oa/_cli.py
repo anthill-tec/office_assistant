@@ -31,6 +31,7 @@ Tracking-state framework (see schema.md "Tracking state framework"):
 Fields support dotted paths (e.g. source.email_id). Output is compact JSON on stdout; warnings to stderr.
 """
 import argparse, json, os, sys, datetime, re, getpass, imaplib, urllib.error
+import email.utils
 
 # Module-level seam: tests monkeypatch `vidushi_oa._cli.build_client`; the
 # `cmd_mail_*` handlers call it (no args) to obtain a wired `MailClient`.
@@ -994,21 +995,38 @@ def _mail_adapter_or_exit(client, account, **extra):
     return adapter
 
 
+def _recipient_addresses(value):
+    """Every bare address carried by a recipient header value (`To`/`Cc`), which may
+    hold a comma-separated list and display names. Falls back to the raw value when
+    nothing parses, so an unparsable recipient is still checked (and refused) rather
+    than silently skipped."""
+    if not value:
+        return []
+    addresses = [addr for _name, addr in email.utils.getaddresses([value]) if addr]
+    return addresses or [str(value).strip()]
+
+
 def _verified_recipient_or_exit(recipient, force, **extra):
-    """Verified-recipient guard (§S4): the outbound `recipient` must match a
-    `contact`'s `support_email` (the verified-address allow-list) unless `force` is
-    set. A non-matching recipient is a structured error naming it + exit 1 (no
-    traceback); `--force` bypasses the check entirely."""
+    """Verified-recipient guard (§S4): EVERY address in the outbound `recipient`
+    header value must match a `contact`'s `support_email` (the verified-address
+    allow-list) unless `force` is set. A non-matching address is a structured error
+    naming it + exit 1 (no traceback); `--force` bypasses the check entirely.
+
+    The value is parsed rather than compared whole because a single `To`/`Cc` carries
+    a LIST: checking only the raw string would let every address after the first
+    reach the transport unverified (`send_draft` builds its RCPT list from all of
+    `To` + `Cc`)."""
     if force:
         return
     from vidushi_oa.backends import get_backend, query as Q
-    match = get_backend().store("contacts").find_one(
-        Q.cond("support_email", "eq", recipient))
-    if match is None:
-        out({"error": f"recipient {recipient} is not a verified contact "
-                      f"(no matching support_email); pass --force to override",
-             **extra})
-        sys.exit(1)
+    store = get_backend().store("contacts")
+    for address in _recipient_addresses(recipient):
+        match = store.find_one(Q.cond("support_email", "eq", address))
+        if match is None:
+            out({"error": f"recipient {address} is not a verified contact "
+                          f"(no matching support_email); pass --force to override",
+                 **extra})
+            sys.exit(1)
 
 
 def _validate_from_or_exit(account, from_addr, **extra):
@@ -1071,8 +1089,9 @@ def cmd_mail_draft(a):
     code path that can dispatch a message."""
     client = _mail_client_or_exit()
     adapter = _mail_adapter_or_exit(client, a.account)
-    _verified_recipient_or_exit(a.to, getattr(a, "force", False),
-                                account=a.account, to=a.to)
+    force = getattr(a, "force", False)
+    _verified_recipient_or_exit(a.to, force, account=a.account, to=a.to)
+    _verified_recipient_or_exit(a.cc, force, account=a.account, cc=a.cc)
     _validate_from_or_exit(a.account, a.from_addr, to=a.to)
     attachments = _attachments_or_exit(getattr(a, "attach", None))
     if attachments is None:

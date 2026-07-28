@@ -126,11 +126,19 @@ class ImapAdapter(MailAdapter):
         account's `\\Drafts` special-use mailbox by default) by its
         UID, parses the envelope sender (its `From`) and the recipient list (its
         `To` + `Cc`), then connects to the provider's submission host on :587,
-        upgrades with STARTTLS, authenticates with this adapter's own IMAP
-        credential (the app-password already authorizes SMTP — DN §Decision 7),
-        and issues exactly one `sendmail` of the REAL draft bytes to the REAL
-        recipients. Returns the message's own `Message-ID` when present, else a
-        freshly-minted one.
+        upgrades with STARTTLS, authenticates through `_smtp_login` (this adapter's
+        own IMAP credential — the app-password already authorizes SMTP, DN
+        §Decision 7 — or whatever SASL mechanism a subclass needs), and issues
+        exactly one `sendmail` of the REAL draft bytes to the REAL recipients.
+        Returns the message's own `Message-ID` when present, else a freshly-minted
+        one.
+
+        The submission connection is closed on every path: an unsent `QUIT` leaves
+        the submission server recording an aborted session, and on a failure path
+        (STARTTLS, authentication, `sendmail`) the TLS socket would otherwise leak
+        until garbage collection. The close is best-effort — a `QUIT` that fails
+        after the provider accepted the message may not turn a delivered send into
+        an error.
 
         Once the provider has accepted the message, `_file_sent_copy` files it in
         Sent and retires the Drafts copy — the IMAP counterpart of the JMAP
@@ -145,11 +153,28 @@ class ImapAdapter(MailAdapter):
         message_id = (parsed.get("Message-ID") or "").strip() or \
             email.utils.make_msgid(domain=self.smtp_host)
         smtp = smtplib.SMTP(self.smtp_host, self.smtp_port)
-        smtp.starttls()
-        smtp.login(self.user, self.password)
-        smtp.sendmail(from_addr, recipients, raw_bytes)
+        try:
+            smtp.starttls()
+            self._smtp_login(smtp)
+            smtp.sendmail(from_addr, recipients, raw_bytes)
+        finally:
+            try:
+                smtp.quit()
+            except (smtplib.SMTPException, OSError):
+                pass
         self._file_sent_copy(raw_bytes, draft_id, mailbox)
         return message_id
+
+    def _smtp_login(self, smtp) -> None:
+        """Authenticate the SMTP submission session — the seam every provider's
+        credential model plugs into.
+
+        The default is the app-password `LOGIN`: the same credential the IMAP side
+        already holds authorizes submission (DN §Decision 7). A provider whose
+        account carries no password (Gmail Workspace XOAUTH2) overrides this rather
+        than the whole of `send_draft`, so the submission, recipient-parsing and
+        Sent/Drafts bookkeeping stay in one place."""
+        smtp.login(self.user, self.password)
 
     def _file_sent_copy(self, raw_bytes, draft_id, folder) -> None:
         """After a successful submission, APPEND the sent bytes to the `\\Sent`

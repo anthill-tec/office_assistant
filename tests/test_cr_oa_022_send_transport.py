@@ -42,12 +42,14 @@ tests (extended here with `.append()`); JMAP is faked via the same
 `FakeTransport` pattern used by `tests/test_cr_oa_020_jmap.py`.
 """
 import imaplib
+import smtplib
 import unittest
 from unittest.mock import patch
 
 from vidushi_oa.mail.compose import compose
 from vidushi_oa.mail.imap import GmailImapAdapter, YahooImapAdapter
 from vidushi_oa.mail.jmap import JmapAdapter
+from vidushi_oa.mail.xoauth2 import GmailXoauth2Adapter
 
 SESSION_URL = "https://api.fastmail.com/jmap/session"
 API_URL = "https://api.fastmail.com/jmap/api/"
@@ -114,15 +116,26 @@ def _build_raw_message(subject, from_addr, to_addr, body):
 
 
 class FakeSMTP:
-    """Records every `.starttls()` / `.login()` / `.sendmail()` call — no real
-    socket. Constructor-call args are recorded on the class-level factory mock
-    (via `mock.patch(..., return_value=...)`), not here."""
+    """Records every `.starttls()` / `.login()` / `.auth()` / `.sendmail()` /
+    `.quit()` call — no real socket. Constructor-call args are recorded on the
+    class-level factory mock (via `mock.patch(..., return_value=...)`), not here.
 
-    def __init__(self):
+    `auth` mirrors `smtplib.SMTP.auth`: it invokes the caller's `authobject` with
+    NO argument for the initial response and records the string it hands back —
+    the mechanism-specific SASL payload smtplib base64-encodes itself.
+
+    `sendmail_error`/`quit_error`, when set, are raised instead — a submission that
+    fails must still close its connection, and a `QUIT` that fails must not turn a
+    delivered message into an error."""
+
+    def __init__(self, sendmail_error=None, quit_error=None):
         self.starttls_calls = []
         self.login_calls = []
+        self.auth_calls = []
         self.sendmail_calls = []
         self.quit_calls = 0
+        self.sendmail_error = sendmail_error
+        self.quit_error = quit_error
 
     def starttls(self, context=None):
         self.starttls_calls.append(context)
@@ -130,12 +143,20 @@ class FakeSMTP:
     def login(self, user, password):
         self.login_calls.append((user, password))
 
+    def auth(self, mechanism, authobject, *, initial_response_ok=True):
+        self.auth_calls.append((mechanism, authobject()))
+        return (235, b"2.7.0 Accepted")
+
     def sendmail(self, from_addr, to_addrs, msg, *args, **kwargs):
+        if self.sendmail_error is not None:
+            raise self.sendmail_error
         self.sendmail_calls.append((from_addr, to_addrs, msg))
         return {}
 
     def quit(self):
         self.quit_calls += 1
+        if self.quit_error is not None:
+            raise self.quit_error
 
 
 class FakeImapConn:
@@ -182,6 +203,7 @@ class FakeImapConn:
         self.list_errors = list(list_errors or [])
         self.list_statuses = list(list_statuses or [])
         self.login_calls = []
+        self.authenticate_calls = []
         self.select_calls = []
         self.append_calls = []
         self.uid_calls = []
@@ -190,6 +212,12 @@ class FakeImapConn:
     def login(self, user, password):
         self.login_calls.append((user, password))
         return ("OK", [b"Logged in"])
+
+    def authenticate(self, mechanism, authobject):
+        """The XOAUTH2 IMAP login (`GmailXoauth2Adapter._conn`) — recorded with the
+        RAW (unencoded) SASL bytes, which is what `imaplib` encodes itself."""
+        self.authenticate_calls.append((mechanism, authobject(b"")))
+        return ("OK", [b"Authenticated"])
 
     def select(self, mailbox="INBOX", readonly=False):
         self.select_calls.append(mailbox)
@@ -385,6 +413,135 @@ class YahooSendDraftSmtpTest(unittest.TestCase):
         self.assertEqual(from_addr, "me@yahoo.com")
         self.assertEqual(msg, self.draft_bytes)
         self.assertNotEqual(msg, b"draft:901")
+
+
+class GmailXoauth2SendDraftSmtpAuthTest(unittest.TestCase):
+    """A Workspace account authenticating over XOAUTH2 has NO password, so the
+    inherited `smtp.login(user, "")` fails SMTP AUTH on every send. Submission must
+    use the `XOAUTH2` SASL mechanism with the same refreshed access token the IMAP
+    side authenticates with."""
+
+    def setUp(self):
+        self.draft_bytes = compose(
+            from_addr="me@workspace.example", to="vendor@example.com",
+            subject="Warranty claim", body="Please assist.")
+        self.fake_imap = FakeImapConn(fetch_body=self.draft_bytes)
+        self.factory, _ = _make_conn_factory(self.fake_imap)
+        self.token_calls = []
+        self.adapter = GmailXoauth2Adapter(
+            account="gmail_ws", source_tag="[GM]", host="imap.gmail.com",
+            user="me@workspace.example", access_token=self._token,
+            conn_factory=self.factory,
+        )
+
+    def _token(self):
+        self.token_calls.append(1)
+        return "access-token-123"
+
+    def _send(self, fake_smtp, draft_id="900"):
+        with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=fake_smtp):
+            return self.adapter.send_draft(draft_id)
+
+    def test_send_draft_authenticates_over_xoauth2_not_an_empty_password_login(self):
+        fake_smtp = FakeSMTP()
+
+        message_id = self._send(fake_smtp)
+
+        self.assertEqual(fake_smtp.login_calls, [],
+                         "an XOAUTH2 account has no password — LOGIN must never be issued")
+        self.assertEqual(len(fake_smtp.auth_calls), 1,
+                         f"exactly one SMTP AUTH expected; got {fake_smtp.auth_calls!r}")
+        self.assertEqual(fake_smtp.auth_calls[0][0], "XOAUTH2")
+        self.assertEqual(len(fake_smtp.sendmail_calls), 1)
+        self.assertEqual(len(fake_smtp.starttls_calls), 1)
+        self.assertTrue(message_id, "send_draft must return a non-empty message id")
+
+    def test_the_sasl_payload_carries_the_refreshed_bearer_token_unencoded(self):
+        """`smtplib.SMTP.auth` base64-encodes whatever the authobject returns, so the
+        RAW SASL string must be handed over — pre-encoding it (the `imaplib` form)
+        would be double-encoded on the wire."""
+        fake_smtp = FakeSMTP()
+
+        self._send(fake_smtp)
+
+        self.assertEqual(
+            fake_smtp.auth_calls[0][1],
+            "user=me@workspace.example\x01auth=Bearer access-token-123\x01\x01")
+
+    def test_the_smtp_and_imap_sides_share_one_minted_token(self):
+        """The token provider is the account's refresh exchange — minting a second
+        one per send would double every token request."""
+        self._send(FakeSMTP())
+
+        self.assertEqual(len(self.token_calls), 1,
+                         "the access-token provider must be invoked at most once")
+        self.assertEqual([m for m, _sasl in self.fake_imap.authenticate_calls],
+                         ["XOAUTH2"])
+        self.assertEqual(
+            self.fake_imap.authenticate_calls[0][1],
+            b"user=me@workspace.example\x01auth=Bearer access-token-123\x01\x01",
+            "the IMAP side authenticates with the same raw SASL bytes")
+
+    def test_the_dispatched_bytes_and_recipients_are_the_stored_drafts_own(self):
+        fake_smtp = FakeSMTP()
+
+        self._send(fake_smtp)
+
+        from_addr, recipients, msg = fake_smtp.sendmail_calls[0]
+        self.assertEqual(from_addr, "me@workspace.example")
+        self.assertEqual(recipients, ["vendor@example.com"])
+        self.assertEqual(msg, self.draft_bytes)
+
+
+class ImapSendDraftClosesTheSubmissionConnectionTest(unittest.TestCase):
+    """The SMTP submission socket must be closed on every path: without a `QUIT`
+    the server records an aborted session, and on a failure path the TLS socket
+    leaks until garbage collection."""
+
+    def _yahoo(self, fake):
+        factory, _ = _make_conn_factory(fake)
+        return YahooImapAdapter(
+            account="yahoo_main", source_tag="[YH]", host="imap.mail.yahoo.com",
+            user="me@yahoo.com", password="app-pw", conn_factory=factory,
+        )
+
+    def _draft_bytes(self):
+        return compose(from_addr="me@yahoo.com", to="support@example.com",
+                       subject="Return request", body="Requesting an RMA.")
+
+    def test_a_delivered_send_quits_the_submission_session(self):
+        fake_smtp = FakeSMTP()
+        adapter = self._yahoo(FakeImapConn(fetch_body=self._draft_bytes()))
+
+        with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=fake_smtp):
+            adapter.send_draft("901")
+
+        self.assertEqual(fake_smtp.quit_calls, 1)
+
+    def test_a_failed_submission_still_closes_the_connection(self):
+        fake_smtp = FakeSMTP(sendmail_error=smtplib.SMTPRecipientsRefused({}))
+        adapter = self._yahoo(FakeImapConn(fetch_body=self._draft_bytes()))
+
+        with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=fake_smtp):
+            with self.assertRaises(smtplib.SMTPException):
+                adapter.send_draft("901")
+
+        self.assertEqual(fake_smtp.quit_calls, 1,
+                         "a refused submission must not leak its TLS socket")
+
+    def test_a_failing_quit_does_not_turn_a_delivered_send_into_an_error(self):
+        """The message is already in the provider's hands by then — the close is
+        bookkeeping, exactly like the Sent/Drafts steps that follow it."""
+        fake_smtp = FakeSMTP(quit_error=smtplib.SMTPServerDisconnected("bye"))
+        fake_imap = FakeImapConn(fetch_body=self._draft_bytes())
+        adapter = self._yahoo(fake_imap)
+
+        with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=fake_smtp):
+            message_id = adapter.send_draft("901")
+
+        self.assertTrue(message_id)
+        self.assertEqual([c[0] for c in fake_imap.append_calls], ["Sent"],
+                         "the post-delivery bookkeeping must still run")
 
 
 class ImapSendDraftFilesTheSentCopyTest(unittest.TestCase):

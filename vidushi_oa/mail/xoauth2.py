@@ -93,6 +93,30 @@ class GmailXoauth2Adapter(GmailImapAdapter):
             self._resolved_token = token() if callable(token) else token
         return self._resolved_token
 
+    def _smtp_login(self, smtp) -> None:
+        """Authenticate the SMTP submission session with the `XOAUTH2` SASL
+        mechanism instead of a password.
+
+        The inherited `ImapAdapter._smtp_login` issues `LOGIN` with this adapter's
+        password, which is the empty string on this path (`__init__` passes
+        `password=""`), so every send from a Workspace account that disables app
+        passwords failed SMTP AUTH. The access token is the same one `_conn()`
+        resolves — one token per adapter, minted at most once — and the SASL string
+        is the same `_xoauth2_raw` the IMAP side authenticates with.
+
+        `smtplib.SMTP.auth` calls `authobject()` with no argument for the initial
+        response and with the server challenge on a continuation, then base64-encodes
+        whatever `str` comes back — so, exactly as on the `imaplib` side, the RAW
+        `_xoauth2_raw` form is handed over (decoded to `str`, which is what smtplib
+        encodes); the already-encoded `build_xoauth2_string` would go out
+        double-encoded."""
+        token = self._token()
+
+        def authobject(_challenge=None):
+            return _xoauth2_raw(self.user, token).decode()
+
+        smtp.auth("XOAUTH2", authobject)
+
     def _conn(self):
         """Create + XOAUTH2-authenticate the connection once, then reuse it."""
         if self._connection is None:
