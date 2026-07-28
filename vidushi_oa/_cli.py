@@ -735,8 +735,9 @@ _MAIL_PROVIDERS = ("gmail", "yahoo", "fastmail")
 
 
 def _mail_row(msg):
-    """Project a `Message` to the AXI mail row: id/source_tag/subject/sender/date."""
-    return {"id": msg.id, "source_tag": msg.source_tag, "subject": msg.subject,
+    """Project a `Message` to the AXI mail row: id/uid/account/source_tag/subject/sender/date."""
+    return {"id": msg.id, "uid": msg.uid, "account": msg.account,
+            "source_tag": msg.source_tag, "subject": msg.subject,
             "sender": msg.sender, "date": msg.date}
 
 
@@ -780,6 +781,9 @@ def cmd_mail_search(a):
         tag = r["source_tag"].strip("[]")   # "[GM]" -> "GM" (bracket-free TOON map key)
         tally[tag] = tally.get(tag, 0) + 1
     nxt = [f"mail-search {a.query} --accounts <name>", "mail-accounts"]
+    if rows:
+        first = rows[0]
+        nxt.insert(0, f"mail-get --account {first['account']} --uid {first['uid']}")
     envelope = {"count": len(rows), "tally": {"source_tag": tally}, "results": rows}
     if failures:
         envelope["failed_accounts"] = failures
