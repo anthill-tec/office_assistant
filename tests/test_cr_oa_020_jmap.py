@@ -299,7 +299,7 @@ class JmapCapabilitiesTest(unittest.TestCase):
 
         self.assertEqual(
             adapter.capabilities(),
-            {"server_threads", "server_side_search", "projection"},
+            {"server_threads", "server_side_search", "projection", "send"},
         )
         self.assertNotIn("raw_query", adapter.capabilities())
 

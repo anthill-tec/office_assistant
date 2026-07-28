@@ -359,5 +359,47 @@ class DoctorFixWiredFromNonTestCallerTest(unittest.TestCase):
             f"a flag that is declared but never consumed is not wired")
 
 
+class DoctorFixPreservesSendAndAliasesTest(_DoctorWizardTestBase):
+    """CR-OA-022 regression: `doctor --fix` re-authing a send-capable account with
+    aliases must PRESERVE both `send` and `aliases`. The re-auth path previously
+    called `_provision_account_secret(provider, address, auth_mode)` only, so
+    `add_account` reset `send`->False and `aliases`->[] — silently stripping the
+    account's send capability and configured From identities on every re-auth."""
+
+    def test_doctor_fix_preserves_send_and_aliases_after_reauth(self):
+        broken_ref = "vidushi-oa/fastmail:sender@x.com"
+        aliases = ["alias1@x.com", "masked-2@fastmailmail.com"]
+        self._seed_accounts([
+            {"name": "fastmail:sender@x.com", "provider": "fastmail",
+             "address": "sender@x.com", "secret_ref": broken_ref,
+             "auth_mode": "password", "send": True, "aliases": aliases},
+        ])
+        env_overrides = {"VIDUSHI_SECRET_BACKEND": "file"}
+        r = self._run(["doctor", "--fix"], fmt="toon", env_overrides=env_overrides,
+                      input_=SENTINEL + "\n")
+
+        self.assertEqual(r.returncode, 0,
+                         f"doctor --fix must succeed once driven via stdin; "
+                         f"stdout={r.stdout!r} stderr={r.stderr!r}")
+        self.assertNotIn("Traceback", r.stdout + r.stderr)
+
+        with open(self.accounts_path, encoding="utf-8") as f:
+            entries = json.load(f)
+        entry = next(e for e in entries if e.get("name") == "fastmail:sender@x.com")
+        self.assertIs(entry.get("send"), True,
+                      f"doctor --fix must KEEP the account's send capability after "
+                      f"re-auth, not reset it to False; got {entry!r}")
+        self.assertEqual(entry.get("aliases"), aliases,
+                         f"doctor --fix must KEEP the account's configured aliases "
+                         f"after re-auth, not drop them; got {entry!r}")
+
+        # The re-auth genuinely re-stored the secret under the account's real ref.
+        proof_env = dict(self.env)
+        proof_env.update(env_overrides)
+        proof = self._resolve_via_subprocess(broken_ref, proof_env)
+        self.assertEqual(proof.returncode, 0, proof.stderr)
+        self.assertEqual(proof.stdout.strip(), SENTINEL)
+
+
 if __name__ == "__main__":
     unittest.main()

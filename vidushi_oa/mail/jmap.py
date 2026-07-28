@@ -19,6 +19,7 @@ from vidushi_oa.mail.imap import ImapAdapter
 
 _MAIL_CAPABILITY = "urn:ietf:params:jmap:mail"
 _CORE_CAPABILITY = "urn:ietf:params:jmap:core"
+_SUBMISSION_CAPABILITY = "urn:ietf:params:jmap:submission"
 
 # Bounded projection — headers/envelope only, never full body or attachments.
 _EMAIL_PROPERTIES = [
@@ -41,6 +42,17 @@ def _urllib_transport(method, url, headers, body):
         status = response.getcode()
         payload = json.loads(response.read().decode("utf-8"))
     return status, payload
+
+
+def _created_id(payload, method_name) -> str:
+    """Return the id of the single object created by `method_name` in a JMAP
+    `methodResponses` payload."""
+    for response in payload.get("methodResponses", []):
+        if response[0] == method_name:
+            created = response[1].get("created", {})
+            for obj in created.values():
+                return obj.get("id", "")
+    return ""
 
 
 def _format_address(addresses):
@@ -86,7 +98,46 @@ class JmapAdapter(MailAdapter):
         return self._api_url, self._account_id
 
     def capabilities(self) -> set:
-        return {"server_threads", "server_side_search", "projection"}
+        return {"server_threads", "server_side_search", "projection", "send"}
+
+    def create_draft(self, raw_rfc822, folder="Drafts") -> str:
+        """Create a draft via a single `Email/set` carrying the `$draft` keyword;
+        return the created email's id.
+
+        §S1 wires the JMAP draft-creation call; §S2's `compose()` supplies the
+        structured message fields the real draft carries."""
+        api_url, account_id = self._session()
+        body = {
+            "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
+            "methodCalls": [
+                ["Email/set",
+                 {"accountId": account_id,
+                  "create": {"draft": {"keywords": {"$draft": True}}}},
+                 "0"],
+            ],
+        }
+        status, payload = self._transport("POST", api_url, self._auth_headers(), body)
+        if status != 200:
+            raise RuntimeError(f"JMAP Email/set failed: HTTP {status}")
+        return _created_id(payload, "Email/set")
+
+    def send_draft(self, draft_id) -> str:
+        """Submit an existing draft via exactly one `EmailSubmission/set` whose
+        `create` object references the draft's email id; return the submission id."""
+        api_url, account_id = self._session()
+        body = {
+            "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY, _SUBMISSION_CAPABILITY],
+            "methodCalls": [
+                ["EmailSubmission/set",
+                 {"accountId": account_id,
+                  "create": {"submission": {"emailId": draft_id}}},
+                 "0"],
+            ],
+        }
+        status, payload = self._transport("POST", api_url, self._auth_headers(), body)
+        if status != 200:
+            raise RuntimeError(f"JMAP EmailSubmission/set failed: HTTP {status}")
+        return _created_id(payload, "EmailSubmission/set")
 
     def search(self, query, folder=None, limit=None) -> list:
         api_url, account_id = self._session()

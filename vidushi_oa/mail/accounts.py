@@ -15,7 +15,8 @@ created with owner-only permissions (`0600` on the file).
 import json
 import os
 
-_ENTRY_KEYS = ("name", "provider", "address", "secret_ref", "auth_mode")
+_ENTRY_KEYS = ("name", "provider", "address", "secret_ref", "auth_mode", "send",
+               "aliases")
 
 
 def _config_path(path=None) -> str:
@@ -41,13 +42,17 @@ def load_accounts(path=None) -> list[dict]:
 
 
 def add_account(name, provider, address, secret_ref, auth_mode="password",
-                path=None) -> dict:
+                send=False, aliases=None, path=None) -> dict:
     """Upsert a reference-only account entry by name and persist it (mode `0600`).
 
     Returns the stored entry. An existing entry with the same `name` is replaced
     in place (order preserved) so re-running `voa mail-auth` to rotate a secret
     stays idempotent; otherwise the entry is appended. `auth_mode` records how the
-    resolved secret authenticates (`password` default, or `xoauth2`).
+    resolved secret authenticates (`password` default, or `xoauth2`). `send` is the
+    opt-in per-account send-capability flag (default `False` — read-only accounts
+    stay read-only; entries written before it existed are treated as `False`).
+    `aliases` is the configured list of additional From identities for this account
+    (Fastmail masked aliases, etc.); it defaults to an empty list.
     """
     target = _config_path(path)
     parent = os.path.dirname(target)
@@ -60,6 +65,8 @@ def add_account(name, provider, address, secret_ref, auth_mode="password",
         "address": address,
         "secret_ref": secret_ref,
         "auth_mode": auth_mode,
+        "send": bool(send),
+        "aliases": list(aliases or []),
     }
     accounts = load_accounts(target)
     for i, existing in enumerate(accounts):
