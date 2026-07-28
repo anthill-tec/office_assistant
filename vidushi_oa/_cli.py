@@ -882,11 +882,14 @@ def cmd_mail_accounts(a):
 
 
 # Every exception a real mail adapter raises on a LIVE failure: a JMAP non-200 or
-# method-level rejection (`RuntimeError`), a missing key/uid (`LookupError`), and the
+# method-level rejection (`RuntimeError`), a missing key/uid (`LookupError`), the
 # IMAP/network surface (`imaplib.IMAP4.error` / `OSError`, which `urllib.error.URLError`
-# subclasses). Rendered structurally by `_mail_failure_exit` — never as a traceback.
+# subclasses), and a 2xx whose body the JMAP transport cannot parse — a captive-portal
+# or proxy interception page makes its `json.loads` raise `json.JSONDecodeError`
+# (a `ValueError`) or `UnicodeDecodeError`. Rendered structurally by
+# `_mail_failure_exit` — never as a traceback.
 _MAIL_LIVE_ERRORS = (LookupError, RuntimeError, imaplib.IMAP4.error, OSError,
-                     urllib.error.URLError)
+                     urllib.error.URLError, ValueError, UnicodeDecodeError)
 
 
 def _mail_failure_exit(e, **context):

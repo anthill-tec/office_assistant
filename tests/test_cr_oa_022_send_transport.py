@@ -25,10 +25,13 @@ Pinned shapes for GREEN (per CR-OA-022 §S1 + the DN §Decision 7 design):
     `.login(self.user, self.password)` (the adapter's own stored IMAP
     credential — DN §Decision 7 revisits Decision 3: the app-password already
     authorizes SMTP), and calls `.sendmail(...)` EXACTLY ONCE.
-  - Fastmail (`JmapAdapter`): `create_draft` issues one `Email/set` call whose
-    `create` object carries the `$draft` keyword and returns the created
-    email's id; `send_draft` issues exactly one `EmailSubmission/set` call
-    whose `create` object's `emailId` references that draft's email id.
+  - Fastmail (`JmapAdapter`): `create_draft` uploads the literal `raw_rfc822`
+    bytes as a blob to the session `uploadUrl` and issues one `Email/import`
+    referencing that `blobId` and the resolved `drafts`-role mailbox, with the
+    `$draft` keyword, returning the created email's id (superseding the original
+    content-less `Email/set` shape, which created EMPTY Fastmail drafts);
+    `send_draft` issues exactly one `EmailSubmission/set` call whose `create`
+    object's `emailId` references that draft's email id.
 
 No real network / no real SMTP or IMAP connection anywhere in this file — SMTP
 is faked via `mock.patch` substituting a `FakeSMTP` for `smtplib.SMTP`; IMAP is
@@ -553,6 +556,74 @@ class JmapCreateDraftBlobImportTest(unittest.TestCase):
             adapter.create_draft(raw)
 
         self.assertIn("accountNotFound", str(ctx.exception))
+
+
+class JmapDraftsMailboxQueryFailureTest(unittest.TestCase):
+    """A `Mailbox/query` that fails at the METHOD level still arrives inside an
+    HTTP 200, so a status-only check mis-reports an auth/account failure as "your
+    account has no Drafts mailbox" — an actively misleading diagnosis. The real
+    server error must surface, and a failed query must not be cached as ""."""
+
+    def test_mailbox_query_method_level_error_surfaces_the_server_error(self):
+        errored = {
+            "methodResponses": [
+                ["error", {"type": "accountNotFound"}, "0"],
+            ],
+        }
+        transport = _JmapRoutingTransport(api={"Mailbox/query": errored})
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.create_draft(raw)
+
+        self.assertIn("accountNotFound", str(ctx.exception))
+        self.assertNotIn("no Drafts mailbox", str(ctx.exception))
+        self.assertIsNone(transport.api_call("Email/import"),
+                          "no import may be posted when the mailbox query failed")
+
+    def test_missing_mailbox_query_response_surfaces_a_structured_error(self):
+        transport = _JmapRoutingTransport(api={"Mailbox/query": {"methodResponses": []}})
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.create_draft(raw)
+
+        self.assertIn("Mailbox/query", str(ctx.exception))
+        self.assertNotIn("no Drafts mailbox", str(ctx.exception))
+
+    def test_a_failed_mailbox_query_is_not_cached_and_is_retried(self):
+        """Caching the empty result makes every later `create_draft` in the process
+        repeat the wrong diagnosis without ever re-querying the server."""
+        errored = {
+            "methodResponses": [
+                ["error", {"type": "serverUnavailable"}, "0"],
+            ],
+        }
+        transport = _JmapRoutingTransport(api={"Mailbox/query": errored})
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        with self.assertRaises(RuntimeError):
+            adapter.create_draft(raw)
+
+        transport.api["Mailbox/query"] = _MAILBOX_QUERY_OK
+
+        self.assertEqual(adapter.create_draft(raw), "Md-draft-1")
+        import_call = transport.api_call("Email/import")
+        self.assertIsNotNone(import_call)
+        imported = list(import_call[1]["emails"].values())[0]
+        self.assertEqual(imported.get("mailboxIds"), {DRAFTS_MAILBOX_ID: True})
 
 
 class JmapSendDraftFailureTest(unittest.TestCase):

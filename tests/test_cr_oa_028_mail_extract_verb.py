@@ -288,14 +288,19 @@ def test_mail_extract_unknown_account_is_a_structured_error_exit_1(monkeypatch, 
         lambda: RuntimeError("JMAP Email/get failed: HTTP 503"),
         lambda: OSError("[Errno 111] Connection refused"),
         lambda: imaplib.IMAP4.error("bad app-password"),
+        lambda: json.JSONDecodeError("Expecting value", "<html>captive portal</html>", 0),
+        lambda: UnicodeDecodeError("utf-8", b"\xff\xfe", 0, 1, "invalid start byte"),
     ],
-    ids=["jmap_runtime_error", "imap_oserror", "imap4_error"],
+    ids=["jmap_runtime_error", "imap_oserror", "imap4_error",
+         "jmap_non_json_body", "jmap_undecodable_body"],
 )
 def test_mail_extract_live_fetch_failure_is_a_structured_error_exit_1_not_a_traceback(
         monkeypatch, capsys, make_exc):
     """§S5 AXI conformance: `adapter.fetch_html_body(a.uid)` genuinely raises on a
     live failure (JMAP non-200 -> RuntimeError; IMAP down-host/bad-app-password ->
-    imaplib.IMAP4.error/OSError). `cmd_mail_extract` currently has NO try/except
+    imaplib.IMAP4.error/OSError; a 2xx whose body is not JSON/UTF-8 — a captive
+    portal or proxy interception page — -> json.JSONDecodeError/UnicodeDecodeError
+    out of the JMAP transport's `json.loads`). `cmd_mail_extract` currently has NO try/except
     around that call, so the exception propagates uncaught instead of being
     rendered as the structured `{"error": ..., "account": ..., "uid": ...}` + exit 1
     payload `cmd_mail_get` produces for the same class of failure. This must FAIL

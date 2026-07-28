@@ -77,6 +77,23 @@ def _created_id(payload, method_name) -> str:
     raise RuntimeError(f"JMAP {method_name} returned no {method_name} response")
 
 
+def _queried_ids(payload, method_name) -> list:
+    """Return the `ids` list `method_name` answered with in a JMAP `methodResponses`
+    payload.
+
+    Same HTTP-200-carries-the-failure hazard as `_created_id`: a whole-call
+    `["error", {...}, callId]` — or a payload carrying no `method_name` response at
+    all — is raised structurally, so a server/auth failure is never mistaken for a
+    query that legitimately matched nothing."""
+    for response in payload.get("methodResponses", []):
+        if response[0] == "error":
+            raise RuntimeError(
+                f"JMAP {method_name} failed: {json.dumps(response[1])}")
+        if response[0] == method_name:
+            return response[1].get("ids") or []
+    raise RuntimeError(f"JMAP {method_name} returned no {method_name} response")
+
+
 def _format_address(addresses):
     """Render the first JMAP `EmailAddress` as ``Name <email>`` (or ``email``)."""
     if not addresses:
@@ -195,7 +212,13 @@ class JmapAdapter(MailAdapter):
 
     def _drafts_mailbox_id(self, api_url, account_id) -> str:
         """Resolve (and cache) the Drafts mailbox id via a `Mailbox/query` on the
-        `drafts` role; empty string when the account has no Drafts mailbox."""
+        `drafts` role; empty string when the account genuinely has no Drafts mailbox.
+
+        A method-level failure arrives inside an HTTP 200, so the query's own outcome
+        is inspected and raised verbatim — otherwise an auth/account error degrades
+        into the flatly wrong "your account has no Drafts mailbox" diagnosis. Only a
+        query that actually answered is cached, so a failed one is retried rather than
+        repeating the same wrong verdict for the life of the process."""
         if self._drafts_mailbox is None:
             body = {
                 "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
@@ -209,12 +232,8 @@ class JmapAdapter(MailAdapter):
                 "POST", api_url, self._auth_headers(), body)
             if status != 200:
                 raise RuntimeError(f"JMAP Mailbox/query failed: HTTP {status}")
-            self._drafts_mailbox = ""
-            for response in payload.get("methodResponses", []):
-                if response[0] == "Mailbox/query":
-                    ids = response[1].get("ids", [])
-                    self._drafts_mailbox = ids[0] if ids else ""
-                    break
+            ids = _queried_ids(payload, "Mailbox/query")
+            self._drafts_mailbox = ids[0] if ids else ""
         return self._drafts_mailbox
 
     def send_draft(self, draft_id) -> str:

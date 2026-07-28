@@ -163,7 +163,8 @@ enforced at the engine level. (Approved 2026-07-27.)
 - **Draft-then-confirm is the safety spine (engine-enforced) — `voa` has NO path that sends without an
   explicit, identified `mail-send`:**
   - `mail-draft` composes an RFC 5322 message and **saves a real draft** into the account's Drafts (JMAP
-    `Email/set` with `$draft` / IMAP `APPEND` to Drafts) — reviewable in the user's own mail client; returns
+    blob-upload of the raw RFC822 bytes + `Email/import` into the `drafts`-role mailbox with `$draft` /
+    IMAP `APPEND` to Drafts) — reviewable in the user's own mail client; returns
     the draft id; **no network send**.
   - `mail-send <draft-id>` dispatches **only that identified draft** (JMAP `EmailSubmission/set` / SMTP).
   - `mail-reply` composes a **threaded** reply (`In-Reply-To`/`References` from a fetched message) as a draft.

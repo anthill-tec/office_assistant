@@ -38,7 +38,9 @@ an alias list on the account entry); an unknown From is refused.
 ### §S3 Draft-then-confirm verbs — NEVER auto-send
 `voa` has **no code path that sends without an explicit, identified `mail-send`**:
 - **`mail-draft`** `--account --from --to --subject --body [--cc] [--attach <path>] [--case <id>]` — composes
-  (§S2) and **saves a real draft** to the account's Drafts (JMAP `Email/set` with `$draft` / IMAP `APPEND`);
+  (§S2) and **saves a real draft** to the account's Drafts — carrying the composed content: JMAP uploads
+  the literal RFC822 bytes as a blob to the session `uploadUrl` and `Email/import`s that blob into the
+  `drafts`-role mailbox with the `$draft` keyword; IMAP `APPEND`s the bytes with `\Draft` —
   emits a TOON status with the **draft id**; performs **no network send**.
 - **`mail-send`** `--account --draft <draft-id>` — dispatches **only that identified draft** (JMAP
   `EmailSubmission/set` / SMTP); emits the sent **message id**.
@@ -76,7 +78,8 @@ Drafts store) — **no live sending in the suite**. Live-send verification is a 
 - [ ] **No personal data in the client (DN Consequences invariant):** the From/recipient/alias values come only from account config + verb args — a grep asserts the send path in `vidushi_oa/` hardcodes no real mailbox address or masked alias.
 
 ### §S3
-- [ ] `mail-draft` against a fake adapter records exactly one draft-save (an `APPEND`/`Email/set $draft`) and **zero** sends (the fake's send-count is 0), and returns a `draft` id in its TOON status.
+- [ ] `mail-draft` against a fake adapter records exactly one draft-save (an IMAP `APPEND`, or a JMAP blob upload of the literal RFC822 bytes followed by one `Email/import` that references BOTH the returned `blobId` and the resolved `drafts` mailbox id, with `$draft` set) and **zero** sends (the fake's send-count is 0), and returns a `draft` id in its TOON status.
+- [ ] The JMAP draft path never reports a draft it did not create: a blob upload answering any 2xx (incl. `201 Created`) succeeds, while a session with no `uploadUrl`, an upload returning no `blobId`, a failed or empty `Mailbox/query` (whose own server error is surfaced verbatim, not re-labelled "no Drafts mailbox"), or an `Email/import` answering `notCreated`/`["error", …]` each raise a structured error instead of an empty draft id.
 - [ ] `mail-send --draft <id>` triggers exactly one `send_draft(<id>)` on the adapter and returns a message id.
 - [ ] **No-auto-send invariant (mechanically auditable):** a grep shows `send_draft`/`EmailSubmission/set`/`sendmail` invoked from **only** `cmd_mail_send` in `vidushi_oa/_cli.py` (no other verb calls a send path).
 - [ ] **Caller-existence:** `voa --help` lists `mail-draft`/`mail-send`/`mail-reply`, and each is wired via a non-test `set_defaults` caller (grep ≥1 each).
