@@ -78,3 +78,25 @@ project's Python 3.14 venv:
 `python-toon` is v0.1.x, single-maintainer, beta. **Mitigated structurally**: the `toon.py` seam, the
 compatible pin, and the permanent `--json` fallback mean a bad release can't brick the store — fall back
 to JSON, or swap the library behind the seam. We depend on it thinly, not deeply.
+
+## Addendum (2026-07-28) — migrated to `toon-format`; the seam paid off
+
+The **Build vs buy** library choice above (chose `python-toon`, rejected `toon_format` as a decode-only
+stub) is **superseded**, and the `>=0.1.3,<0.2` pin parameter with it. Two things changed:
+
+- **`python-toon` has a decoder round-trip bug.** An inline-array element containing a colon `:` does not
+  round-trip — minimal repro `decode(encode({"n": ["a:b"]}))` returns `{"n": ["b\""]}` (or raises
+  `ToonDecodeError` among multiple elements). Because `category:`, `subject:`, `from:`, `newer_than:` all
+  carry colons, `mail-search`'s `next[]` echo emitted **undecodable TOON for essentially every realistic
+  query** (found in CR-OA-025 local use). Tabular blocks (rows) are unaffected; only inline arrays.
+- **`toon_format` is no longer a stub.** The official `toon-format` org's library ships a working
+  encoder **and** decoder at **`0.9.0b1`** and round-trips the colon case correctly (verified against the
+  same canonical examples).
+
+**Decision:** migrate the backing library to **`toon-format==0.9.0b1`** (import `toon_format`). The
+structural mitigation this DN put in place — the single shim seam (`vidushi_oa/_toon.py`, the successor to
+`scripts/toon.py`) — made the swap a **one-line import change** plus the dependency record; no call site
+moved. The exact-pin on a **pre-release** is deliberate: `0.9.0b1` is the only working release (stable
+`0.1.0` is an all-stubs placeholder), so the pin is tightened to that beta and will be loosened when
+`toon-format` cuts a stable. The `--json` fallback remains the permanent escape hatch. Implemented in
+**CR-OA-025 §S2**.

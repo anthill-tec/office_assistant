@@ -1,16 +1,16 @@
-"""CR-OA-009 §S1 — scripts/oa_toon.py encoder seam + python-toon dependency pin.
+"""CR-OA-009 §S1 — scripts/oa_toon.py encoder seam + toon-format dependency pin.
 
 Verifies the ACs: `scripts/oa_toon.py` exposes `to_toon`/`from_toon`; round-trips
 store-shaped data losslessly (a list of uniform dicts, a single dict, and a
 nested structure); `to_toon` on a uniform list of dicts emits TOON's tabular
-array header + indented rows; and `python-toon` is pinned compatible
-`>=0.1.3,<0.2` in a `requirements.txt` at the repo root (alongside the existing
-`pymongo` runtime dependency).
+array header + indented rows; and `toon-format` is pinned exactly
+`==0.9.0b1` in a `requirements.txt` at the repo root (alongside the existing
+`pymongo` runtime dependency). The old `python-toon` library is fully removed.
 
 The shim module lives at `scripts/oa_toon.py` (NOT `scripts/toon.py`) — the
-`python-toon` library it wraps also imports as `toon`, so naming the shim
-`toon.py` would let its own `import toon` resolve to itself instead of the
-library, breaking the library's internal imports. This matches the project's
+`toon-format` library it wraps imports as `toon_format`, and the project keeps a
+project-prefixed shim (not the bare third-party name) so a stray `import toon`
+never resolves to the shim itself. This matches the project's
 existing `oa_mongo.py` convention (a project-prefixed shim, not the bare
 third-party name). It is loaded here by file path via importlib, under a
 non-`toon` module name, to keep it distinct from the real `toon` package.
@@ -156,24 +156,24 @@ class ToonTabularShapeTest(unittest.TestCase):
 
 
 class RequirementsPinTest(unittest.TestCase):
-    def test_requirements_txt_pins_python_toon_compatible_range(self):
+    def test_requirements_txt_pins_toon_format(self):
         self.assertTrue(
             os.path.isfile(REQUIREMENTS_TXT),
             "requirements.txt does not exist at the repo root",
         )
         with open(REQUIREMENTS_TXT, "r", encoding="utf-8") as fh:
             content = fh.read()
-        pin_re = re.compile(r"python-toon\s*>=\s*0\.1\.3\s*,\s*<\s*0\.2")
+        pin_re = re.compile(r"toon-format\s*==\s*0\.9\.0b1")
         self.assertRegex(
             content,
             pin_re,
-            "requirements.txt missing a python-toon>=0.1.3,<0.2 compatible pin",
+            "requirements.txt missing the exact toon-format==0.9.0b1 pin",
         )
-        # negative: must not be pinned to an incompatible/unbounded range
+        # negative: the old python-toon library must be fully removed
         self.assertNotRegex(
             content,
-            re.compile(r"python-toon\s*==\s*0\.2"),
-            "requirements.txt must not pin python-toon to 0.2.x (outside the compatible range)",
+            re.compile(r"python-toon"),
+            "requirements.txt must not still reference python-toon (old lib removed)",
         )
 
     def test_requirements_txt_lists_pymongo(self):
