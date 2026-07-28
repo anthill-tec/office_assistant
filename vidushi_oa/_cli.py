@@ -927,7 +927,7 @@ def _read_secret_no_argv(name):
     return sys.stdin.readline().rstrip("\n")
 
 
-def _provision_account_secret(provider, address, auth_mode="password"):
+def _provision_account_secret(provider, address, auth_mode="password", send=False):
     """Interactive secret-entry shared by ``cmd_mail_auth`` and ``doctor --fix``.
 
     Reads the secret via the hidden-input/stdin path ONLY (never a CLI arg), stores
@@ -956,7 +956,7 @@ def _provision_account_secret(provider, address, auth_mode="password"):
                 f"vidushi-oa: no secret backend pinned; stored the secret in the "
                 f"auto-selected '{primary.name}' backend.\n")
     accounts.add_account(name=name, provider=provider, address=address,
-                         secret_ref=secret_ref, auth_mode=auth_mode)
+                         secret_ref=secret_ref, auth_mode=auth_mode, send=send)
     return secret_ref
 
 
@@ -985,16 +985,17 @@ def cmd_mail_auth(a):
         out({"error": "xoauth2 auth-mode is supported for the gmail provider only",
              "provider": a.provider})
         sys.exit(1)
+    send = bool(getattr(a, "send", False))
     if a.secret_ref:
         secret_ref = a.secret_ref
         accounts.add_account(name, a.provider, a.address, secret_ref,
-                             auth_mode=auth_mode)
+                             auth_mode=auth_mode, send=send)
     else:
-        secret_ref = _provision_account_secret(a.provider, a.address, auth_mode)
+        secret_ref = _provision_account_secret(a.provider, a.address, auth_mode, send)
 
     out({"status": "registered", "name": name, "provider": a.provider,
          "address": a.address, "secret_ref": secret_ref, "auth_mode": auth_mode,
-         "source_tag": SOURCE_TAGS[a.provider]})
+         "send": send, "source_tag": SOURCE_TAGS[a.provider]})
 
 
 def cmd_doctor(a):
@@ -1215,6 +1216,9 @@ def main():
                      help="credential reference (keyring/file). Omit to be prompted "
                           "(hidden) or to pipe the secret on stdin; it is stored under a "
                           "derived reference and never accepted as a CLI arg.")
+    mau.add_argument("--send", action="store_true", dest="send",
+                     help="grant this account SEND capability (opt-in; read-only by "
+                          "default). The send verbs refuse a non-send-capable account.")
     read_json(mau); mau.set_defaults(func=cmd_mail_auth)
     dr = add_parser("doctor"); read_json(dr)
     dr.add_argument("--fix", action="store_true", dest="fix",

@@ -136,7 +136,7 @@ class MailAuthDoctorTest(unittest.TestCase):
         self.assertEqual(len(accounts), 1)
         entry = accounts[0]
         self.assertEqual(set(entry.keys()),
-                         {"name", "provider", "address", "secret_ref", "auth_mode"})
+                         {"name", "provider", "address", "secret_ref", "auth_mode", "send"})
         self.assertEqual(entry["provider"], "gmail")
         self.assertEqual(entry["address"], "me@x.com")
         self.assertEqual(entry["auth_mode"], "password",
