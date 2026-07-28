@@ -39,6 +39,8 @@ from vidushi_oa.mail.factory import build_client
 from vidushi_oa.mail import accounts, send_gate
 from vidushi_oa.mail import compose as compose_mod
 from vidushi_oa.mail.compose import compose
+from vidushi_oa.mail.schema_org import extract_schema_org
+from vidushi_oa.mail.extract_map import to_store_candidates
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("VIDUSHI_DATA_DIR") or os.path.normpath(os.path.join(HERE, "..", "data"))
@@ -921,6 +923,39 @@ def cmd_mail_get(a):
         out({"result": row, "next": [f"mail-search --accounts {a.account}"]})
 
 
+def cmd_mail_extract(a):
+    """Extract structured store candidates from one message's HTML body (§S4/§S5).
+
+    Fetches the message body via the account's adapter (`fetch_html_body`, §S1),
+    parses schema.org JSON-LD/microdata into entities (`extract_schema_org`, §S2),
+    and maps them onto `{"type", "candidate"}` store candidate rows
+    (`to_store_candidates`, §S3), returned as an AXI TOON envelope
+    `{count, results, next}` (`--json` -> a bare candidates array).
+
+    Read-only: NO autonomous store write — `next[]` only *suggests* the exact
+    `voa add <type> --json '<candidate>'` for the agent to run. No schema.org
+    markup -> the definitive empty state (`count: 0`, exit 0, NOT an error) so the
+    skill falls back to heuristic extraction. The raw HTML body is never surfaced.
+    An unknown account is a structured error + exit 1 (no traceback), same seam as
+    `cmd_mail_get`."""
+    client = _mail_client_or_exit()
+    adapter = _mail_adapter_or_exit(client, a.account, uid=a.uid)
+    html = adapter.fetch_html_body(a.uid)
+    entities = extract_schema_org(html or "")
+    candidates = to_store_candidates(entities)
+    if _FMT == "json":
+        out(candidates)
+        return
+    if candidates:
+        first = candidates[0]
+        nxt = [f"voa add {first['type']} --json '{json.dumps(first['candidate'])}'"]
+        if len(candidates) > 1:
+            nxt.append("review the remaining candidates before adding them")
+    else:
+        nxt = ["no schema.org markup found — fall back to heuristic extraction"]
+    out({"count": len(candidates), "results": candidates, "next": nxt})
+
+
 def _mail_adapter_or_exit(client, account, **extra):
     """Resolve `account`'s adapter via the same `client._adapters` seam `cmd_mail_get`
     uses, or render an unknown-account structured error + exit 1 (no traceback). The
@@ -1405,6 +1440,8 @@ def main():
     mac = add_parser("mail-accounts"); read_json(mac); mac.set_defaults(func=cmd_mail_accounts)
     mge = add_parser("mail-get"); mge.add_argument("--account", required=True)
     mge.add_argument("--uid", required=True); read_json(mge); mge.set_defaults(func=cmd_mail_get)
+    mex = add_parser("mail-extract"); mex.add_argument("--account", required=True)
+    mex.add_argument("--uid", required=True); read_json(mex); mex.set_defaults(func=cmd_mail_extract)
     mau = add_parser("mail-auth")
     mau.add_argument("--provider", required=True,
                      help="mail provider, e.g. fastmail / gmail / yahoo "
