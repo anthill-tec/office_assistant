@@ -28,6 +28,10 @@ earlier notes during the release, so trust this version.
   `git merge-base --is-ancestor $SHA origin/main` — if there's **no tag it SKIPS (stays green)**, so ordinary
   main commits don't red-CI; only a tagged, on-main commit publishes. No version-literal compare (hatch-vcs =
   tag). No manual-reviewer gate — `main` + git-flow discipline IS the gate.
+- **Push `main` and the tag as ONE command — `git push origin main --tags`.** The workflow's `push` trigger
+  filters on `branches:` only (no `tags:`), so pushing `main` alone fires a run whose gate step finds no tag
+  at HEAD and **skips green**, and a later tag-only push triggers no run at all — the release silently never
+  publishes while CI still looks healthy.
 - **TestPyPI is a MANUAL `workflow_dispatch` dry-run** (NOT a `release/*` push trigger, per the sandesh
   model). Validate the deploy with `gh workflow run ci.yml --ref <branch>` before the real release; it
   uploads a dev version (`skip-existing: true` makes it idempotent).
