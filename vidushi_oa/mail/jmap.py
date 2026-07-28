@@ -35,8 +35,16 @@ _EMAIL_PROPERTIES = [
 
 
 def _urllib_transport(method, url, headers, body):
-    """Default stdlib-`urllib` transport (never exercised in tests)."""
-    data = json.dumps(body).encode("utf-8") if body is not None else None
+    """Default stdlib-`urllib` transport (never exercised in tests).
+
+    A `bytes`/`bytearray` body is sent verbatim (the JMAP blob upload posts the
+    literal RFC822 bytes); any other non-None body is JSON-encoded."""
+    if body is None:
+        data = None
+    elif isinstance(body, (bytes, bytearray)):
+        data = bytes(body)
+    else:
+        data = json.dumps(body).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     with urllib.request.urlopen(request) as response:
         status = response.getcode()
@@ -79,6 +87,8 @@ class JmapAdapter(MailAdapter):
         self._transport = transport or _urllib_transport
         self._api_url = None
         self._account_id = None
+        self._upload_url = None
+        self._drafts_mailbox = None
 
     def _auth_headers(self):
         return {
@@ -95,18 +105,33 @@ class JmapAdapter(MailAdapter):
                 raise RuntimeError(f"JMAP session fetch failed: HTTP {status}")
             self._api_url = payload["apiUrl"]
             self._account_id = payload["primaryAccounts"][_MAIL_CAPABILITY]
+            upload_url = payload.get("uploadUrl")
+            if upload_url and "{accountId}" in upload_url:
+                upload_url = upload_url.replace("{accountId}", self._account_id)
+            self._upload_url = upload_url
         return self._api_url, self._account_id
 
     def capabilities(self) -> set:
         return {"server_threads", "server_side_search", "projection", "send"}
 
     def create_draft(self, raw_rfc822, folder="Drafts") -> str:
-        """Create a draft via a single `Email/set` carrying the `$draft` keyword;
-        return the created email's id.
+        """Create a draft from the composed `raw_rfc822` message; return the
+        created email's id.
 
-        §S1 wires the JMAP draft-creation call; §S2's `compose()` supplies the
-        structured message fields the real draft carries."""
+        When the session advertises an `uploadUrl` (every real Fastmail session
+        does), the literal RFC822 bytes are uploaded as a JMAP blob and then
+        imported into the Drafts mailbox with the `$draft` keyword — so the
+        composed content actually reaches the server. A minimal session with no
+        upload endpoint falls back to a bare `Email/set` draft."""
         api_url, account_id = self._session()
+        if not self._upload_url:
+            return self._create_draft_via_set(api_url, account_id)
+        blob_id = self._upload_blob(self._upload_url, raw_rfc822)
+        return self._import_draft(api_url, account_id, blob_id)
+
+    def _create_draft_via_set(self, api_url, account_id) -> str:
+        """Fallback draft creation for a session without an `uploadUrl`: a single
+        `Email/set` carrying only the `$draft` keyword."""
         body = {
             "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
             "methodCalls": [
@@ -120,6 +145,63 @@ class JmapAdapter(MailAdapter):
         if status != 200:
             raise RuntimeError(f"JMAP Email/set failed: HTTP {status}")
         return _created_id(payload, "Email/set")
+
+    def _upload_blob(self, upload_url, raw_rfc822) -> str:
+        """Upload the literal `raw_rfc822` bytes to the session `uploadUrl` and
+        return the resulting `blobId`."""
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "message/rfc822",
+        }
+        status, payload = self._transport("POST", upload_url, headers, raw_rfc822)
+        if status != 200:
+            raise RuntimeError(f"JMAP blob upload failed: HTTP {status}")
+        return payload.get("blobId", "")
+
+    def _import_draft(self, api_url, account_id, blob_id) -> str:
+        """Import an uploaded blob into the Drafts mailbox as a `$draft` message
+        via one `Email/import`; return the created email's id."""
+        drafts_id = self._drafts_mailbox_id(api_url, account_id)
+        mailbox_ids = {drafts_id: True} if drafts_id else {}
+        body = {
+            "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
+            "methodCalls": [
+                ["Email/import",
+                 {"accountId": account_id,
+                  "emails": {"draft": {"blobId": blob_id,
+                                       "mailboxIds": mailbox_ids,
+                                       "keywords": {"$draft": True}}}},
+                 "0"],
+            ],
+        }
+        status, payload = self._transport("POST", api_url, self._auth_headers(), body)
+        if status != 200:
+            raise RuntimeError(f"JMAP Email/import failed: HTTP {status}")
+        return _created_id(payload, "Email/import")
+
+    def _drafts_mailbox_id(self, api_url, account_id) -> str:
+        """Resolve (and cache) the Drafts mailbox id via a `Mailbox/query` on the
+        `drafts` role; empty string when the account has no Drafts mailbox."""
+        if self._drafts_mailbox is None:
+            body = {
+                "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
+                "methodCalls": [
+                    ["Mailbox/query",
+                     {"accountId": account_id, "filter": {"role": "drafts"}},
+                     "0"],
+                ],
+            }
+            status, payload = self._transport(
+                "POST", api_url, self._auth_headers(), body)
+            if status != 200:
+                raise RuntimeError(f"JMAP Mailbox/query failed: HTTP {status}")
+            self._drafts_mailbox = ""
+            for response in payload.get("methodResponses", []):
+                if response[0] == "Mailbox/query":
+                    ids = response[1].get("ids", [])
+                    self._drafts_mailbox = ids[0] if ids else ""
+                    break
+        return self._drafts_mailbox
 
     def send_draft(self, draft_id) -> str:
         """Submit an existing draft via exactly one `EmailSubmission/set` whose
