@@ -10,9 +10,12 @@ Each account carries a source tag: `[FM]` Fastmail, `[GM]` Gmail, `[YH]` Yahoo.
 
 ## Step 1 — generate the credential (per provider)
 
-- **Fastmail `[FM]`** — a **read-only JMAP API token**. In Fastmail: **Settings → Privacy &
-  Security → API tokens → New token**, scope it **read-only**, and copy the **token**. (JMAP is
-  Fastmail's native API; the token is what `voa mail-search` uses for JMAP filter queries.)
+- **Fastmail `[FM]`** — a **JMAP API token**. In Fastmail: **Settings → Privacy &
+  Security → API tokens → New token**, and copy the **token**. (JMAP is Fastmail's native API; the
+  token is what `voa mail-search` uses for JMAP filter queries.) Scope it **read-only** *unless* you
+  opt this account into sending (Step 2) — the send path uploads a blob, `Email/import`s a draft and
+  submits it, so a send-capable account needs a **write + submission** token; a read-only one leaves
+  reads working while every draft/send fails.
 - **Gmail personal `[GM]`** — an **IMAP app password** (an "app-password"). Requires **2FA
   (2-Step Verification) enabled**: Google Account → Security → 2-Step Verification → **App
   passwords** → generate one for "Mail". Copy the 16-character **app password**.
@@ -40,6 +43,15 @@ voa mail-auth --provider yahoo    --address you@yahoo.com        # [YH] IMAP app
 XOAUTH2, `voa mail-auth --provider gmail --address you@workspace.com` prompts for the OAuth client
 details + refresh token the same hidden way. An optional `--secret-ref <ref>` points `voa` at a
 secret already in a keyring/secret store instead of prompting.
+
+**Sending is opt-in per account.** Accounts are **read-only by default** — `voa mail-send` refuses an
+account that was not registered with **`--send`**, so grant it only where the user wants outbound mail,
+and add every extra From identity (a Fastmail masked alias, …) with a repeatable **`--alias`** (the
+From-identity guard accepts the account address plus every configured alias):
+
+```bash
+voa mail-auth --provider fastmail --address you@fastmail.com --send --alias vendor.alias@fastmail.com
+```
 
 **Non-interactive / CI escape:** pipe the secret to `voa mail-auth` on **stdin** (e.g.
 `voa mail-auth --provider yahoo --address you@yahoo.com < secret.txt`) — still never pasted into the

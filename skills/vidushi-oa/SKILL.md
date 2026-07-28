@@ -63,8 +63,9 @@ token-saving payoff):
   [`references/mail-setup.md`](references/mail-setup.md) to add or re-auth an account.
 
 **Sending is draft-then-confirm, enforced in the engine** — there is no path that sends without an
-explicit `mail-send` on an identified draft (send is opt-in per account: `mail-auth` records a `send`
-capability, and the send verbs refuse an account without it):
+explicit `mail-send` on an identified draft (dispatch is opt-in per account: an account is registered
+send-capable at `mail-auth` time, and `mail-send` refuses one that is not — see
+[`references/mail-setup.md`](references/mail-setup.md) to grant it):
 
 - **`voa mail-draft --account <a> --from <identity> --to <addr> --subject <s> --body <b>` [`--cc` `--attach <path>` `--case/--invoice <id>`]** —
   composes a valid RFC 5322 message and **saves a real draft** into the account's Drafts (reviewable in

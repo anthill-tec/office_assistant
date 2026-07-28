@@ -32,7 +32,7 @@ in the roles. Get started: `uv tool install vidushi-oa` (or, in-repo, `uv tool i
 | **invoice-tracker** | Captures purchase documents (PO / invoice / receipt) as your proof-of-purchase, saves PDF copies, and keeps **personal vs business (GST)** separate. |
 | **warranty-tracker** | Records coverage and **expiry** per product, links the proof-of-purchase, and sets reminders before warranties lapse. Never guesses unknown terms. |
 | **product-catalogue** | Keeps each owned product's **manufacturer-official** links — manual, datasheet, support, drivers, warranty policy — and specs, so "where's the manual / what are the specs" is one lookup. |
-| **support-case-manager** | Runs warranty claims / RMAs / service requests as tracked cases, and **drafts** emails to the verified support contact (you review and send — it never sends on its own). |
+| **support-case-manager** | Runs warranty claims / RMAs / service requests as tracked cases, and **drafts** emails to the verified support contact — you review the saved draft, and it dispatches only when you explicitly say send (**never on its own**). |
 
 ### Agent (delegated, read-only)
 | Role | Job |
