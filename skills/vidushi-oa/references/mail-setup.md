@@ -21,7 +21,10 @@ Each account carries a source tag: `[FM]` Fastmail, `[GM]` Gmail, `[YH]` Yahoo.
 - **Gmail Workspace (app passwords disabled by admin)** — use the **XOAUTH2** path instead: create
   an **OAuth client** in Google Cloud, authorise the Gmail scope, and obtain a **refresh token**.
   `voa mail-auth` stores the OAuth client id/secret + refresh token; the XOAUTH2 access token is
-  minted at query time. Use this only when app passwords are unavailable.
+  minted at query time. Use this only when app passwords are unavailable. If the account is also
+  opted into sending (`--send`), authorise the **full** `https://mail.google.com/` scope — the same
+  access token authenticates SMTP submission, and a read-only scope leaves reads working while every
+  send fails at `AUTH`.
 
 ## Step 2 — hand the secret to `voa` (agent never touches it)
 

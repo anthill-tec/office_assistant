@@ -1,9 +1,10 @@
-"""Gmail Workspace XOAUTH2 IMAP fallback (CR-OA-020 §S6).
+"""Gmail Workspace XOAUTH2 fallback (CR-OA-020 §S6; SMTP submission per CR-OA-022 §S1).
 
 Some Google Workspace tenants disable app passwords, so the password-based
 `GmailImapAdapter` login cannot be used. `GmailXoauth2Adapter` authenticates
-with the IMAP `XOAUTH2` SASL mechanism instead, driven by a short-lived OAuth
-access token that `refresh_access_token` mints from a refresh token.
+with the `XOAUTH2` SASL mechanism instead — on the IMAP side for reading and on
+the SMTP submission side for sending — driven by a short-lived OAuth access
+token that `refresh_access_token` mints from a refresh token.
 
 Stdlib only — `base64` for the SASL string and `urllib`/`json` for the default
 token transport. No `httpx`, no Google client libraries.

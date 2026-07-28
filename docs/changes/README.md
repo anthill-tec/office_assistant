@@ -187,7 +187,9 @@ process** — and why **1.1.1** re-releases the Wave-10 engine through it. Runni
 what surfaced 1.1.1's own fixes, so it is **not** a no-change re-release: the release-qualification review
 hardened the CR-022 send/draft path (JMAP blob-upload + `Email/import` so a draft carries its composed
 content, CRLF-serialized bytes, sent mail filed in Sent with the de-draft gated on a confirmed Sent copy,
-Sent/Drafts resolved by RFC 6154 special-use) plus CR-028's live-failure errors and mapper fix and CR-029's
+Sent/Drafts resolved by RFC 6154 special-use, SMTP submission authenticated over `XOAUTH2` for Workspace
+accounts that carry no password — and closed on every path, the verified-recipient guard extended to `--cc`
+and to every address of a recipient list) plus CR-028's live-failure errors and mapper fix and CR-029's
 repo-wide personal-Gmail purge.
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.

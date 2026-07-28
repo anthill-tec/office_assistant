@@ -63,9 +63,10 @@ parses that message's schema.org markup into store candidates (it only *suggests
 `--auth-mode password|xoauth2`, and `--send` opts that account into send capability (read-only otherwise).
 
 **Embedded mail client — outbound (draft-then-confirm):** `mail-draft` and `mail-reply` compose and save a
-**real draft** — never a send — to a **verified** contact address from one of the account's own identities;
-`mail-send --account <n> --draft <draft-id>` is the only verb that dispatches, and it sends that one saved
-draft, refuses a non-send-capable account, and files the copy in `Sent`. Full contract: `docs/changes/CR-OA-022-embedded-mail-sending.md`.
+**real draft** — never a send — to **verified** contact addresses (every `--to`/`--cc` recipient) from one of
+the account's own identities; `mail-send --account <n> --draft <draft-id>` is the only verb that dispatches,
+and it sends that one saved draft, refuses a non-send-capable account, and files the copy in `Sent`.
+Full contract: `docs/changes/CR-OA-022-embedded-mail-sending.md`.
 
 **Backend selection:** `VIDUSHI_BACKEND` picks **`sqlite`** (default, at `$XDG_DATA_HOME/vidushi-oa/oa.db`,
 override `VIDUSHI_SQLITE_PATH`) or **`mongo`** (needs the `[mongo]` extra) on `127.0.0.1:27017` db

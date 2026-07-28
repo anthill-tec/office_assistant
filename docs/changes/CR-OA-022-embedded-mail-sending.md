@@ -22,8 +22,10 @@ in `voa` per DN §Decision 7, with **draft-then-confirm enforced at the engine l
 
 ### §S1 Send transport + `send` capability
 A `MailSender` capability on the adapters, reusing the §S4 secret resolver + XOAUTH2: **Gmail/Yahoo** send via
-stdlib **SMTP submission** (`smtplib`, STARTTLS :587 / SSL :465, authenticated by the IMAP app-password or
-XOAUTH2); **Fastmail** sends via **JMAP `EmailSubmission/set`** (app-password SMTP as fallback). Send is
+stdlib **SMTP submission** (`smtplib`, STARTTLS :587 / SSL :465, authenticated by the IMAP app-password with
+`SMTP.login`, or — for a Workspace account that carries no password — by the **`XOAUTH2` SASL mechanism**
+(`SMTP.auth`) over the same refreshed access token the IMAP side uses); **Fastmail** sends via **JMAP
+`EmailSubmission/set`** (app-password SMTP as fallback). Send is
 **opt-in per account** — `mail-auth` records a **`send` capability flag** (a send-capable credential), and the
 send verbs refuse an account lacking it. Adapter methods: `create_draft(raw_rfc822) -> draft_id`
 and `send_draft(draft_id) -> message_id`. The IMAP implementations of both also accept an optional `folder`, defaulting
@@ -66,7 +68,9 @@ an alias list on the account entry); an unknown From is refused.
 
 ### §S4 Guards — verified recipient + From identity
 - **Verified-recipient guard:** `mail-draft`/`mail-reply` to a recipient that is **not a verified `contact`**
-  emit a structured error + exit 1, unless `--force`.
+  emit a structured error + exit 1, unless `--force`. The guard covers **every address the message will be
+  submitted to** — `--cc` as well as `--to`, and each address of a comma-separated, display-name-carrying
+  header value parsed individually, because `send_draft` builds its RCPT list from all of `To` + `Cc`.
 - **From-identity validation:** a `--from` not among the account's identities/aliases → structured error + exit 1.
 
 ### §S5 Store linkage — the correspondence trail
@@ -88,6 +92,9 @@ Drafts store) — **no live sending in the suite**. Live-send verification is a 
 ### §S1
 - [ ] Against a fake SMTP server, the Gmail/Yahoo adapter's `send_draft` connects with submission + STARTTLS, authenticates with the account credential, and issues exactly one `sendmail`; against a fake JMAP endpoint, the Fastmail adapter issues one `EmailSubmission/set` referencing the draft's email id.
 - [ ] A `send`-verb call against an account whose registry entry lacks the `send` capability flag exits 1 with a structured error (grep the error for `send`); a send-capable account proceeds.
+- [ ] The XOAUTH2 (Workspace) adapter authenticates SMTP with `AUTH XOAUTH2` — never an empty-password `LOGIN` — carrying the *unencoded* `user=…\x01auth=Bearer …\x01\x01` SASL payload (`smtplib` base64-encodes it) built from the *same* access token the IMAP side minted (one token per adapter); the app-password adapter still authenticates with `LOGIN`.
+- [ ] The TLS channel is re-greeted (`EHLO`) after `STARTTLS` before either authentication — RFC 3207 discards the pre-TLS greeting, and `SMTP.auth` (unlike `SMTP.login`) does not re-greet, so an un-greeted `AUTH` is answered `503 EHLO/HELO first` and silently swallowed, failing later at `MAIL FROM`.
+- [ ] The submission connection is closed (`QUIT`) on every path — delivered, or failed at STARTTLS/authentication/`sendmail` — and a `QUIT` that itself fails never turns a delivered send into an error.
 
 ### §S2
 - [ ] `compose(from_addr="me@x", to="v@y", subject="S", body="B")` returns bytes whose parsed headers are `From: me@x`, `To: v@y`, `Subject: S`; a reply built with `in_reply_to="<m1@y>"` sets `In-Reply-To: <m1@y>` and includes `<m1@y>` in `References`.
@@ -108,6 +115,7 @@ Drafts store) — **no live sending in the suite**. Live-send verification is a 
 
 ### §S4
 - [ ] `mail-draft --to <address-not-in-contacts>` exits 1 with a structured error naming the unverified recipient; `--force` lets it through (draft saved).
+- [ ] The same holds for `--cc` (an unverified Cc exits 1 naming that address, a verified one saves without `--force`), and for **every** address of a multi-address recipient value — a header naming a verified contact first and an unverified address second is refused, naming the second.
 - [ ] `mail-draft --from <address-not-an-account-identity>` exits 1 with a structured error.
 
 ### §S5
