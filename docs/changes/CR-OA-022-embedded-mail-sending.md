@@ -25,14 +25,20 @@ A `MailSender` capability on the adapters, reusing the §S4 secret resolver + XO
 stdlib **SMTP submission** (`smtplib`, STARTTLS :587 / SSL :465, authenticated by the IMAP app-password or
 XOAUTH2); **Fastmail** sends via **JMAP `EmailSubmission/set`** (app-password SMTP as fallback). Send is
 **opt-in per account** — `mail-auth` records a **`send` capability flag** (a send-capable credential), and the
-send verbs refuse an account lacking it. Adapter methods: `create_draft(raw_rfc822, folder="Drafts") -> draft_id`
-and `send_draft(draft_id) -> message_id`.
+send verbs refuse an account lacking it. Adapter methods: `create_draft(raw_rfc822) -> draft_id`
+and `send_draft(draft_id) -> message_id`. The IMAP implementations of both also accept an optional `folder`, defaulting
+to the account's own `\Drafts` **special-use** mailbox (RFC 6154, resolved from `LIST`) rather than a literal
+`"Drafts"`; JMAP takes no `folder` at all — it resolves the `drafts`-role mailbox itself, so a folder name
+would have nothing to bind to.
 
 ### §S2 RFC 5322 composition + reply threading + From-identity
 A `compose(from_addr, to, subject, body, cc=None, in_reply_to=None, references=None, attachments=None) -> bytes`
 builds a valid RFC 5322 message (`email.message.EmailMessage`), always stamping the §3.6.4 originator headers
 **`Date`** and a **`Message-ID`** scoped to the From domain (`EmailMessage` mints neither, and without them two
-identical drafts serialize to identical bytes a content-addressed blob store collapses into one). A **reply** sets `In-Reply-To` to the source
+identical drafts serialize to identical bytes a content-addressed blob store collapses into one), and
+serializing under `email.policy.SMTP` so the bytes carry the **CRLF** line endings RFC 5322 §2.1 mandates
+(the default policy emits bare LF, which an IMAP `APPEND` literal and a `message/rfc822` blob upload both
+transmit verbatim). A **reply** sets `In-Reply-To` to the source
 `Message-ID` and `References` to the source chain (from a `mail-get`-fetched `Message`). The **From** is a
 **validated identity** — the account address or a configured **Fastmail masked alias** (JMAP `Identity/get` /
 an alias list on the account entry); an unknown From is refused.
@@ -42,8 +48,9 @@ an alias list on the account entry); an unknown From is refused.
 - **`mail-draft`** `--account --from --to --subject --body [--cc] [--attach <path>] [--case <id>]` — composes
   (§S2) and **saves a real draft** to the account's Drafts — carrying the composed content: JMAP uploads
   the literal RFC822 bytes as a blob to the session `uploadUrl` and `Email/import`s that blob into the
-  `drafts`-role mailbox with the `$draft` keyword; IMAP `APPEND`s the bytes with `\Draft` —
-  emits a TOON status with the **draft id**; performs **no network send**.
+  `drafts`-role mailbox with the `$draft` keyword; IMAP `APPEND`s the bytes with `\Draft` to the `\Drafts`
+  special-use mailbox resolved from `LIST` (never the literal `"Drafts"` — that is `[Gmail]/Drafts` on Gmail
+  and `Draft` on Yahoo) — emits a TOON status with the **draft id**; performs **no network send**.
 - **`mail-send`** `--account --draft <draft-id>` — dispatches **only that identified draft** (JMAP
   `EmailSubmission/set` / SMTP); emits the sent **message id**. The JMAP submission carries an
   `onSuccessUpdateEmail` patch clearing `$draft` and moving the message into the `sent`-role mailbox, so a
@@ -85,6 +92,7 @@ Drafts store) — **no live sending in the suite**. Live-send verification is a 
 ### §S2
 - [ ] `compose(from_addr="me@x", to="v@y", subject="S", body="B")` returns bytes whose parsed headers are `From: me@x`, `To: v@y`, `Subject: S`; a reply built with `in_reply_to="<m1@y>"` sets `In-Reply-To: <m1@y>` and includes `<m1@y>` in `References`.
 - [ ] Every composed message carries a `Date` and a `Message-ID` whose domain comes from the From address (never the local host), so two identical `compose(...)` calls are not byte-identical.
+- [ ] Every line of the serialized bytes ends in CRLF (header/body separator included) — no bare LF reaches an IMAP `APPEND` literal or a `message/rfc822` blob upload.
 - [ ] `compose(from_addr=<not-an-identity>, …)` (or the verb path) raises/exits with a structured error naming the invalid From.
 - [ ] **No personal data in the client (DN Consequences invariant):** the From/recipient/alias values come only from account config + verb args — a grep asserts the send path in `vidushi_oa/` hardcodes no real mailbox address or masked alias.
 
@@ -94,6 +102,7 @@ Drafts store) — **no live sending in the suite**. Live-send verification is a 
 - [ ] `mail-send --draft <id>` triggers exactly one `send_draft(<id>)` on the adapter and returns a message id. The JMAP `EmailSubmission/set` carries an `onSuccessUpdateEmail` patch clearing `keywords/$draft` and setting `mailboxIds` to the resolved `sent`-role mailbox (the move is skipped, but `$draft` still cleared and the submission still issued, when the account has no Sent mailbox **or** its `Mailbox/query` fails — at the method level *or* the transport level, i.e. an `HTTPError`/`OSError` from a 4xx/5xx and a `ValueError` from a non-JSON 2xx body; a submission needs no mailbox, so the lookup never blocks a send).
 - [ ] The IMAP send path reaches the same end state: after the one `sendmail`, the sent bytes are `APPEND`ed `\Seen` to the `\Sent` special-use mailbox resolved from `LIST` (quoted or bare-atom name, never the hierarchy delimiter; no `APPEND` for Gmail, which files its own copy) and the Drafts copy is retired (`-FLAGS (\Draft)`, `+FLAGS (\Deleted)`, UID `EXPUNGE` of that UID only). The retire is gated on a confirmed Sent copy: an account advertising no `\Sent` mailbox, an `APPEND`/`STORE` answering a tagged `NO`, or a raised bookkeeping failure leaves the Drafts copy untouched (never expunged). Every one of those still returns the message id — a delivered message is never reported as a failed send.
 - [ ] An IMAP `APPEND` that answers a tagged `NO` (which `imaplib` does not raise on) fails `create_draft` structurally, mirroring the JMAP `notCreated` handling — never a `drafted` status carrying the server's error text as the draft id.
+- [ ] The IMAP drafting verbs address the `\Drafts` **special-use** mailbox resolved from `LIST` — attribute first, else a provider name the server actually listed (`[Gmail]/Drafts`, `Draft`) — and `send_draft` fetches the draft back from that same resolved mailbox; an account advertising neither is a structural error, and a `LIST` answering a tagged `NO` raises instead of being cached as a missing Sent/Drafts mailbox for the rest of the process.
 - [ ] **No-auto-send invariant (mechanically auditable):** a grep shows `send_draft`/`EmailSubmission/set`/`sendmail` invoked from **only** `cmd_mail_send` in `vidushi_oa/_cli.py` (no other verb calls a send path).
 - [ ] **Caller-existence:** `voa --help` lists `mail-draft`/`mail-send`/`mail-reply`, and each is wired via a non-test `set_defaults` caller (grep ≥1 each).
 

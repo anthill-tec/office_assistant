@@ -183,7 +183,12 @@ fix + 026's uid). Each via RED/GREEN/VERIFY → no-mistakes → a combined **1.1
 **Release note (2026-07-28):** the wave shipped as **1.1.0**, but that release skipped the pre-`finish`
 validations (no-mistakes on the release branch + the TestPyPI dry-run). That is why the checklist is now
 written down as a **mandatory, ordered** process in [`../../AGENTS.md`](../../AGENTS.md) → **Release
-process** — and why **1.1.1** re-releases the same Wave-10 engine (no functional change) through it.
+process** — and why **1.1.1** re-releases the Wave-10 engine through it. Running the skipped validations is
+what surfaced 1.1.1's own fixes, so it is **not** a no-change re-release: the release-qualification review
+hardened the CR-022 send/draft path (JMAP blob-upload + `Email/import` so a draft carries its composed
+content, CRLF-serialized bytes, sent mail filed in Sent with the de-draft gated on a confirmed Sent copy,
+Sent/Drafts resolved by RFC 6154 special-use) plus CR-028's live-failure errors and mapper fix and CR-029's
+repo-wide personal-Gmail purge.
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
