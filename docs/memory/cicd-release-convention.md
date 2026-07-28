@@ -48,6 +48,9 @@ earlier notes during the release, so trust this version.
   and **AXI conformance validation**. These are release-branch *process* steps, not CI jobs. NOTE: no-mistakes
   commits its fixes to its **gate remote** (`~/.no-mistakes/...`), NOT your local branch — after a run,
   reconcile your local to the gate ref (`git fetch no-mistakes <branch>` then rebase/reset) before continuing.
+  Because that reconcile **rewrites history**, run no-mistakes to green *first* and only then push
+  `release/X.Y.Z` + dispatch the TestPyPI dry-run; a later no-mistakes round invalidates the dry-run and
+  needs a `--force-with-lease` re-push plus a re-dispatch.
 
 ## Skill publishing — just a public GitHub repo (NOT an "AXI-catalog submission")
 
