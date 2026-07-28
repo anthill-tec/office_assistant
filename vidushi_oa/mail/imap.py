@@ -87,20 +87,40 @@ class ImapAdapter(MailAdapter):
         typ, data = conn.append(folder, r"(\Draft)", None, raw_rfc822)
         return _parse_append_uid(data)
 
-    def send_draft(self, draft_id) -> str:
-        """Submit a draft over SMTP (STARTTLS submission); return a message id.
+    def send_draft(self, draft_id, folder="Drafts") -> str:
+        """Dispatch the stored draft `draft_id` over SMTP (STARTTLS submission).
 
-        Connects to the provider's submission host on :587, upgrades with
-        STARTTLS, authenticates with this adapter's own IMAP credential (the
-        app-password already authorizes SMTP — DN §Decision 7), and issues
-        exactly one `sendmail`. §S3's send verbs supply the real envelope; the
-        §S1 transport contract wires the connect/auth/send sequence."""
-        message_id = email.utils.make_msgid(domain=self.smtp_host)
+        Fetches the drafted message's raw RFC 5322 bytes from `folder` by its
+        UID, parses the envelope sender (its `From`) and the recipient list (its
+        `To` + `Cc`), then connects to the provider's submission host on :587,
+        upgrades with STARTTLS, authenticates with this adapter's own IMAP
+        credential (the app-password already authorizes SMTP — DN §Decision 7),
+        and issues exactly one `sendmail` of the REAL draft bytes to the REAL
+        recipients. Returns the message's own `Message-ID` when present, else a
+        freshly-minted one."""
+        raw_bytes = self._fetch_draft_bytes(draft_id, folder)
+        parsed = email.message_from_bytes(raw_bytes)
+        from_addr = email.utils.parseaddr(parsed.get("From", ""))[1] or self.user
+        recipient_pairs = email.utils.getaddresses(
+            parsed.get_all("To", []) + parsed.get_all("Cc", []))
+        recipients = [addr for _name, addr in recipient_pairs if addr]
+        message_id = (parsed.get("Message-ID") or "").strip() or \
+            email.utils.make_msgid(domain=self.smtp_host)
         smtp = smtplib.SMTP(self.smtp_host, self.smtp_port)
         smtp.starttls()
         smtp.login(self.user, self.password)
-        smtp.sendmail(self.user, [self.user], f"draft:{draft_id}".encode("utf-8"))
+        smtp.sendmail(from_addr, recipients, raw_bytes)
         return message_id
+
+    def _fetch_draft_bytes(self, draft_id, folder="Drafts") -> bytes:
+        """Fetch the raw RFC 5322 bytes of draft `draft_id` from `folder` by UID."""
+        conn = self._conn()
+        conn.select(folder)
+        typ, data = conn.uid("FETCH", str(draft_id), "(BODY[])")
+        for item in data or []:
+            if isinstance(item, tuple) and len(item) == 2:
+                return item[1]
+        raise ValueError(f"draft {draft_id!r} not found in folder {folder!r}")
 
     def _fetch_spec(self) -> str:
         """The FETCH item spec — subclasses extend it (e.g. with `X-GM-THRID`)."""

@@ -39,6 +39,7 @@ tests (extended here with `.append()`); JMAP is faked via the same
 import unittest
 from unittest.mock import patch
 
+from vidushi_oa.mail.compose import compose
 from vidushi_oa.mail.imap import GmailImapAdapter, YahooImapAdapter
 from vidushi_oa.mail.jmap import JmapAdapter
 
@@ -99,14 +100,20 @@ class FakeSMTP:
 
 class FakeImapConn:
     """A minimal fake IMAP connection covering only what the §S1 send-path
-    tests need: `login`, `select`, and `append` (recording every call), plus a
-    canned `append` response shaped like real `imaplib.IMAP4.append()`."""
+    tests need: `login`, `select`, `append`, and a UID `FETCH` (recording every
+    call), plus a canned `append` response shaped like real
+    `imaplib.IMAP4.append()`. `fetch_body` is the raw draft bytes returned by a
+    `conn.uid("FETCH", uid, "(BODY[])")` — shaped like imaplib's
+    `(descriptor, raw_bytes)` tuple item — so `send_draft` reads back a real
+    stored draft rather than fabricating one."""
 
-    def __init__(self, append_response=None):
+    def __init__(self, append_response=None, fetch_body=None):
         self.append_response = append_response or ("OK", [b"[APPENDUID 1 900] (Success)"])
+        self.fetch_body = fetch_body
         self.login_calls = []
         self.select_calls = []
         self.append_calls = []
+        self.uid_calls = []
 
     def login(self, user, password):
         self.login_calls.append((user, password))
@@ -119,6 +126,14 @@ class FakeImapConn:
     def append(self, mailbox, flags, date_time, message):
         self.append_calls.append((mailbox, flags, date_time, message))
         return self.append_response
+
+    def uid(self, command, *args):
+        self.uid_calls.append((command, args))
+        if command == "FETCH":
+            uid = args[0]
+            return ("OK", [(f"{uid} (BODY[] {{{len(self.fetch_body)}}}".encode(),
+                            self.fetch_body), b")"])
+        return ("OK", [b""])
 
 
 def _make_conn_factory(fake):
@@ -184,7 +199,14 @@ class GmailSendDraftSmtpTest(unittest.TestCase):
     credential, and issues exactly one `sendmail`."""
 
     def setUp(self):
-        self.fake_imap = FakeImapConn()
+        # The real stored draft the adapter must fetch and dispatch: its To/Cc
+        # are the true recipients, distinct from the account's own address, so a
+        # regression to the old `sendmail(self.user, [self.user], "draft:<id>")`
+        # placeholder would be caught by the assertions below.
+        self.draft_bytes = compose(
+            from_addr="me@gmail.com", to="vendor@example.com",
+            cc="cc-team@example.com", subject="Warranty claim", body="Please assist.")
+        self.fake_imap = FakeImapConn(fetch_body=self.draft_bytes)
         self.factory, _ = _make_conn_factory(self.fake_imap)
         self.adapter = GmailImapAdapter(
             account="gmail_main", source_tag="[GM]", host="imap.gmail.com",
@@ -207,12 +229,34 @@ class GmailSendDraftSmtpTest(unittest.TestCase):
 
         self.assertEqual(fake_smtp.login_calls, [("me@gmail.com", "app-pw")])
 
+    def test_send_draft_dispatches_the_real_draft_bytes_to_the_real_recipients(self):
+        fake_smtp = FakeSMTP()
+        with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=fake_smtp):
+            self.adapter.send_draft("900")
+
+        # The adapter must FETCH the stored draft (BODY[]) by its UID, not fabricate one.
+        fetch_cmds = [c for c in self.fake_imap.uid_calls if c[0] == "FETCH"]
+        self.assertEqual(len(fetch_cmds), 1)
+        self.assertEqual(fetch_cmds[0][1][0], "900")
+
+        from_addr, recipients, msg = fake_smtp.sendmail_calls[0]
+        # (a) Recipients parsed from the draft's To + Cc — NOT the account's own address.
+        self.assertEqual(recipients, ["vendor@example.com", "cc-team@example.com"])
+        self.assertNotIn("me@gmail.com", recipients)
+        self.assertEqual(from_addr, "me@gmail.com")
+        # (b) The exact stored draft bytes — NOT a `draft:<id>` placeholder.
+        self.assertEqual(msg, self.draft_bytes)
+        self.assertNotEqual(msg, b"draft:900")
+
 
 class YahooSendDraftSmtpTest(unittest.TestCase):
     """§S1 AC: the same submission contract holds for the Yahoo adapter."""
 
     def setUp(self):
-        self.fake_imap = FakeImapConn()
+        self.draft_bytes = compose(
+            from_addr="me@yahoo.com", to="support@example.com",
+            subject="Return request", body="Requesting an RMA.")
+        self.fake_imap = FakeImapConn(fetch_body=self.draft_bytes)
         self.factory, _ = _make_conn_factory(self.fake_imap)
         self.adapter = YahooImapAdapter(
             account="yahoo_main", source_tag="[YH]", host="imap.mail.yahoo.com",
@@ -228,6 +272,18 @@ class YahooSendDraftSmtpTest(unittest.TestCase):
         self.assertEqual(len(fake_smtp.starttls_calls), 1)
         self.assertEqual(fake_smtp.login_calls, [("me@yahoo.com", "app-pw")])
         self.assertTrue(message_id)
+
+    def test_send_draft_dispatches_the_real_draft_bytes_to_the_real_recipient(self):
+        fake_smtp = FakeSMTP()
+        with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=fake_smtp):
+            self.adapter.send_draft("901")
+
+        from_addr, recipients, msg = fake_smtp.sendmail_calls[0]
+        self.assertEqual(recipients, ["support@example.com"])
+        self.assertNotIn("me@yahoo.com", recipients)
+        self.assertEqual(from_addr, "me@yahoo.com")
+        self.assertEqual(msg, self.draft_bytes)
+        self.assertNotEqual(msg, b"draft:901")
 
 
 class AdapterCapabilitiesIncludeSendTest(unittest.TestCase):

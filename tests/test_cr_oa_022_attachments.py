@@ -33,6 +33,7 @@ bytes it received, which is parsed back with `email.message_from_bytes` so these
 tests assert against the REAL wire format rather than any internal shape.
 """
 import email
+import json
 import os
 
 import pytest
@@ -200,6 +201,39 @@ def test_mail_draft_without_attach_is_not_multipart(monkeypatch, tmp_path):
         f"{parsed.get_content_type()!r} with parts {[p.get_filename() for p in parsed.walk()]!r}"
     )
     assert _find_attachment_part(parsed, None) is None
+
+
+def test_mail_draft_attach_unreadable_file_exits_1_with_structured_error(
+    monkeypatch, tmp_path, capsys
+):
+    """`mail-draft --attach <nonexistent/unreadable path>` must fail with a
+    structured `{"error":"attachment not readable", ...}` and exit 1 — never a raw
+    traceback (covers the `_attachments_or_exit` OSError branch)."""
+    _isolate_backend(monkeypatch, tmp_path)
+    _seed_contact("ven_acme", "vendor@example.com")
+
+    missing_path = tmp_path / "does_not_exist" / "ghost.pdf"
+
+    adapter = RecordingAdapter("gmail_main", "[GM]", caps={"send"})
+    client = MailClient({"gmail_main": adapter})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_draft(Namespace(
+            account="gmail_main", from_addr="me@gmail.com", to="vendor@example.com",
+            subject="Invoice attached", body="Please find the invoice attached.",
+            cc=None, attach=str(missing_path), case=None,
+        ))
+
+    assert exc_info.value.code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"] == "attachment not readable"
+    assert payload["path"] == str(missing_path)
+    assert "reason" in payload
+    # No draft was ever saved and no send path was reached on the error branch.
+    assert adapter.draft_saves == 0
+    assert adapter.sends == 0
 
 
 if __name__ == "__main__":

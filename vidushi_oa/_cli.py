@@ -1243,7 +1243,9 @@ def cmd_doctor(a):
             except Exception:  # noqa: BLE001 - any resolution failure => needs re-auth
                 pass
             _provision_account_secret(entry.get("provider"), entry.get("address"),
-                                      entry.get("auth_mode", "password"))
+                                      entry.get("auth_mode", "password"),
+                                      send=entry.get("send", False),
+                                      aliases=entry.get("aliases") or [])
 
     rows = []
     all_resolve = True
