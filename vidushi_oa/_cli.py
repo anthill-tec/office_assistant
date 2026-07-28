@@ -943,7 +943,7 @@ def cmd_doctor(a):
             resolves = False
         if not resolves:
             all_resolve = False
-        kind = "1password" if ref.startswith("op://") else secret_backend
+        kind = secret_backend
         hint = "" if resolves else (
             f"secret_ref {ref} did not resolve; re-run "
             f"`voa mail-auth --provider {entry.get('provider')} "
@@ -1067,7 +1067,7 @@ def main():
                      help="gmail only: 'xoauth2' expects the secret to be a JSON blob "
                           "{client_id, client_secret, refresh_token}; default 'password'.")
     mau.add_argument("--secret-ref", dest="secret_ref", default=None,
-                     help="credential reference (op://…/keyring/file). Omit to be prompted "
+                     help="credential reference (keyring/file). Omit to be prompted "
                           "(hidden) or to pipe the secret on stdin; it is stored under a "
                           "derived reference and never accepted as a CLI arg.")
     read_json(mau); mau.set_defaults(func=cmd_mail_auth)

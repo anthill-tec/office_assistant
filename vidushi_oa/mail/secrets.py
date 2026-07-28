@@ -1,24 +1,20 @@
-"""Vault-first pluggable secret resolver (CR-OA-020 §S4).
+"""Keyring-primary pluggable secret resolver (CR-OA-023 §S1).
 
-Per ``docs/research/DN-mail-access.md`` Decision 4, ``voa`` never stores mail
-credentials itself: it holds only a *reference*, and the secret lives in a vault
-(1Password / Bitwarden) or, failing that, in the OS keyring, or, as a last
-resort, in a ``0600`` JSON file. Resolution walks a precedence chain::
+Per ``docs/research/DN-mail-access.md`` Decision 8, ``voa`` never stores mail
+credentials itself: it holds only a *reference*, and the secret lives in the OS
+keyring or, as a last resort, in a ``0600`` JSON file. Resolution walks a short
+precedence chain::
 
-    configured vault (1password `op` | bitwarden `bw`)   <- PRIMARY
-       -> if missing / token unset / unreachable
-    OS keyring                                            <- fallback (warns)
+    OS keyring                                            <- PRIMARY
        -> if unavailable / empty
-    0600 file                                             <- last resort
+    0600 file                                             <- last resort (warns)
 
-A ``op://`` reference is always routed to 1Password regardless of the configured
-primary. The raw secret value is never logged, printed, or written anywhere but
-the file backend's own designated ``0600`` store.
+``VIDUSHI_SECRET_BACKEND`` may pin the primary explicitly to ``keyring`` or
+``file``; any other name is rejected. The raw secret value is never logged,
+printed, or written anywhere but the file backend's own designated ``0600`` store.
 """
 import json
 import os
-import shutil
-import subprocess
 import sys
 from abc import ABC, abstractmethod
 
@@ -49,49 +45,6 @@ class SecretBackend(ABC):
     def set(self, ref: str, value: str) -> None:
         """Persist ``value`` under ``ref``. Read-only backends leave this raising."""
         raise NotImplementedError(f"{self.name} backend is read-only")
-
-
-class OnePasswordBackend(SecretBackend):
-    """1Password backend via the ``op`` CLI (a read-only vault for ``voa``)."""
-
-    name = "1password"
-
-    def available(self) -> bool:
-        return bool(shutil.which("op")) and bool(os.environ.get("OP_SERVICE_ACCOUNT_TOKEN"))
-
-    def get(self, ref: str) -> str | None:
-        try:
-            result = subprocess.run(
-                ["op", "read", ref], capture_output=True, text=True
-            )
-        except FileNotFoundError:
-            return None
-        if result.returncode != 0:
-            return None
-        return result.stdout.strip()
-
-
-class BitwardenBackend(SecretBackend):
-    """Bitwarden backend via the ``bw`` CLI (a read-only vault for ``voa``)."""
-
-    name = "bitwarden"
-
-    def available(self) -> bool:
-        return bool(shutil.which("bw")) and bool(os.environ.get("BW_SESSION"))
-
-    def get(self, ref: str) -> str | None:
-        session = os.environ.get("BW_SESSION", "")
-        try:
-            result = subprocess.run(
-                ["bw", "get", "password", ref, "--session", session],
-                capture_output=True,
-                text=True,
-            )
-        except FileNotFoundError:
-            return None
-        if result.returncode != 0:
-            return None
-        return result.stdout.strip()
 
 
 class KeyringBackend(SecretBackend):
@@ -159,8 +112,6 @@ class SecretResolver:
 
     def _backend_by_name(self, name: str) -> SecretBackend:
         backends = {
-            "1password": OnePasswordBackend,
-            "bitwarden": BitwardenBackend,
             "keyring": KeyringBackend,
             "file": FileBackend,
         }
@@ -173,9 +124,9 @@ class SecretResolver:
         configured = os.environ.get(BACKEND_ENV)
         if configured:
             return self._backend_by_name(configured)
-        for candidate in (OnePasswordBackend(), BitwardenBackend(), KeyringBackend()):
-            if candidate.available():
-                return candidate
+        keyring_backend = KeyringBackend()
+        if keyring_backend.available():
+            return keyring_backend
         return FileBackend()
 
     def _resolution_chain(self) -> list[SecretBackend]:
@@ -188,12 +139,6 @@ class SecretResolver:
         return chain
 
     def resolve(self, ref: str) -> str:
-        if ref.startswith("op://"):
-            value = OnePasswordBackend().get(ref)
-            if value is not None:
-                return value
-            raise LookupError(f"1Password could not resolve ref {ref!r}")
-
         chain = self._resolution_chain()
         primary = chain[0]
         for backend in chain:
