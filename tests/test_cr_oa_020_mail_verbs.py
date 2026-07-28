@@ -335,7 +335,7 @@ def test_mail_search_build_time_failure_folds_into_failed_accounts(monkeypatch, 
     gmail = FakeAdapter("gmail_main", "[GM]", {"raw_query"}, messages=[GM_ONE])
     client = MailClient({"gmail_main": gmail})
     client.build_failures = [
-        {"account": "yahoo_main", "error": "secret_ref 'op://Vault/yahoo' could not be resolved"}]
+        {"account": "yahoo_main", "error": "secret_ref 'keyring:yahoo/token' could not be resolved"}]
     monkeypatch.setattr(cli, "build_client", lambda **kw: client)
     cli._FMT = "toon"
 
@@ -356,7 +356,7 @@ def test_mail_search_all_accounts_failing_to_build_is_a_structured_error_exit_1(
     client = MailClient({})
     client.build_failures = [
         {"account": "gmail_main", "error": "secret unresolved"},
-        {"account": "yahoo_main", "error": "op CLI missing"},
+        {"account": "yahoo_main", "error": "keyring locked"},
     ]
     monkeypatch.setattr(cli, "build_client", lambda **kw: client)
     cli._FMT = "json"
@@ -599,7 +599,7 @@ def test_mail_get_build_failed_account_reports_the_build_failure_reason(monkeypa
     'unknown account'."""
     client = MailClient({})
     client.build_failures = [
-        {"account": "yahoo_main", "error": "secret_ref 'op://Vault/yahoo' could not be resolved"}]
+        {"account": "yahoo_main", "error": "secret_ref 'keyring:yahoo/token' could not be resolved"}]
     monkeypatch.setattr(cli, "build_client", lambda **kw: client)
     cli._FMT = "json"
 
@@ -675,7 +675,7 @@ def test_accounts_file_contains_exactly_the_reference_only_schema_no_secret_mate
     config_path = tmp_path / "accounts.json"
     monkeypatch.setenv("VIDUSHI_MAIL_CONFIG", str(config_path))
 
-    accounts.add_account("gmail_main", "gmail", "user@gmail.com", "op://vault/item/gmail")
+    accounts.add_account("gmail_main", "gmail", "user@gmail.com", "keyring:gmail/token")
 
     raw = config_path.read_text(encoding="utf-8")
     assert sentinel not in raw

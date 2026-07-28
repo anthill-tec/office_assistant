@@ -697,7 +697,16 @@ def cmd_init(a):
 def cmd_setup(a):
     """Probe the active backend's readiness (fails fast with actionable guidance if not
     ready); with --check that is all. Otherwise run the `init` provisioning (collections +
-    unique `id` indexes + `$jsonSchema` validators)."""
+    unique `id` indexes + `$jsonSchema` validators).
+
+    When ``--secret-backend`` is passed it instead runs the CR-OA-023 §S3 OS-aware
+    secret-provisioning + pre-flight path (a distinct concern from STORE provisioning)
+    and returns; a bare ``setup`` keeps the existing STORE ``check()``/``init`` behavior."""
+    secret_backend = a.secret_backend
+    if secret_backend:
+        _setup_secret_backend(secret_backend)
+        return
+
     from vidushi_oa.backends import get_backend
 
     ok, message = get_backend().check()
@@ -708,6 +717,53 @@ def cmd_setup(a):
     if getattr(a, "check", False):
         return
     cmd_init(a)
+
+
+def _setup_secret_backend(choice):
+    """OS-aware secret-backend provisioning + pre-flight (CR-OA-023 §S3).
+
+    ``choice`` is one of ``auto``/``keyring``/``file``:
+      - ``auto`` selects the OS keyring when a Secret-Service provider is reachable
+        (proven by the pre-flight round-trip); otherwise it emits OS-specific guidance
+        naming the provider and reports the gap WITHOUT silently writing a file secret.
+      - ``file`` is the explicit, confirmed file-backend choice.
+      - ``keyring`` forces the keyring and reports pre-flight success/failure.
+
+    The structured status carries ``secret_backend``, ``confirmed`` (an explicit
+    stated choice), and a ``preflight`` report ``{ok: bool}``; exit is non-zero when
+    no usable backend was provisioned."""
+    from vidushi_oa.mail.secrets import (
+        FileBackend, KeyringBackend, detect_desktop, keyring_guidance, preflight,
+    )
+
+    desktop = detect_desktop()
+
+    if choice == "file":
+        pf = preflight(FileBackend())
+        out({"secret_backend": "file", "confirmed": True,
+             "desktop": desktop, "preflight": pf})
+        sys.exit(0 if pf.get("ok") else 1)
+
+    if choice == "keyring":
+        pf = preflight(KeyringBackend())
+        out({"secret_backend": "keyring", "confirmed": True,
+             "desktop": desktop, "preflight": pf})
+        sys.exit(0 if pf.get("ok") else 1)
+
+    # choice == "auto": prove the keyring is reachable before selecting it.
+    pf = preflight(KeyringBackend())
+    if pf.get("ok"):
+        out({"secret_backend": "keyring", "confirmed": False,
+             "desktop": desktop, "preflight": pf})
+        return
+
+    # No reachable provider: name the OS-specific remedy + the explicit file escape
+    # hatch, and report the gap — never a silent downgrade to the file backend.
+    guidance = keyring_guidance(desktop)
+    sys.stderr.write("vidushi-oa: " + guidance + "\n")
+    out({"error": guidance, "desktop": desktop, "preflight": pf,
+         "next": ["setup --secret-backend file"]})
+    sys.exit(1)
 
 
 def cmd_snapshot(a):
@@ -862,6 +918,48 @@ def cmd_mail_get(a):
         out({"result": row, "next": [f"mail-search --accounts {a.account}"]})
 
 
+def _read_secret_no_argv(name):
+    """Obtain the raw secret WITHOUT touching argv: a hidden prompt when interactive,
+    else one line of stdin (the non-interactive/CI escape). Shared by ``mail-auth``
+    and ``doctor --fix`` so the hidden-input path is never duplicated (DN Decision 6)."""
+    if sys.stdin.isatty():
+        return getpass.getpass(f"Secret for {name}: ")
+    return sys.stdin.readline().rstrip("\n")
+
+
+def _provision_account_secret(provider, address, auth_mode="password"):
+    """Interactive secret-entry shared by ``cmd_mail_auth`` and ``doctor --fix``.
+
+    Reads the secret via the hidden-input/stdin path ONLY (never a CLI arg), stores
+    it under the derived reference ``vidushi-oa/{provider}:{address}`` through a
+    ``SecretResolver``, registers/updates the account, and returns that reference.
+    Only the reference — never the raw secret — is persisted in the accounts file."""
+    from vidushi_oa.mail import accounts
+    from vidushi_oa.mail.secrets import SecretResolver, BACKEND_ENV
+    name = f"{provider}:{address}"
+    secret = _read_secret_no_argv(name)
+    secret_ref = f"vidushi-oa/{provider}:{address}"
+    resolver = SecretResolver()
+    primary = resolver._primary_backend()
+    resolver.store(secret_ref, secret)
+    # CR-OA-023 §S3: with no backend pinned the backend was auto-selected under the
+    # keyring->file model — report which backend the secret landed in so reaching the
+    # last-resort file backend is never a silent downgrade.
+    if not os.environ.get(BACKEND_ENV):
+        if primary.name == "file":
+            sys.stderr.write(
+                "vidushi-oa: no OS keyring provider was reachable; stored the secret "
+                "in the last-resort 0600 'file' backend. Run 'voa setup "
+                "--secret-backend auto' for OS-specific keyring guidance.\n")
+        else:
+            sys.stderr.write(
+                f"vidushi-oa: no secret backend pinned; stored the secret in the "
+                f"auto-selected '{primary.name}' backend.\n")
+    accounts.add_account(name=name, provider=provider, address=address,
+                         secret_ref=secret_ref, auth_mode=auth_mode)
+    return secret_ref
+
+
 def cmd_mail_auth(a):
     """Register a credential *reference* (provider/address/secret-ref) — never the
     secret itself. Rejects an unsupported provider with a structured error.
@@ -876,7 +974,6 @@ def cmd_mail_auth(a):
     ``{client_id, client_secret, refresh_token}`` driving the XOAUTH2 refresh-token
     flow; it too is entered via the hidden prompt / stdin, never as a CLI arg."""
     from vidushi_oa.mail import accounts
-    from vidushi_oa.mail.secrets import SecretResolver, BACKEND_ENV
     if a.provider not in _MAIL_PROVIDERS:
         out({"error": "unsupported provider", "provider": a.provider,
              "supported": list(_MAIL_PROVIDERS)})
@@ -893,22 +990,7 @@ def cmd_mail_auth(a):
         accounts.add_account(name, a.provider, a.address, secret_ref,
                              auth_mode=auth_mode)
     else:
-        if sys.stdin.isatty():
-            secret = getpass.getpass(f"Secret for {name}: ")
-        else:
-            secret = sys.stdin.readline().rstrip("\n")
-        secret_ref = f"vidushi-oa/{a.provider}:{a.address}"
-        resolver = SecretResolver()
-        primary = resolver._primary_backend()
-        resolver.store(secret_ref, secret)
-        # §S4 fallback warning: no vault was provisioned, so the secret landed in
-        # the OS keyring (or the last-resort file) rather than 1Password/Bitwarden.
-        if not os.environ.get(BACKEND_ENV) and primary.name not in ("1password", "bitwarden"):
-            sys.stderr.write(
-                f"vidushi-oa: no vault (1Password/Bitwarden) provisioned; "
-                f"stored the secret in the '{primary.name}' backend instead.\n")
-        accounts.add_account(name=name, provider=a.provider, address=a.address,
-                             secret_ref=secret_ref, auth_mode=auth_mode)
+        secret_ref = _provision_account_secret(a.provider, a.address, auth_mode)
 
     out({"status": "registered", "name": name, "provider": a.provider,
          "address": a.address, "secret_ref": secret_ref, "auth_mode": auth_mode,
@@ -923,14 +1005,42 @@ def cmd_doctor(a):
     unreachable or any account fails to resolve — after emitting the payload."""
     from vidushi_oa.backends import get_backend
     from vidushi_oa.mail import accounts
-    from vidushi_oa.mail.secrets import SecretResolver
+    from vidushi_oa.mail.secrets import (SecretResolver, KeyringBackend, preflight,
+                                         detect_desktop, keyring_guidance, BACKEND_ENV)
     from vidushi_oa import __version__
 
     backend = get_backend()
     store_ok, _msg = backend.check()
 
     resolver = SecretResolver()
-    secret_backend = resolver._primary_backend().name
+    # Determine the ACTIVE secret backend by REACHABILITY, not mere importability:
+    # a pinned backend is honoured as-is, otherwise the keyring backend must survive
+    # a `set`->`get` round-trip (preflight) to count as reachable — else we fall
+    # through to the last-resort file backend. `KeyringBackend.available()` alone only
+    # checks the module import and misreports "keyring" when no provider is reachable.
+    if os.environ.get(BACKEND_ENV):
+        secret_backend = resolver._primary_backend().name
+    else:
+        secret_backend = "keyring" if preflight(KeyringBackend()).get("ok") else "file"
+    # Reaching the file backend is an explicit, stated choice (never a silent
+    # downgrade) — carry a confirmed marker + the OS-specific remedy hint.
+    secret_backend_confirmed = secret_backend == "file"
+    secret_backend_hint = (
+        keyring_guidance(detect_desktop()) if secret_backend == "file" else "")
+
+    # `--fix`: for every account whose reference does not resolve, INSTANTIATE the same
+    # interactive mail-auth secret-entry (hidden-input/stdin only, never argv). Done
+    # before the resolution report so a freshly-provisioned account reads as healthy.
+    if a.fix:
+        for entry in accounts.load_accounts():
+            ref = entry.get("secret_ref", "")
+            try:
+                resolver.resolve(ref)
+                continue
+            except Exception:  # noqa: BLE001 - any resolution failure => needs re-auth
+                pass
+            _provision_account_secret(entry.get("provider"), entry.get("address"),
+                                      entry.get("auth_mode", "password"))
 
     rows = []
     all_resolve = True
@@ -939,11 +1049,11 @@ def cmd_doctor(a):
         try:
             resolver.resolve(ref)
             resolves = True
-        except LookupError:
+        except Exception:  # noqa: BLE001 - any resolution failure => account unresolved
             resolves = False
         if not resolves:
             all_resolve = False
-        kind = "1password" if ref.startswith("op://") else secret_backend
+        kind = secret_backend
         hint = "" if resolves else (
             f"secret_ref {ref} did not resolve; re-run "
             f"`voa mail-auth --provider {entry.get('provider')} "
@@ -952,10 +1062,34 @@ def cmd_doctor(a):
                      "auth_mode": entry.get("auth_mode", "password"),
                      "kind": kind, "resolves": resolves, "hint": hint})
 
+    # Ordered, machine-readable remediation plan — one step per detected gap, each
+    # carrying a boolean human_input flag. Fix the backend BEFORE re-authing accounts:
+    # the "enable Secret Service" step precedes the per-account "run mail-auth" steps.
+    remediation = []
+    next_items = []
+    unresolved = [r for r in rows if not r["resolves"]]
+    if secret_backend == "file" and unresolved:
+        ss_step = ("Enable the OS Secret Service so the keyring backend is reachable. "
+                   + secret_backend_hint)
+        remediation.append({"step": ss_step, "human_input": True})
+        next_items.append(ss_step)
+    for r in unresolved:
+        ma_step = (
+            f"Run mail-auth for {r['account']}: `voa mail-auth "
+            f"--provider {r['provider']} --address "
+            f"{r['account'].split(':', 1)[-1]}` and enter the secret at the hidden "
+            f"prompt (or pipe it on stdin), or run `voa doctor --fix`.")
+        remediation.append({"step": ma_step, "human_input": True})
+        next_items.append(ma_step)
+
     out({"engine": __version__,
          "store_backend": {"name": backend.name, "ok": bool(store_ok)},
          "secret_backend": secret_backend,
-         "accounts": rows})
+         "secret_backend_confirmed": secret_backend_confirmed,
+         "secret_backend_hint": secret_backend_hint,
+         "accounts": rows,
+         "remediation": remediation,
+         "next": next_items})
 
     if not store_ok or not all_resolve:
         sys.exit(1)
@@ -1032,6 +1166,12 @@ def main():
     sn.set_defaults(func=cmd_snapshot)
     it = add_parser("init"); it.set_defaults(func=cmd_init)
     su = add_parser("setup"); su.add_argument("--check", action="store_true", dest="check")
+    su.add_argument("--secret-backend", dest="secret_backend",
+                    choices=["auto", "keyring", "file"], default=None,
+                    help="run OS-aware secret provisioning + pre-flight instead of STORE "
+                         "setup: 'auto' selects the OS keyring when a Secret-Service "
+                         "provider is reachable (else prints OS-specific guidance), "
+                         "'keyring' forces it, 'file' is the explicit 0600-file choice.")
     su.set_defaults(func=cmd_setup)
     av = add_parser("apply-validators"); av.set_defaults(func=cmd_apply_validators)
 
@@ -1060,18 +1200,28 @@ def main():
     mac = add_parser("mail-accounts"); read_json(mac); mac.set_defaults(func=cmd_mail_accounts)
     mge = add_parser("mail-get"); mge.add_argument("--account", required=True)
     mge.add_argument("--uid", required=True); read_json(mge); mge.set_defaults(func=cmd_mail_get)
-    mau = add_parser("mail-auth"); mau.add_argument("--provider", required=True)
-    mau.add_argument("--address", required=True)
+    mau = add_parser("mail-auth")
+    mau.add_argument("--provider", required=True,
+                     help="mail provider, e.g. fastmail / gmail / yahoo "
+                          "(one of the supported providers).")
+    mau.add_argument("--address", required=True,
+                     help="your mailbox address for this account, e.g. "
+                          "you@fastmail.com (a sample format only; supply your own).")
     mau.add_argument("--auth-mode", dest="auth_mode",
                      choices=["password", "xoauth2"], default="password",
                      help="gmail only: 'xoauth2' expects the secret to be a JSON blob "
                           "{client_id, client_secret, refresh_token}; default 'password'.")
     mau.add_argument("--secret-ref", dest="secret_ref", default=None,
-                     help="credential reference (op://…/keyring/file). Omit to be prompted "
+                     help="credential reference (keyring/file). Omit to be prompted "
                           "(hidden) or to pipe the secret on stdin; it is stored under a "
                           "derived reference and never accepted as a CLI arg.")
     read_json(mau); mau.set_defaults(func=cmd_mail_auth)
-    dr = add_parser("doctor"); read_json(dr); dr.set_defaults(func=cmd_doctor)
+    dr = add_parser("doctor"); read_json(dr)
+    dr.add_argument("--fix", action="store_true", dest="fix",
+                    help="instantiate the interactive mail-auth secret-entry for each "
+                         "account whose reference does not resolve (hidden prompt / "
+                         "stdin only; the secret is never accepted as a CLI arg)")
+    dr.set_defaults(func=cmd_doctor)
 
     # Content-first no-arg path (S6/AXI #8): a truly-empty argv (just the
     # program name) prints live data — a one-line description + the executable

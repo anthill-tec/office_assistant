@@ -1,35 +1,37 @@
-"""Vault-first pluggable secret resolver (CR-OA-020 §S4).
+"""Keyring-primary pluggable secret resolver (CR-OA-023 §S1).
 
-Per ``docs/research/DN-mail-access.md`` Decision 4, ``voa`` never stores mail
-credentials itself: it holds only a *reference*, and the secret lives in a vault
-(1Password / Bitwarden) or, failing that, in the OS keyring, or, as a last
-resort, in a ``0600`` JSON file. Resolution walks a precedence chain::
+Per ``docs/research/DN-mail-access.md`` Decision 8, ``voa`` never stores mail
+credentials itself: it holds only a *reference*, and the secret lives in the OS
+keyring or, as a last resort, in a ``0600`` JSON file. Resolution walks a short
+precedence chain::
 
-    configured vault (1password `op` | bitwarden `bw`)   <- PRIMARY
-       -> if missing / token unset / unreachable
-    OS keyring                                            <- fallback (warns)
+    OS keyring                                            <- PRIMARY
        -> if unavailable / empty
-    0600 file                                             <- last resort
+    0600 file                                             <- last resort (warns)
 
-A ``op://`` reference is always routed to 1Password regardless of the configured
-primary. The raw secret value is never logged, printed, or written anywhere but
-the file backend's own designated ``0600`` store.
+``VIDUSHI_SECRET_BACKEND`` may pin the primary explicitly to ``keyring`` or
+``file``; any other name is rejected. The raw secret value is never logged,
+printed, or written anywhere but the file backend's own designated ``0600`` store.
 """
 import json
 import os
-import shutil
-import subprocess
 import sys
+import uuid
 from abc import ABC, abstractmethod
 
-try:  # keyring is an optional (`mail` extra) dependency.
+try:  # keyring is a base dependency (CR-OA-023 §S2), but stay defensive.
     import keyring as _keyring
+    from keyring.errors import PasswordDeleteError as _PasswordDeleteError
 except ImportError:  # pragma: no cover - environment-dependent
     _keyring = None
+
+    class _PasswordDeleteError(Exception):  # noqa: N818 - keyring-parity name
+        """Placeholder used when the keyring module is unavailable."""
 
 KEYRING_SERVICE = "vidushi-oa"
 SECRETS_FILE_ENV = "VIDUSHI_SECRETS_FILE"
 BACKEND_ENV = "VIDUSHI_SECRET_BACKEND"
+DESKTOP_ENV = "XDG_CURRENT_DESKTOP"
 
 
 class SecretBackend(ABC):
@@ -49,49 +51,6 @@ class SecretBackend(ABC):
     def set(self, ref: str, value: str) -> None:
         """Persist ``value`` under ``ref``. Read-only backends leave this raising."""
         raise NotImplementedError(f"{self.name} backend is read-only")
-
-
-class OnePasswordBackend(SecretBackend):
-    """1Password backend via the ``op`` CLI (a read-only vault for ``voa``)."""
-
-    name = "1password"
-
-    def available(self) -> bool:
-        return bool(shutil.which("op")) and bool(os.environ.get("OP_SERVICE_ACCOUNT_TOKEN"))
-
-    def get(self, ref: str) -> str | None:
-        try:
-            result = subprocess.run(
-                ["op", "read", ref], capture_output=True, text=True
-            )
-        except FileNotFoundError:
-            return None
-        if result.returncode != 0:
-            return None
-        return result.stdout.strip()
-
-
-class BitwardenBackend(SecretBackend):
-    """Bitwarden backend via the ``bw`` CLI (a read-only vault for ``voa``)."""
-
-    name = "bitwarden"
-
-    def available(self) -> bool:
-        return bool(shutil.which("bw")) and bool(os.environ.get("BW_SESSION"))
-
-    def get(self, ref: str) -> str | None:
-        session = os.environ.get("BW_SESSION", "")
-        try:
-            result = subprocess.run(
-                ["bw", "get", "password", ref, "--session", session],
-                capture_output=True,
-                text=True,
-            )
-        except FileNotFoundError:
-            return None
-        if result.returncode != 0:
-            return None
-        return result.stdout.strip()
 
 
 class KeyringBackend(SecretBackend):
@@ -140,18 +99,28 @@ class FileBackend(SecretBackend):
     def get(self, ref: str) -> str | None:
         return self._load().get(ref)
 
-    def set(self, ref: str, value: str) -> None:
+    def _save(self, data: dict) -> None:
         path = self._path()
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        data = self._load()
-        data[ref] = value
         # Create with 0600 up front so the secret is never briefly world-readable.
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
         os.chmod(path, 0o600)
+
+    def set(self, ref: str, value: str) -> None:
+        data = self._load()
+        data[ref] = value
+        self._save(data)
+
+    def delete(self, ref: str) -> None:
+        """Remove ``ref`` if present (used by the pre-flight cleanup)."""
+        data = self._load()
+        if ref in data:
+            data.pop(ref)
+            self._save(data)
 
 
 class SecretResolver:
@@ -159,8 +128,6 @@ class SecretResolver:
 
     def _backend_by_name(self, name: str) -> SecretBackend:
         backends = {
-            "1password": OnePasswordBackend,
-            "bitwarden": BitwardenBackend,
             "keyring": KeyringBackend,
             "file": FileBackend,
         }
@@ -173,9 +140,9 @@ class SecretResolver:
         configured = os.environ.get(BACKEND_ENV)
         if configured:
             return self._backend_by_name(configured)
-        for candidate in (OnePasswordBackend(), BitwardenBackend(), KeyringBackend()):
-            if candidate.available():
-                return candidate
+        keyring_backend = KeyringBackend()
+        if keyring_backend.available():
+            return keyring_backend
         return FileBackend()
 
     def _resolution_chain(self) -> list[SecretBackend]:
@@ -188,12 +155,6 @@ class SecretResolver:
         return chain
 
     def resolve(self, ref: str) -> str:
-        if ref.startswith("op://"):
-            value = OnePasswordBackend().get(ref)
-            if value is not None:
-                return value
-            raise LookupError(f"1Password could not resolve ref {ref!r}")
-
         chain = self._resolution_chain()
         primary = chain[0]
         for backend in chain:
@@ -222,3 +183,83 @@ class SecretResolver:
             keyring_backend.set(ref, value)
             return
         FileBackend().set(ref, value)
+
+
+# --- CR-OA-023 §S3: OS-aware secret provisioning + pre-flight -----------------
+
+def detect_desktop() -> str:
+    """Coarse host desktop / Secret-Service provider hint.
+
+    Returns one of ``"macos"`` (native login Keychain), ``"kde"``, ``"gnome"``,
+    ``"other"`` (a known freedesktop desktop) or ``"headless"`` (no desktop
+    advertised). Pure: reads only ``sys.platform`` and ``XDG_CURRENT_DESKTOP``
+    so it is directly unit-coverable.
+    """
+    if sys.platform == "darwin":
+        return "macos"
+    desktop = (os.environ.get(DESKTOP_ENV) or "").strip().lower()
+    if not desktop:
+        return "headless"
+    if "kde" in desktop:
+        return "kde"
+    if "gnome" in desktop:
+        return "gnome"
+    return "other"
+
+
+def keyring_guidance(desktop: str) -> str:
+    """Human-readable remedy naming the OS-specific Secret-Service provider.
+
+    Every branch also names the explicit ``--secret-backend file`` escape hatch
+    so reaching the file backend stays a stated, confirmed choice (§S3 / DN
+    Decision 8) rather than a silent downgrade.
+    """
+    if desktop == "kde":
+        return ("No Secret Service provider is reachable. On KDE, enable KWallet's "
+                "Secret Service integration so it claims 'org.freedesktop.secrets', "
+                "then re-run setup -- or choose the file backend explicitly with "
+                "'--secret-backend file'.")
+    if desktop == "gnome":
+        return ("No Secret Service provider is reachable. On GNOME/freedesktop, install "
+                "and run gnome-keyring (libsecret) so it provides "
+                "'org.freedesktop.secrets', then re-run setup -- or choose the file "
+                "backend explicitly with '--secret-backend file'.")
+    if desktop == "macos":
+        return ("The macOS login Keychain should be available with no action; if the "
+                "keyring is unreachable, choose the file backend explicitly with "
+                "'--secret-backend file'.")
+    return ("No Secret Service provider is reachable (headless or unknown desktop). "
+            "Choose the file backend explicitly with '--secret-backend file' to store "
+            "the secret in a 0600 file as a stated, confirmed choice.")
+
+
+def _cleanup_preflight(backend: SecretBackend, ref: str) -> None:
+    """Best-effort removal of the throwaway pre-flight ref (never fatal)."""
+    if isinstance(backend, KeyringBackend) and _keyring is not None:
+        try:
+            _keyring.delete_password(KEYRING_SERVICE, ref)
+        except _PasswordDeleteError as exc:  # nothing to delete / unsupported
+            sys.stderr.write(
+                f"vidushi-oa: pre-flight cleanup could not remove {ref!r}: {exc}\n")
+    elif isinstance(backend, FileBackend):
+        backend.delete(ref)
+
+
+def preflight(backend: SecretBackend) -> dict:
+    """Perform a ``set``->``get`` round-trip on ``backend`` with a throwaway ref.
+
+    Returns ``{"ok": True}`` when the value round-trips, else
+    ``{"ok": False, "error": <exception type name>}``. A backend whose
+    ``set``/``get`` raises for ANY reason (no provider reachable, read-only, a
+    backend error) is reported as ``ok: False`` -- the breadth of the catch is
+    intentional per §S3 (the round-trip is exactly the reachability probe).
+    """
+    ref = "vidushi-oa-preflight-" + uuid.uuid4().hex
+    token = uuid.uuid4().hex
+    try:
+        backend.set(ref, token)
+        got = backend.get(ref)
+    except Exception as exc:  # noqa: BLE001 - any failure -> preflight not ok (§S3)
+        return {"ok": False, "error": type(exc).__name__}
+    _cleanup_preflight(backend, ref)
+    return {"ok": bool(got == token)}

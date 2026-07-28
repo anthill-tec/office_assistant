@@ -70,8 +70,8 @@ def build_client(config_path=None, resolver=None, adapter_factory=None) -> MailC
     the account name.
 
     Fail-soft, per-account: building one account (the default factory resolves its
-    `secret_ref` here) may fail — an unresolvable/rotated secret, a missing vault
-    CLI, or a locked keyring raises inside the factory. Such an account is recorded
+    `secret_ref` here) may fail — an unresolvable/rotated secret or a locked
+    keyring raises inside the factory. Such an account is recorded
     in `client.build_failures` (name + short reason, never the secret) and SKIPPED,
     so the healthy accounts still register and one stale secret can't blank the
     whole `mail-search`/`mail-accounts`/`mail-get` fan-out.

@@ -2,7 +2,7 @@
 
 Persists the *configured mail accounts* as a small JSON list. Each entry carries
 EXACTLY `{name, provider, address, secret_ref, auth_mode}` — a pointer to where the
-secret lives (keyring/1Password/Bitwarden/file ref), NEVER the secret material
+secret lives (keyring/file ref), NEVER the secret material
 itself. `auth_mode` selects how the resolved secret authenticates (`password` —
 the default — or `xoauth2`, Gmail Workspace's refresh-token flow); entries written
 before `auth_mode` existed load as `password`.

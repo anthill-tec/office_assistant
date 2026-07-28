@@ -25,7 +25,7 @@ from vidushi_oa.mail.xoauth2 import GmailXoauth2Adapter
 
 
 class FakeResolver:
-    """Deterministic stand-in for `SecretResolver` — no vault/keyring/file I/O."""
+    """Deterministic stand-in for `SecretResolver` — no keyring/file I/O."""
 
     def resolve(self, ref):
         return f"secret-for-{ref}"
@@ -41,7 +41,7 @@ class FakeBlobResolver:
 
 class FailingRefResolver:
     """Resolves every ref except `bad_ref`, which raises `LookupError` — a rotated/
-    deleted vault entry, a missing `op` CLI, or a locked keyring."""
+    deleted secret or a locked keyring."""
 
     def __init__(self, bad_ref):
         self._bad_ref = bad_ref
