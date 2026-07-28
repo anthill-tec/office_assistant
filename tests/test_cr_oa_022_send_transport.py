@@ -414,5 +414,85 @@ class JmapSendDraftEmailSubmissionTest(unittest.TestCase):
         self.assertTrue(message_id)
 
 
+class JmapCreateDraftTransmitsComposedContentTest(unittest.TestCase):
+    """Release/1.1.1 code-review bugfix — `create_draft` DISCARDS its
+    `raw_rfc822` argument today: it issues only a content-less `Email/set`
+    (`{"keywords": {"$draft": True}}`), so the composed message is never
+    actually transmitted and a Fastmail draft comes out EMPTY.
+
+    Pinned shape for GREEN — the correct JMAP "import raw RFC822" flow:
+      1. `_session()` must ALSO cache `uploadUrl` from the session document
+         (it does not today — only `apiUrl`/`accountId` are cached).
+      2. `create_draft` must POST the literal `raw_rfc822` bytes (NOT
+         JSON-wrapped) to that `uploadUrl`, receiving back a JMAP
+         `{"blobId": ..., ...}` upload response.
+      3. That `blobId` must then be referenced by an `Email/import` (or an
+         `Email/set` `create` whose object carries the blob, e.g. via a
+         `bodyStructure`/`blobId` field) landing in the Drafts mailbox with
+         the `$draft` keyword still set.
+
+    This test does not over-pin step 3's exact method name/shape (the DN
+    leaves `Email/import` vs. a blob-referencing `Email/set` open) — it
+    instead asserts the OBSERVABLE outcome any correct implementation must
+    produce: the composed subject/from/to/body bytes must appear SOMEWHERE
+    in what the adapter's transport actually sent. Today nothing is sent
+    but the bare `$draft` keyword, so every assertion below fails.
+    """
+
+    def test_create_draft_transmits_the_composed_message_content(self):
+        raw = compose(
+            from_addr="me@fastmail.com",
+            to="v@example.com",
+            subject="Warranty claim for X200",
+            body="Please advise on RMA for my X200 unit.",
+        )
+        session_with_upload = dict(
+            _CANNED_SESSION,
+            uploadUrl="https://api.fastmail.com/upload/{accountId}/",
+        )
+        create_response = {
+            "methodResponses": [
+                ["Email/set", {"accountId": ACCOUNT_ID,
+                               "created": {"draft1": {"id": "Md-draft-2"}}}, "0"],
+            ],
+        }
+        transport = _JmapFakeTransport(
+            session_response=session_with_upload, responses=[create_response])
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+
+        adapter.create_draft(raw)
+
+        # Inspect EVERY call the adapter made through its transport (GET
+        # session + any POSTs) for the composed content — a blob upload would
+        # carry it as the literal `raw_rfc822` bytes as the call's `body`; an
+        # inline `Email/set`/`Email/import` would carry it inside a POST
+        # body dict (e.g. a `bodyStructure`/textBody value).
+        transmitted_bodies = [call[3] for call in transport.calls]
+        transmitted_repr = repr(transmitted_bodies)
+
+        self.assertIn(
+            "Warranty claim for X200", transmitted_repr,
+            "create_draft must transmit the composed Subject — it must not "
+            "discard raw_rfc822 and send only {'keywords': {'$draft': True}}",
+        )
+        self.assertIn(
+            "Please advise on RMA for my X200 unit.", transmitted_repr,
+            "create_draft must transmit the composed body text",
+        )
+        self.assertIn(
+            "v@example.com", transmitted_repr,
+            "create_draft must transmit the composed To address",
+        )
+        self.assertIn(
+            raw, transmitted_bodies,
+            "create_draft must upload the literal raw_rfc822 bytes as a blob "
+            "(a POST whose body IS raw, not JSON-wrapped) to the session's "
+            "uploadUrl — today no call carries the raw bytes at all",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
