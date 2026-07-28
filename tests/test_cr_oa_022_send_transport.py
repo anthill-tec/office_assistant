@@ -41,6 +41,7 @@ faked via the same `FakeIMAP`-style in-file fake used by the CR-OA-020 adapter
 tests (extended here with `.append()`); JMAP is faked via the same
 `FakeTransport` pattern used by `tests/test_cr_oa_020_jmap.py`.
 """
+import imaplib
 import unittest
 from unittest.mock import patch
 
@@ -144,15 +145,33 @@ class FakeImapConn:
     `imaplib.IMAP4.append()`. `fetch_body` is the raw draft bytes returned by a
     `conn.uid("FETCH", uid, "(BODY[])")` — shaped like imaplib's
     `(descriptor, raw_bytes)` tuple item — so `send_draft` reads back a real
-    stored draft rather than fabricating one."""
+    stored draft rather than fabricating one.
 
-    def __init__(self, append_response=None, fetch_body=None):
+    `list()` answers a LIST response advertising the RFC 6154 special-use
+    attributes, so the Sent mailbox can be resolved by role rather than by a
+    hard-coded name. `list_error`, when set, is raised instead — the mailbox
+    bookkeeping that follows a send must never turn a delivered message into a
+    failure."""
+
+    _DEFAULT_LIST = [
+        b'(\\HasNoChildren) "/" "INBOX"',
+        b'(\\HasNoChildren \\Drafts) "/" "Drafts"',
+        b'(\\HasNoChildren \\Sent) "/" "Sent"',
+    ]
+
+    def __init__(self, append_response=None, fetch_body=None, list_response=None,
+                 list_error=None):
         self.append_response = append_response or ("OK", [b"[APPENDUID 1 900] (Success)"])
         self.fetch_body = fetch_body
+        self.list_response = list(
+            self._DEFAULT_LIST if list_response is None else list_response)
+        self.list_error = list_error
         self.login_calls = []
         self.select_calls = []
         self.append_calls = []
         self.uid_calls = []
+        self.list_calls = 0
+        self.expunge_calls = 0
 
     def login(self, user, password):
         self.login_calls.append((user, password))
@@ -165,6 +184,16 @@ class FakeImapConn:
     def append(self, mailbox, flags, date_time, message):
         self.append_calls.append((mailbox, flags, date_time, message))
         return self.append_response
+
+    def list(self, directory='""', pattern="*"):
+        self.list_calls += 1
+        if self.list_error is not None:
+            raise self.list_error
+        return ("OK", list(self.list_response))
+
+    def expunge(self):
+        self.expunge_calls += 1
+        return ("OK", [b"1"])
 
     def uid(self, command, *args):
         self.uid_calls.append((command, args))
@@ -325,6 +354,106 @@ class YahooSendDraftSmtpTest(unittest.TestCase):
         self.assertNotEqual(msg, b"draft:901")
 
 
+class ImapSendDraftFilesTheSentCopyTest(unittest.TestCase):
+    """A submitted draft must stop being a draft on the IMAP path too — parity with
+    the JMAP `onSuccessUpdateEmail` patch. Without it the sent message sits in
+    Drafts flagged `\\Draft` forever and Sent holds no record of the outbound
+    correspondence (Gmail masks this by filing SMTP submissions server-side;
+    Fastmail Basic and Yahoo do not).
+
+    Every step is bookkeeping AFTER delivery, so none of it may turn a message the
+    provider already accepted into a failed send."""
+
+    def _yahoo(self, fake):
+        factory, _ = _make_conn_factory(fake)
+        return YahooImapAdapter(
+            account="yahoo_main", source_tag="[YH]", host="imap.mail.yahoo.com",
+            user="me@yahoo.com", password="app-pw", conn_factory=factory,
+        )
+
+    def _draft_bytes(self, from_addr="me@yahoo.com"):
+        return compose(from_addr=from_addr, to="support@example.com",
+                       subject="Return request", body="Requesting an RMA.")
+
+    def _send(self, adapter, draft_id="901"):
+        fake_smtp = FakeSMTP()
+        with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=fake_smtp):
+            message_id = adapter.send_draft(draft_id)
+        return fake_smtp, message_id
+
+    def test_the_sent_message_is_appended_to_the_special_use_sent_mailbox(self):
+        raw = self._draft_bytes()
+        fake = FakeImapConn(fetch_body=raw)
+
+        self._send(self._yahoo(fake))
+
+        appends = [c for c in fake.append_calls if c[0] == "Sent"]
+        self.assertEqual(len(appends), 1,
+                         f"exactly one APPEND to Sent expected; got {fake.append_calls!r}")
+        self.assertEqual(appends[0][3], raw,
+                         "the APPEND must carry the exact bytes that were sent")
+        flags = appends[0][1]
+        flags_text = flags.decode() if isinstance(flags, bytes) else str(flags or "")
+        self.assertNotIn("Draft", flags_text,
+                         "the filed Sent copy must not be flagged as a draft")
+
+    def test_the_drafts_copy_stops_being_a_draft(self):
+        fake = FakeImapConn(fetch_body=self._draft_bytes())
+
+        self._send(self._yahoo(fake))
+
+        stores = [args for command, args in fake.uid_calls if command == "STORE"]
+        self.assertTrue(stores, "the Drafts copy must be retired after a send")
+        for args in stores:
+            self.assertEqual(args[0], "901",
+                             "only the sent draft's own UID may be touched")
+        flag_ops = [(args[1], args[2]) for args in stores]
+        self.assertIn(("-FLAGS", r"(\Draft)"), flag_ops,
+                      f"the \\Draft flag must be cleared; got {flag_ops!r}")
+        self.assertIn(("+FLAGS", r"(\Deleted)"), flag_ops,
+                      f"the Drafts copy must be removed; got {flag_ops!r}")
+        self.assertIn("Drafts", fake.select_calls,
+                      "the STOREs must be issued against the Drafts mailbox")
+
+    def test_gmail_does_not_append_a_duplicate_sent_copy(self):
+        """Gmail files every SMTP submission into Sent Mail itself — appending a
+        second copy would duplicate the user's outbound record."""
+        fake = FakeImapConn(fetch_body=self._draft_bytes("me@gmail.com"))
+        factory, _ = _make_conn_factory(fake)
+        adapter = GmailImapAdapter(
+            account="gmail_main", source_tag="[GM]", host="imap.gmail.com",
+            user="me@gmail.com", password="app-pw", conn_factory=factory,
+        )
+
+        self._send(adapter, "900")
+
+        self.assertEqual(fake.append_calls, [],
+                         "Gmail must not APPEND a Sent copy the server already filed")
+        stores = [args for command, args in fake.uid_calls if command == "STORE"]
+        self.assertTrue(stores, "the Drafts copy must still be retired")
+
+    def test_an_account_with_no_sent_mailbox_still_retires_the_drafts_copy(self):
+        fake = FakeImapConn(fetch_body=self._draft_bytes(),
+                            list_response=[b'(\\HasNoChildren) "/" "INBOX"'])
+
+        _fake_smtp, message_id = self._send(self._yahoo(fake))
+
+        self.assertTrue(message_id)
+        self.assertEqual(fake.append_calls, [])
+        self.assertTrue([args for command, args in fake.uid_calls if command == "STORE"])
+
+    def test_a_mailbox_bookkeeping_failure_never_fails_a_delivered_send(self):
+        """The message is already in the provider's hands by the time any of this
+        runs — reporting a failure would tell the user nothing was sent."""
+        fake = FakeImapConn(fetch_body=self._draft_bytes(),
+                            list_error=imaplib.IMAP4.error("LIST failed"))
+
+        fake_smtp, message_id = self._send(self._yahoo(fake))
+
+        self.assertEqual(len(fake_smtp.sendmail_calls), 1)
+        self.assertTrue(message_id, "a delivered message must still report its id")
+
+
 class AdapterCapabilitiesIncludeSendTest(unittest.TestCase):
     """§S1 scope: every adapter's `capabilities()` gains the `"send"` flag."""
 
@@ -374,6 +503,13 @@ class _JmapSessionOnlyTransport:
         raise AssertionError(f"unexpected {method} to {url} on a session-only transport")
 
 
+def _returned_or_raised(response):
+    """Raise `response` when it is an exception, else hand it back as a payload."""
+    if isinstance(response, Exception):
+        raise response
+    return response
+
+
 class _JmapRoutingTransport:
     """Routes each call by URL / JMAP method name so the blob upload, the
     `Mailbox/query` and the `Email/import` each get their OWN canned response.
@@ -384,7 +520,12 @@ class _JmapRoutingTransport:
     A `Mailbox/query` is additionally routed by its `filter.role`, so the
     `drafts` lookup and the `sent` lookup can answer with different ids: an
     `api` key `"Mailbox/query:<role>"` wins for that role, and the plain
-    `"Mailbox/query"` key is the fallback for any role without one."""
+    `"Mailbox/query"` key is the fallback for any role without one.
+
+    An `api` value that is an `Exception` is RAISED instead of returned — the
+    live transport surface is wider than a JMAP payload (`urlopen` raises
+    `HTTPError`, an `OSError`, on every 4xx/5xx, and `json.loads` raises
+    `ValueError` on a non-JSON 2xx body)."""
 
     def __init__(self, session=None, upload=None, upload_status=200, api=None):
         self.session = _SESSION_WITH_UPLOAD if session is None else session
@@ -408,8 +549,9 @@ class _JmapRoutingTransport:
             role = (call[1].get("filter") or {}).get("role")
             keyed = self.api.get(f"Mailbox/query:{role}")
             if keyed is not None:
-                return 200, keyed
-        return 200, self.api.get(call[0], {"methodResponses": []})
+                return 200, _returned_or_raised(keyed)
+        return 200, _returned_or_raised(
+            self.api.get(call[0], {"methodResponses": []}))
 
     def api_call(self, name):
         """The first `methodCalls` entry posted for JMAP method `name`, or None."""
@@ -683,6 +825,37 @@ class JmapSendDraftFilesTheSentMessageTest(unittest.TestCase):
         patch_object = transport.api_call("EmailSubmission/set")[1]["onSuccessUpdateEmail"]["#submission"]
         self.assertNotIn("mailboxIds", patch_object)
         self.assertIsNone(patch_object["keywords/$draft"])
+
+    def test_a_transport_level_sent_lookup_failure_does_not_block_the_submission(self):
+        """The live failure surface of the Sent lookup is wider than a JMAP payload:
+        `urlopen` raises `HTTPError` (an `OSError`) on every 4xx/5xx — so the
+        status-check `RuntimeError` never even fires against a real server — and a
+        2xx carrying a captive-portal HTML body raises `ValueError` from
+        `json.loads`. Neither may cost the user the send."""
+        for failure in (OSError("HTTP Error 503: Service Unavailable"),
+                        ValueError("Expecting value: line 1 column 1 (char 0)")):
+            with self.subTest(failure=type(failure).__name__):
+                transport = _JmapRoutingTransport(api={"Mailbox/query:sent": failure})
+
+                self.assertEqual(
+                    self._adapter(transport).send_draft("Md-draft-1"), "S-sent-1")
+
+                patch_object = transport.api_call(
+                    "EmailSubmission/set")[1]["onSuccessUpdateEmail"]["#submission"]
+                self.assertNotIn("mailboxIds", patch_object)
+                self.assertIsNone(patch_object["keywords/$draft"])
+
+    def test_a_drafts_lookup_failure_still_fails_the_draft_import(self):
+        """Only the SENT lookup is best-effort. An import genuinely needs a mailbox,
+        so a Drafts lookup that fails at the transport level must still surface."""
+        transport = _JmapRoutingTransport(
+            api={"Mailbox/query:drafts": OSError("HTTP Error 503")})
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        with self.assertRaises(OSError):
+            self._adapter(transport).create_draft(raw)
+
+        self.assertIsNone(transport.api_call("Email/import"))
 
 
 class JmapDraftsMailboxQueryFailureTest(unittest.TestCase):

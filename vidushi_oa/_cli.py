@@ -885,11 +885,11 @@ def cmd_mail_accounts(a):
 # method-level rejection (`RuntimeError`), a missing key/uid (`LookupError`), the
 # IMAP/network surface (`imaplib.IMAP4.error` / `OSError`, which `urllib.error.URLError`
 # subclasses), and a 2xx whose body the JMAP transport cannot parse — a captive-portal
-# or proxy interception page makes its `json.loads` raise `json.JSONDecodeError`
-# (a `ValueError`) or `UnicodeDecodeError`. Rendered structurally by
-# `_mail_failure_exit` — never as a traceback.
+# or proxy interception page makes its `json.loads` raise `json.JSONDecodeError` or
+# `UnicodeDecodeError`, both of which `ValueError` already covers. Rendered
+# structurally by `_mail_failure_exit` — never as a traceback.
 _MAIL_LIVE_ERRORS = (LookupError, RuntimeError, imaplib.IMAP4.error, OSError,
-                     urllib.error.URLError, ValueError, UnicodeDecodeError)
+                     urllib.error.URLError, ValueError)
 
 
 def _mail_failure_exit(e, **context):

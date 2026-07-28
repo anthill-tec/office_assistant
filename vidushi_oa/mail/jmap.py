@@ -259,12 +259,17 @@ class JmapAdapter(MailAdapter):
         message would sit in Drafts flagged `$draft` forever and Sent would hold no
         record of the correspondence. A submission needs no mailbox, so nothing about
         the Sent lookup is fatal here: an account with no Sent mailbox — or one whose
-        `Mailbox/query` fails outright — still sends, and only the move is skipped."""
+        `Mailbox/query` fails outright — still sends, and only the move is skipped.
+        That guard spans the lookup's WHOLE live failure surface, not just the
+        method-level `RuntimeError`: `urlopen` raises `HTTPError` (an `OSError`) on
+        every 4xx/5xx, and a 2xx carrying a captive-portal page raises `ValueError`
+        from the transport's `json.loads`. `_session()` is already resolved by then,
+        so nothing beyond the Sent lookup itself is swallowed."""
         api_url, account_id = self._session()
         update = {"keywords/$draft": None}
         try:
             sent_id = self._mailbox_id(api_url, account_id, _SENT_ROLE)
-        except RuntimeError:
+        except (RuntimeError, OSError, ValueError):
             sent_id = ""
         if sent_id:
             update["mailboxIds"] = {sent_id: True}

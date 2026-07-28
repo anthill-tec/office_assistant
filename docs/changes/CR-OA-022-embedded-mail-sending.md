@@ -47,7 +47,10 @@ an alias list on the account entry); an unknown From is refused.
 - **`mail-send`** `--account --draft <draft-id>` — dispatches **only that identified draft** (JMAP
   `EmailSubmission/set` / SMTP); emits the sent **message id**. The JMAP submission carries an
   `onSuccessUpdateEmail` patch clearing `$draft` and moving the message into the `sent`-role mailbox, so a
-  sent message stops being a draft and Sent holds the record of the correspondence.
+  sent message stops being a draft and Sent holds the record of the correspondence. The IMAP path reaches
+  the same end state after its `sendmail`: it `APPEND`s the sent bytes to the `\Sent` special-use mailbox
+  (skipped for providers that file their own copy — Gmail) and retires the Drafts copy (`-FLAGS (\Draft)`,
+  `+FLAGS (\Deleted)`, UID `EXPUNGE`). All of it runs after delivery, so none of it can fail a sent message.
 - **`mail-reply`** `--account --uid <src-uid> --from --body [--attach] [--case]` — fetches the source, composes
   a **threaded** reply (§S2), saves it as a draft (same as `mail-draft`).
 
@@ -85,7 +88,8 @@ Drafts store) — **no live sending in the suite**. Live-send verification is a 
 ### §S3
 - [ ] `mail-draft` against a fake adapter records exactly one draft-save (an IMAP `APPEND`, or a JMAP blob upload of the literal RFC822 bytes followed by one `Email/import` that references BOTH the returned `blobId` and the resolved `drafts` mailbox id, with `$draft` set) and **zero** sends (the fake's send-count is 0), and returns a `draft` id in its TOON status.
 - [ ] The JMAP draft path never reports a draft it did not create: a blob upload answering any 2xx (incl. `201 Created`) succeeds, while a session with no `uploadUrl`, an upload returning no `blobId`, a failed or empty `Mailbox/query` (whose own server error is surfaced verbatim, not re-labelled "no Drafts mailbox"), or an `Email/import` answering `notCreated`/`["error", …]` each raise a structured error instead of an empty draft id. `notCreated` admits no exception — `alreadyExists` included: every composed message carries a unique `Message-ID`, so each import is expected to create, and a rejection never resolves to another message's id.
-- [ ] `mail-send --draft <id>` triggers exactly one `send_draft(<id>)` on the adapter and returns a message id. The JMAP `EmailSubmission/set` carries an `onSuccessUpdateEmail` patch clearing `keywords/$draft` and setting `mailboxIds` to the resolved `sent`-role mailbox (the move is skipped, but `$draft` still cleared and the submission still issued, when the account has no Sent mailbox **or** its `Mailbox/query` fails — a submission needs no mailbox, so the lookup never blocks a send).
+- [ ] `mail-send --draft <id>` triggers exactly one `send_draft(<id>)` on the adapter and returns a message id. The JMAP `EmailSubmission/set` carries an `onSuccessUpdateEmail` patch clearing `keywords/$draft` and setting `mailboxIds` to the resolved `sent`-role mailbox (the move is skipped, but `$draft` still cleared and the submission still issued, when the account has no Sent mailbox **or** its `Mailbox/query` fails — at the method level *or* the transport level, i.e. an `HTTPError`/`OSError` from a 4xx/5xx and a `ValueError` from a non-JSON 2xx body; a submission needs no mailbox, so the lookup never blocks a send).
+- [ ] The IMAP send path reaches the same end state: after the one `sendmail`, the sent bytes are `APPEND`ed to the `\Sent` special-use mailbox resolved from `LIST` (no `APPEND` for Gmail, which files its own copy) and the Drafts copy is retired (`-FLAGS (\Draft)`, `+FLAGS (\Deleted)`, UID `EXPUNGE` of that UID only). An account advertising no `\Sent` mailbox, or any failure of this post-delivery bookkeeping, still returns the message id — a delivered message is never reported as a failed send.
 - [ ] **No-auto-send invariant (mechanically auditable):** a grep shows `send_draft`/`EmailSubmission/set`/`sendmail` invoked from **only** `cmd_mail_send` in `vidushi_oa/_cli.py` (no other verb calls a send path).
 - [ ] **Caller-existence:** `voa --help` lists `mail-draft`/`mail-send`/`mail-reply`, and each is wired via a non-test `set_defaults` caller (grep ≥1 each).
 

@@ -24,6 +24,8 @@ _HEADER_SPEC = f"BODY.PEEK[HEADER.FIELDS ({_HEADER_FIELDS})]"
 _UID_RE = re.compile(rb"UID (\d+)")
 _THRID_RE = re.compile(rb"X-GM-THRID (\d+)")
 _APPENDUID_RE = re.compile(rb"APPENDUID (\d+) (\d+)")
+# RFC 6154 special-use attribute marking the mailbox sent mail is filed in.
+_SENT_ATTR_RE = re.compile(rb"\\Sent\b", re.IGNORECASE)
 
 # SMTP submission (STARTTLS) port for every provider's message-submission agent.
 _SMTP_SUBMISSION_PORT = 587
@@ -31,6 +33,11 @@ _SMTP_SUBMISSION_PORT = 587
 
 class ImapAdapter(MailAdapter):
     """Concrete IMAP adapter with a lazily-created, reused connection."""
+
+    # Whether the provider files its own copy of an SMTP submission into Sent.
+    # Gmail does (overridden below); Fastmail Basic and Yahoo do not, so this
+    # adapter APPENDs the copy itself.
+    server_files_sent_copy = False
 
     def __init__(self, account, source_tag, host, user, password, port=993,
                  conn_factory=None, smtp_host=None, smtp_port=_SMTP_SUBMISSION_PORT):
@@ -42,6 +49,7 @@ class ImapAdapter(MailAdapter):
         self.port = port
         self._factory = conn_factory or (lambda h, p: imaplib.IMAP4_SSL(h, p))
         self._connection = None
+        self._sent_mailbox = None
         # Derive the SMTP submission host from the IMAP host when not injected
         # (imap.gmail.com -> smtp.gmail.com, imap.mail.yahoo.com -> smtp.mail.yahoo.com).
         self.smtp_host = smtp_host or (
@@ -97,7 +105,11 @@ class ImapAdapter(MailAdapter):
         credential (the app-password already authorizes SMTP — DN §Decision 7),
         and issues exactly one `sendmail` of the REAL draft bytes to the REAL
         recipients. Returns the message's own `Message-ID` when present, else a
-        freshly-minted one."""
+        freshly-minted one.
+
+        Once the provider has accepted the message, `_file_sent_copy` files it in
+        Sent and retires the Drafts copy — the IMAP counterpart of the JMAP
+        `onSuccessUpdateEmail` patch."""
         raw_bytes = self._fetch_draft_bytes(draft_id, folder)
         parsed = email.message_from_bytes(raw_bytes)
         from_addr = email.utils.parseaddr(parsed.get("From", ""))[1] or self.user
@@ -110,7 +122,43 @@ class ImapAdapter(MailAdapter):
         smtp.starttls()
         smtp.login(self.user, self.password)
         smtp.sendmail(from_addr, recipients, raw_bytes)
+        self._file_sent_copy(raw_bytes, draft_id, folder)
         return message_id
+
+    def _file_sent_copy(self, raw_bytes, draft_id, folder) -> None:
+        """After a successful submission, APPEND the sent bytes to the `\\Sent`
+        mailbox and stop the Drafts copy from being a draft.
+
+        Parity with the JMAP `onSuccessUpdateEmail` patch: without this the sent
+        message lingers in Drafts flagged `\\Draft` and Sent holds no record of the
+        correspondence. Providers that file their own copy of an SMTP submission
+        (Gmail) skip the APPEND so the user's Sent does not gain a duplicate.
+
+        This is bookkeeping that runs AFTER delivery, so every step is best-effort:
+        the message is already in the provider's hands, and reporting a mailbox
+        failure here would tell the user nothing was sent."""
+        try:
+            conn = self._conn()
+            if not self.server_files_sent_copy:
+                sent = self._sent_mailbox_name()
+                if sent:
+                    conn.append(sent, "", None, raw_bytes)
+            conn.select(folder)
+            conn.uid("STORE", str(draft_id), "-FLAGS", r"(\Draft)")
+            conn.uid("STORE", str(draft_id), "+FLAGS", r"(\Deleted)")
+            # UID EXPUNGE removes only this draft; a bare EXPUNGE would also reap
+            # anything else the user had flagged `\Deleted` in the folder.
+            conn.uid("EXPUNGE", str(draft_id))
+        except (imaplib.IMAP4.error, OSError, ValueError):
+            return
+
+    def _sent_mailbox_name(self) -> str:
+        """Resolve (and cache) the `\\Sent` special-use mailbox name (RFC 6154);
+        empty string when the account advertises none."""
+        if self._sent_mailbox is None:
+            typ, data = self._conn().list()
+            self._sent_mailbox = _find_sent_mailbox(data)
+        return self._sent_mailbox
 
     def fetch_html_body(self, uid, folder=None) -> "str | None":
         """Fetch message `uid`'s decoded `text/html` part as a `str`, or `None`.
@@ -200,6 +248,9 @@ class ImapAdapter(MailAdapter):
 class GmailImapAdapter(ImapAdapter):
     """Gmail adapter — server-side `X-GM-RAW` search and `X-GM-THRID` threads."""
 
+    # Gmail files every SMTP submission into "Sent Mail" itself.
+    server_files_sent_copy = True
+
     def capabilities(self) -> set:
         return {"raw_query", "server_side_categories", "server_threads", "send"}
 
@@ -250,6 +301,17 @@ def _parse_append_uid(data) -> str:
         if isinstance(chunk, bytes) and chunk.strip():
             return chunk.strip().decode(errors="replace")
     return "draft"
+
+
+def _find_sent_mailbox(data) -> str:
+    """The name of the `\\Sent` special-use mailbox in an IMAP LIST response."""
+    for line in data or []:
+        if not isinstance(line, bytes) or not _SENT_ATTR_RE.search(line):
+            continue
+        name = line.rsplit(b'"', 2)
+        if len(name) >= 2:
+            return name[-2].decode()
+    return ""
 
 
 def _parse_uids(data) -> list:
