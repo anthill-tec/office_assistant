@@ -69,7 +69,10 @@ class JmapAdapter(MailAdapter):
         self._account_id = None
 
     def _auth_headers(self):
-        return {"Authorization": f"Bearer {self.token}"}
+        return {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
 
     def _session(self):
         """Fetch + cache the session document once; reuse it thereafter."""
