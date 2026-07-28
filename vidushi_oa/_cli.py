@@ -36,6 +36,8 @@ import argparse, json, os, sys, datetime, re, getpass, imaplib, urllib.error
 # `cmd_mail_*` handlers call it (no args) to obtain a wired `MailClient`.
 from vidushi_oa.mail.base import SOURCE_TAGS
 from vidushi_oa.mail.factory import build_client
+from vidushi_oa.mail import accounts, send_gate
+from vidushi_oa.mail.compose import compose
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("VIDUSHI_DATA_DIR") or os.path.normpath(os.path.join(HERE, "..", "data"))
@@ -918,6 +920,79 @@ def cmd_mail_get(a):
         out({"result": row, "next": [f"mail-search --accounts {a.account}"]})
 
 
+def _mail_adapter_or_exit(client, account, **extra):
+    """Resolve `account`'s adapter via the same `client._adapters` seam `cmd_mail_get`
+    uses, or render an unknown-account structured error + exit 1 (no traceback). The
+    shared draft-then-confirm resolution for `mail-draft`/`mail-send`/`mail-reply`."""
+    adapter = client._adapters.get(account)
+    if adapter is None:
+        build_failure = next(
+            (f for f in client.build_failures if f["account"] == account), None)
+        error = build_failure["error"] if build_failure else "unknown account"
+        out({"error": error, "account": account, **extra})
+        sys.exit(1)
+    return adapter
+
+
+def cmd_mail_draft(a):
+    """Compose (§S2) and save a REAL draft via the account adapter's
+    `create_draft(raw)`; emit a flat TOON/JSON status carrying the `draft` id.
+    Performs ZERO network send — draft-then-confirm requires `mail-send` be the only
+    code path that can dispatch a message."""
+    client = _mail_client_or_exit()
+    adapter = _mail_adapter_or_exit(client, a.account)
+    raw = compose(a.from_addr, a.to, a.subject, a.body, cc=a.cc)
+    draft_id = adapter.create_draft(raw)
+    out({"status": "drafted", "draft": draft_id, "account": a.account})
+
+
+def cmd_mail_send(a):
+    """Dispatch ONLY the identified draft via the adapter's `send_draft(draft_id)`,
+    gated on `send_gate.ensure_send_capable(entry)` (a non-send-capable account is a
+    structured error + exit 1 whose message names "send"). Emits the sent
+    `message_id`. This is the ONLY function in this module that may call a send-path
+    token."""
+    client = _mail_client_or_exit()
+    entry = next((e for e in accounts.load_accounts()
+                  if e.get("name") == a.account), None)
+    if entry is None:
+        out({"error": "unknown account", "account": a.account})
+        sys.exit(1)
+    try:
+        send_gate.ensure_send_capable(entry)
+    except PermissionError as e:
+        out({"error": str(e), "account": a.account})
+        sys.exit(1)
+    adapter = _mail_adapter_or_exit(client, a.account, draft=a.draft)
+    message_id = adapter.send_draft(a.draft)
+    out({"status": "sent", "message_id": message_id,
+         "draft": a.draft, "account": a.account})
+
+
+def cmd_mail_reply(a):
+    """Fetch the source message via the adapter's `fetch_message(uid)`, compose a
+    THREADED reply (In-Reply-To + References from the fetched `Message`), and save it
+    as a draft exactly like `cmd_mail_draft` — ZERO send. An unknown/missing source
+    uid is a structured error + exit 1 (no traceback)."""
+    client = _mail_client_or_exit()
+    adapter = _mail_adapter_or_exit(client, a.account, uid=a.uid)
+    try:
+        source = adapter.fetch_message(a.uid)
+    except KeyError:
+        source = None
+    if source is None:
+        out({"error": "message not found", "account": a.account, "uid": a.uid})
+        sys.exit(1)
+    references = [ref for ref in (source.references, source.id) if ref]
+    subject = source.subject if source.subject.lower().startswith("re:") \
+        else f"Re: {source.subject}"
+    to = source.sender or source.to
+    raw = compose(a.from_addr, to, subject, a.body,
+                  in_reply_to=source.id, references=references)
+    draft_id = adapter.create_draft(raw)
+    out({"status": "drafted", "draft": draft_id, "account": a.account})
+
+
 def _read_secret_no_argv(name):
     """Obtain the raw secret WITHOUT touching argv: a hidden prompt when interactive,
     else one line of stdin (the non-interactive/CI escape). Shared by ``mail-auth``
@@ -1220,6 +1295,31 @@ def main():
                      help="grant this account SEND capability (opt-in; read-only by "
                           "default). The send verbs refuse a non-send-capable account.")
     read_json(mau); mau.set_defaults(func=cmd_mail_auth)
+    # CR-OA-022 §S3: draft-then-confirm send verbs. `--from` -> dest `from_addr`
+    # (``from`` is a Python keyword). `--attach`/`--case` parse now (attachment
+    # bodies land in §S6, store linkage in §S5) so the flags are accepted today.
+    mdr = add_parser("mail-draft")
+    mdr.add_argument("--account", required=True)
+    mdr.add_argument("--from", dest="from_addr", required=True)
+    mdr.add_argument("--to", required=True)
+    mdr.add_argument("--subject", required=True)
+    mdr.add_argument("--body", required=True)
+    mdr.add_argument("--cc", default=None)
+    mdr.add_argument("--attach", default=None)
+    mdr.add_argument("--case", default=None)
+    read_json(mdr); mdr.set_defaults(func=cmd_mail_draft)
+    msn = add_parser("mail-send")
+    msn.add_argument("--account", required=True)
+    msn.add_argument("--draft", required=True)
+    read_json(msn); msn.set_defaults(func=cmd_mail_send)
+    mrp = add_parser("mail-reply")
+    mrp.add_argument("--account", required=True)
+    mrp.add_argument("--uid", required=True)
+    mrp.add_argument("--from", dest="from_addr", required=True)
+    mrp.add_argument("--body", required=True)
+    mrp.add_argument("--attach", default=None)
+    mrp.add_argument("--case", default=None)
+    read_json(mrp); mrp.set_defaults(func=cmd_mail_reply)
     dr = add_parser("doctor"); read_json(dr)
     dr.add_argument("--fix", action="store_true", dest="fix",
                     help="instantiate the interactive mail-auth secret-entry for each "
