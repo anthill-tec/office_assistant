@@ -153,10 +153,17 @@ class ImapAdapter(MailAdapter):
         The Drafts copy is destroyed ONLY once a Sent copy is confirmed to exist —
         a confirmed-`OK` APPEND, or a provider that files its own. `imaplib` returns
         a tagged `NO` (quota, permission, mailbox vanished between LIST and APPEND)
-        quietly rather than raising, so every tagged status on the path is read: on
-        any failure, or when the account advertises no Sent mailbox, the draft is
-        left exactly where it is so the message can never end up in neither
-        folder."""
+        quietly rather than raising, so the two statuses that gate the destructive
+        step are read explicitly: the Sent `APPEND`, and the `+FLAGS (\\Deleted)`
+        `STORE` that immediately precedes the `UID EXPUNGE`. On either failure, or
+        when no Sent mailbox resolves, the draft is left exactly where it is so the
+        message can never end up in neither folder.
+
+        The remaining statuses are deliberately not read, none being able to
+        destroy anything on its own: `imaplib` drops to `AUTH` state on a refused
+        `SELECT`, so the UID commands that follow raise rather than address the
+        wrong mailbox; a refused `-FLAGS (\\Draft)` only leaves the keyword set;
+        and a refused `UID EXPUNGE` only leaves the draft flagged `\\Deleted`."""
         try:
             conn = self._conn()
             if not self.server_files_sent_copy:
@@ -179,15 +186,24 @@ class ImapAdapter(MailAdapter):
             # UID EXPUNGE removes only this draft; a bare EXPUNGE would also reap
             # anything else the user had flagged `\Deleted` in the folder.
             conn.uid("EXPUNGE", str(draft_id))
-        except (imaplib.IMAP4.error, OSError, ValueError) as e:
+        except (imaplib.IMAP4.error, OSError, RuntimeError, ValueError) as e:
             _warn(f"mailbox bookkeeping after a delivered send failed: {e}")
             return
 
     def _sent_mailbox_name(self) -> str:
         """Resolve (and cache) the `\\Sent` special-use mailbox name (RFC 6154);
-        empty string when the account advertises none."""
+        empty string when a LIST that answered advertises none.
+
+        `imaplib` returns a tagged `NO` quietly, so the status is read: a refused
+        LIST raises rather than passing for `no \\Sent mailbox`, and only a LIST
+        that genuinely answered is cached. Caching a refusal would make every
+        later send in the process skip Sent and keep its draft, diagnosed as a
+        Sent folder the account does not have."""
         if self._sent_mailbox is None:
             typ, data = self._conn().list()
+            if typ != "OK":
+                raise RuntimeError(
+                    f"IMAP LIST rejected: {typ} {_response_text(data)}")
             self._sent_mailbox = _find_sent_mailbox(data)
         return self._sent_mailbox
 

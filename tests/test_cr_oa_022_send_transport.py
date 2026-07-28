@@ -151,7 +151,9 @@ class FakeImapConn:
     attributes, so the Sent mailbox can be resolved by role rather than by a
     hard-coded name. `list_error`, when set, is raised instead — the mailbox
     bookkeeping that follows a send must never turn a delivered message into a
-    failure.
+    failure. `list_statuses` is a queue of tagged statuses one per LIST call
+    (falling back to `OK` once drained), so a refusal that later recovers can be
+    exercised — imaplib returns a tagged `NO` quietly.
 
     `append_responses` maps a mailbox name to the tagged response its APPEND
     answers with, so a refusal (`NO [OVERQUOTA]`) can be exercised for one
@@ -166,7 +168,8 @@ class FakeImapConn:
     ]
 
     def __init__(self, append_response=None, fetch_body=None, list_response=None,
-                 list_error=None, append_responses=None, store_response=None):
+                 list_error=None, append_responses=None, store_response=None,
+                 list_statuses=None):
         self.append_response = append_response or ("OK", [b"[APPENDUID 1 900] (Success)"])
         self.append_responses = dict(append_responses or {})
         self.store_response = store_response or ("OK", [b"Completed"])
@@ -174,6 +177,7 @@ class FakeImapConn:
         self.list_response = list(
             self._DEFAULT_LIST if list_response is None else list_response)
         self.list_error = list_error
+        self.list_statuses = list(list_statuses or [])
         self.login_calls = []
         self.select_calls = []
         self.append_calls = []
@@ -196,6 +200,9 @@ class FakeImapConn:
         self.list_calls += 1
         if self.list_error is not None:
             raise self.list_error
+        status = self.list_statuses.pop(0) if self.list_statuses else "OK"
+        if status != "OK":
+            return (status, [b"[SERVERBUG] LIST refused"])
         return ("OK", list(self.list_response))
 
     def uid(self, command, *args):
@@ -536,6 +543,36 @@ class ImapSendDraftFilesTheSentCopyTest(unittest.TestCase):
         self._send(adapter, "900")
 
         self.assertIn(("EXPUNGE", ("900",)), fake.uid_calls)
+
+    def test_a_refused_list_keeps_the_drafts_copy(self):
+        """`imaplib` returns a tagged `NO` quietly, so an unread LIST status reads
+        as `no \\Sent mailbox` — the safety gate must still hold and the draft
+        survive."""
+        fake = FakeImapConn(fetch_body=self._draft_bytes(), list_statuses=["NO"])
+
+        _fake_smtp, message_id = self._send(self._yahoo(fake))
+
+        self.assertTrue(message_id, "a delivered message must still report its id")
+        self.assertEqual(fake.append_calls, [])
+        self.assertEqual([c for c in fake.uid_calls if c[0] == "EXPUNGE"], [],
+                         "a refused LIST files no Sent copy, so nothing may be expunged")
+
+    def test_a_refused_list_is_not_cached_as_a_missing_sent_mailbox(self):
+        """Caching the empty result of a LIST the server refused makes EVERY later
+        send in the process skip Sent and pile up drafts, diagnosed as a Sent
+        folder that does not exist. Only a LIST that genuinely answered may be
+        cached."""
+        fake = FakeImapConn(fetch_body=self._draft_bytes(), list_statuses=["NO"])
+        adapter = self._yahoo(fake)
+
+        self._send(adapter)
+        self._send(adapter)
+
+        self.assertEqual(fake.list_calls, 2,
+                         "the refused LIST must be retried, not cached")
+        self.assertEqual([c[0] for c in fake.append_calls], ["Sent"],
+                         "the recovered LIST must resolve Sent and file the copy")
+        self.assertIn(("EXPUNGE", ("901",)), fake.uid_calls)
 
     def test_a_mailbox_bookkeeping_failure_never_fails_a_delivered_send(self):
         """The message is already in the provider's hands by the time any of this

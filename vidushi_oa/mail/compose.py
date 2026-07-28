@@ -14,6 +14,7 @@ using an ``example.com`` host, e.g.::
             subject="Re: order", body="Thanks.")
 """
 from email.message import EmailMessage
+from email.policy import SMTP as _SMTP_POLICY
 from email.utils import formatdate, make_msgid, parseaddr
 
 
@@ -56,6 +57,12 @@ def compose(
 
     *attachments* is an optional list of ``(filename, bytes)`` pairs; each is
     added as an ``application/octet-stream`` part.
+
+    The bytes are serialized under `email.policy.SMTP`, whose ``linesep`` is the
+    CRLF RFC 5322 §2.1 mandates (`EmailMessage`'s default policy would emit bare
+    LF). Both consumers transmit them verbatim — the JMAP blob upload POSTs them
+    as ``message/rfc822``, and the IMAP ``APPEND`` hands them over as a literal,
+    where RFC 3501 requires CRLF-terminated lines.
     """
     msg = EmailMessage()
     msg["From"] = from_addr
@@ -83,7 +90,7 @@ def compose(
             filename=filename,
         )
 
-    return msg.as_bytes()
+    return msg.as_bytes(policy=_SMTP_POLICY)
 
 
 def validate_from(from_addr, identities):

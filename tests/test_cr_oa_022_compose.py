@@ -133,6 +133,22 @@ class ComposeOriginatorHeadersTest(unittest.TestCase):
             "content-addressed blob store would collide them onto one draft",
         )
 
+    def test_the_serialized_message_uses_crlf_line_endings(self):
+        """RFC 5322 §2.1 mandates CRLF, and both consumers transmit these bytes
+        verbatim: the JMAP blob upload POSTs them as `message/rfc822`, and the IMAP
+        `APPEND` hands them over as a literal (RFC 3501 wants CRLF-terminated
+        lines). A bare-LF serialization risks a rejected import or a draft whose
+        header/body boundary is mis-detected."""
+        from vidushi_oa.mail.compose import compose
+
+        raw = compose(from_addr="me@x", to="v@y", subject="S", body="Line one\nLine two")
+        stripped = raw.replace(b"\r\n", b"")
+        self.assertEqual(
+            stripped.count(b"\n"), 0,
+            f"every line ending must be CRLF; found a bare LF in {raw!r}",
+        )
+        self.assertIn(b"\r\n\r\n", raw, "the header/body separator must be CRLFCRLF")
+
 
 class ComposeReplyThreadingTest(unittest.TestCase):
     """§S2 AC1 (reply half) — In-Reply-To / References threading."""
