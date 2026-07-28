@@ -52,6 +52,7 @@ No live sending anywhere in this file — every adapter below is an in-process f
 (`RecordingAdapter`) whose `create_draft`/`send_draft` just count calls and record
 what they received, per the CR's "tests run against fakes" acceptance-criteria note.
 """
+import imaplib
 import json
 import os
 import re
@@ -319,6 +320,156 @@ def test_mail_reply_unknown_source_uid_is_a_structured_error_not_a_traceback(mon
     assert "error" in json.loads(captured.out.strip())
     assert adapter.draft_saves == 0
     assert adapter.sends == 0
+
+
+# --------------------------------------------------------------------------- #
+# Live adapter failures — structured error + exit 1, never a traceback (AXI #6)
+# --------------------------------------------------------------------------- #
+
+class RaisingAdapter(RecordingAdapter):
+    """No network — `create_draft`/`send_draft`/`fetch_message` RAISE the injected
+    exception, mirroring the real adapters' live-failure surface: the JMAP draft
+    path raises `RuntimeError` (blob upload, `Mailbox/query`, `Email/import`), and
+    the IMAP path raises `imaplib.IMAP4.error`/`OSError` on a down host or a bad
+    app-password. Every mail verb must render these structurally, exactly as
+    `cmd_mail_extract`/`cmd_mail_get` do."""
+
+    def __init__(self, account, source_tag, exc, caps=None, messages=None):
+        super().__init__(account, source_tag, caps=caps, messages=messages)
+        self._exc = exc
+
+    def create_draft(self, raw_rfc822, folder="Drafts"):
+        raise self._exc
+
+    def send_draft(self, draft_id):
+        raise self._exc
+
+    def fetch_message(self, uid, folder=None):
+        raise self._exc
+
+
+_LIVE_FAILURES = [
+    lambda: RuntimeError("JMAP Email/import failed: HTTP 503"),
+    lambda: OSError("[Errno 111] Connection refused"),
+    lambda: imaplib.IMAP4.error("bad app-password"),
+]
+_LIVE_FAILURE_IDS = ["jmap_runtime_error", "oserror", "imap4_error"]
+
+
+def _assert_structured_failure(capsys, exc_info):
+    assert exc_info.value.code != 0, "a live adapter failure must exit non-zero"
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err, (
+        f"a live failure must never leak a raw traceback; got "
+        f"stdout={captured.out!r} stderr={captured.err!r}")
+    payload = json.loads(captured.out.strip())
+    assert "error" in payload, f"expected a structured error payload, got {payload}"
+    return payload
+
+
+@pytest.mark.parametrize("make_exc", _LIVE_FAILURES, ids=_LIVE_FAILURE_IDS)
+def test_mail_draft_live_create_draft_failure_is_a_structured_error_exit_1(
+        monkeypatch, capsys, tmp_path, make_exc):
+    _isolate_backend(monkeypatch, tmp_path)
+    _seed_contact("ven_acme", "vendor@example.com")
+    adapter = RaisingAdapter("fastmail_main", "[FM]", make_exc(), caps={"send"})
+    client = MailClient({"fastmail_main": adapter})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_draft(Namespace(
+            account="fastmail_main", from_addr="me@fastmail.com",
+            to="vendor@example.com", subject="Order query",
+            body="Please help.", cc=None, attach=None, case=None,
+        ))
+
+    payload = _assert_structured_failure(capsys, exc_info)
+    assert payload.get("account") == "fastmail_main"
+
+
+@pytest.mark.parametrize("make_exc", _LIVE_FAILURES, ids=_LIVE_FAILURE_IDS)
+def test_mail_reply_live_create_draft_failure_is_a_structured_error_exit_1(
+        monkeypatch, capsys, tmp_path, make_exc):
+    _isolate_backend(monkeypatch, tmp_path)
+    _seed_contact("ven_acme", "vendor@example.com")
+    source = _msg("<m1@y>", "fastmail_main", "[FM]", "Order Update",
+                  "vendor@example.com", "2026-07-25T09:00:00Z", "src-1")
+    adapter = RecordingAdapter("fastmail_main", "[FM]", caps={"send"}, messages=[source])
+    exc = make_exc()
+
+    def _raise(_raw, folder="Drafts"):
+        raise exc
+
+    adapter.create_draft = _raise
+    client = MailClient({"fastmail_main": adapter})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_reply(Namespace(
+            account="fastmail_main", uid="src-1", from_addr="me@fastmail.com",
+            body="Following up.", attach=None, case=None,
+        ))
+
+    payload = _assert_structured_failure(capsys, exc_info)
+    assert payload.get("account") == "fastmail_main"
+
+
+@pytest.mark.parametrize("make_exc", _LIVE_FAILURES, ids=_LIVE_FAILURE_IDS)
+def test_mail_reply_live_fetch_failure_is_a_structured_error_exit_1(
+        monkeypatch, capsys, make_exc):
+    adapter = RaisingAdapter("fastmail_main", "[FM]", make_exc(), caps={"send"})
+    client = MailClient({"fastmail_main": adapter})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_reply(Namespace(
+            account="fastmail_main", uid="src-1", from_addr="me@fastmail.com",
+            body="Following up.", attach=None, case=None,
+        ))
+
+    payload = _assert_structured_failure(capsys, exc_info)
+    assert payload.get("uid") == "src-1"
+
+
+@pytest.mark.parametrize("make_exc", _LIVE_FAILURES, ids=_LIVE_FAILURE_IDS)
+def test_mail_send_live_send_failure_is_a_structured_error_exit_1(
+        monkeypatch, capsys, tmp_path, make_exc):
+    from vidushi_oa.mail import accounts
+
+    monkeypatch.setenv("VIDUSHI_MAIL_CONFIG", str(tmp_path / "accounts.json"))
+    accounts.add_account("fastmail_main", "fastmail", "me@fastmail.com",
+                         "keyring:fastmail-main", send=True)
+    adapter = RaisingAdapter("fastmail_main", "[FM]", make_exc(), caps={"send"})
+    client = MailClient({"fastmail_main": adapter})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_send(Namespace(account="fastmail_main", draft="draft-42"))
+
+    payload = _assert_structured_failure(capsys, exc_info)
+    assert payload.get("draft") == "draft-42"
+
+
+def test_mail_get_live_jmap_runtime_error_is_a_structured_error_exit_1(
+        monkeypatch, capsys):
+    """`JmapAdapter.fetch_message` raises `RuntimeError` on any non-200
+    `Email/get`; `cmd_mail_get` must render it structurally — the parity with
+    `cmd_mail_extract` its docstring claims."""
+    adapter = RaisingAdapter(
+        "fastmail_main", "[FM]", RuntimeError("JMAP Email/get failed: HTTP 503"))
+    client = MailClient({"fastmail_main": adapter})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_get(Namespace(account="fastmail_main", uid="uid-1"))
+
+    payload = _assert_structured_failure(capsys, exc_info)
+    assert payload.get("uid") == "uid-1"
 
 
 # --------------------------------------------------------------------------- #

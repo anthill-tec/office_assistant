@@ -60,6 +60,27 @@ _CANNED_SESSION = {
     "capabilities": {"urn:ietf:params:jmap:mail": {}},
 }
 
+UPLOAD_URL_TEMPLATE = "https://api.fastmail.com/upload/{accountId}/"
+UPLOAD_URL = f"https://api.fastmail.com/upload/{ACCOUNT_ID}/"
+DRAFTS_MAILBOX_ID = "Mb-drafts"
+BLOB_ID = "Gb-blob-1"
+
+# Every real Fastmail session advertises `uploadUrl` (RFC 8620 §2 makes it a
+# mandatory Session property) — the blob+import draft flow is the only path.
+_SESSION_WITH_UPLOAD = dict(_CANNED_SESSION, uploadUrl=UPLOAD_URL_TEMPLATE)
+
+_MAILBOX_QUERY_OK = {
+    "methodResponses": [
+        ["Mailbox/query", {"accountId": ACCOUNT_ID, "ids": [DRAFTS_MAILBOX_ID]}, "0"],
+    ],
+}
+_IMPORT_OK = {
+    "methodResponses": [
+        ["Email/import",
+         {"accountId": ACCOUNT_ID, "created": {"draft": {"id": "Md-draft-1"}}}, "0"],
+    ],
+}
+
 
 def _build_raw_message(subject, from_addr, to_addr, body):
     """A minimal, real RFC 5322 byte payload (not the §S2 `compose()` — that's
@@ -351,19 +372,55 @@ class _JmapFakeTransport:
         return [c[3] for c in self.calls if c[0] == "POST"]
 
 
-class JmapCreateDraftEmailSetTest(unittest.TestCase):
-    """§S1 AC: `JmapAdapter.create_draft` issues one `Email/set` whose
-    `create` object carries the `$draft` keyword, and returns the created
-    email's id."""
+class _JmapRoutingTransport:
+    """Routes each call by URL / JMAP method name so the blob upload, the
+    `Mailbox/query` and the `Email/import` each get their OWN canned response.
 
-    def test_create_draft_issues_email_set_with_draft_keyword(self):
-        create_response = {
-            "methodResponses": [
-                ["Email/set", {"accountId": ACCOUNT_ID,
-                               "created": {"draft1": {"id": "Md-draft-1"}}}, "0"],
-            ],
-        }
-        transport = _JmapFakeTransport(responses=[create_response])
+    `_JmapFakeTransport`'s flat queue hands the same payload to all three, which
+    silently masks a draft carrying neither a real blob nor a real mailbox — the
+    exact wiring this fake exists to pin."""
+
+    def __init__(self, session=None, upload=None, upload_status=200, api=None):
+        self.session = _SESSION_WITH_UPLOAD if session is None else session
+        self.upload = {"blobId": BLOB_ID} if upload is None else upload
+        self.upload_status = upload_status
+        self.api = dict(api or {})
+        self.api.setdefault("Mailbox/query", _MAILBOX_QUERY_OK)
+        self.api.setdefault("Email/import", _IMPORT_OK)
+        self.calls = []
+
+    def __call__(self, method, url, headers, body):
+        self.calls.append((method, url, headers, body))
+        if method == "GET":
+            return 200, self.session
+        if url == UPLOAD_URL:
+            return self.upload_status, self.upload
+        return 200, self.api.get(body["methodCalls"][0][0], {"methodResponses": []})
+
+    def api_call(self, name):
+        """The single `methodCalls` entry posted for JMAP method `name`, or None."""
+        for method, url, _headers, body in self.calls:
+            if method == "POST" and url != UPLOAD_URL \
+                    and body["methodCalls"][0][0] == name:
+                return body["methodCalls"][0]
+        return None
+
+    def upload_bodies(self):
+        return [body for method, url, _headers, body in self.calls
+                if method == "POST" and url == UPLOAD_URL]
+
+    def post_calls(self):
+        return [c for c in self.calls if c[0] == "POST"]
+
+
+class JmapCreateDraftBlobImportTest(unittest.TestCase):
+    """§S1 AC (release/1.1.1 code-review): `JmapAdapter.create_draft` uploads the
+    composed RFC822 as a blob and imports it into the Drafts mailbox with the
+    `$draft` keyword, returning the created email's id. Supersedes the original
+    content-less `Email/set` assertion — that path created EMPTY Fastmail drafts."""
+
+    def test_create_draft_imports_the_uploaded_blob_into_drafts_with_draft_keyword(self):
+        transport = _JmapRoutingTransport()
         adapter = JmapAdapter(
             account="fastmail_main", source_tag="[FM]", token="secret-token",
             session_url=SESSION_URL, transport=transport,
@@ -372,15 +429,155 @@ class JmapCreateDraftEmailSetTest(unittest.TestCase):
 
         draft_id = adapter.create_draft(raw)
 
-        post_bodies = transport.post_bodies()
-        self.assertEqual(len(post_bodies), 1)
-        method_calls = post_bodies[0]["methodCalls"]
-        set_call = next(c for c in method_calls if c[0] == "Email/set")
-        created_objects = list(set_call[1]["create"].values())
-        self.assertEqual(len(created_objects), 1)
-        keywords = created_objects[0].get("keywords", {})
-        self.assertTrue(keywords.get("$draft"), f"created email must carry $draft: {created_objects[0]!r}")
+        self.assertEqual(transport.upload_bodies(), [raw],
+                         "the literal raw_rfc822 bytes must be uploaded as a blob")
+        import_call = transport.api_call("Email/import")
+        self.assertIsNotNone(import_call, "create_draft must issue an Email/import")
+        imported = list(import_call[1]["emails"].values())
+        self.assertEqual(len(imported), 1)
+        self.assertEqual(imported[0].get("blobId"), BLOB_ID,
+                         "Email/import must reference the uploaded blobId")
+        self.assertEqual(imported[0].get("mailboxIds"), {DRAFTS_MAILBOX_ID: True},
+                         "Email/import must land in the resolved Drafts mailbox")
+        self.assertTrue(imported[0].get("keywords", {}).get("$draft"),
+                        f"imported email must carry $draft: {imported[0]!r}")
         self.assertEqual(draft_id, "Md-draft-1")
+
+    def test_blob_upload_accepts_http_201_created(self):
+        """Fastmail/Cyrus answers a JMAP blob upload with `201 Created` (RFC 8620
+        §6.1 never mandates 200) — treating anything but 200 as a failure makes
+        EVERY real draft raise, so any 2xx must be accepted."""
+        transport = _JmapRoutingTransport(upload_status=201)
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        self.assertEqual(adapter.create_draft(raw), "Md-draft-1")
+
+    def test_session_without_upload_url_raises_instead_of_creating_an_empty_draft(self):
+        """`uploadUrl` is a mandatory Session property; without it there is no way
+        to transmit the composed content, so a structured failure is the only
+        correct outcome — never a silent content-less draft."""
+        transport = _JmapRoutingTransport(session=_CANNED_SESSION)
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.create_draft(raw)
+
+        self.assertIn("uploadUrl", str(ctx.exception))
+        self.assertEqual(transport.post_calls(), [],
+                         "no draft-creating POST may be issued without an uploadUrl")
+
+    def test_upload_returning_no_blob_id_raises(self):
+        transport = _JmapRoutingTransport(upload={})
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        with self.assertRaises(RuntimeError):
+            adapter.create_draft(raw)
+
+        self.assertIsNone(transport.api_call("Email/import"),
+                          "an import must not be attempted without a blobId")
+
+    def test_no_drafts_mailbox_raises_instead_of_importing_with_empty_mailbox_ids(self):
+        """RFC 8621 §4.8 requires at least one mailbox on an `EmailImport`; posting
+        `mailboxIds: {}` is a guaranteed server-side rejection reported to the user
+        as a successful draft."""
+        empty_query = {
+            "methodResponses": [
+                ["Mailbox/query", {"accountId": ACCOUNT_ID, "ids": []}, "0"],
+            ],
+        }
+        transport = _JmapRoutingTransport(api={"Mailbox/query": empty_query})
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.create_draft(raw)
+
+        self.assertIn("Drafts", str(ctx.exception))
+        self.assertIsNone(transport.api_call("Email/import"),
+                          "no Email/import may be posted with an empty mailboxIds")
+
+    def test_import_rejected_with_not_created_raises_instead_of_empty_draft_id(self):
+        """A JMAP method-level rejection arrives inside an HTTP 200 as a
+        `notCreated` SetError — returning "" for it reports a phantom draft."""
+        not_created = {
+            "methodResponses": [
+                ["Email/import",
+                 {"accountId": ACCOUNT_ID,
+                  "notCreated": {"draft": {"type": "invalidProperties",
+                                           "properties": ["mailboxIds"]}}}, "0"],
+            ],
+        }
+        transport = _JmapRoutingTransport(api={"Email/import": not_created})
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.create_draft(raw)
+
+        self.assertIn("invalidProperties", str(ctx.exception))
+
+    def test_import_method_level_error_response_raises_instead_of_empty_draft_id(self):
+        """A failed method call comes back as `["error", {...}, callId]` inside an
+        HTTP 200 response — it must not degrade into an empty draft id either."""
+        errored = {
+            "methodResponses": [
+                ["error", {"type": "accountNotFound"}, "0"],
+            ],
+        }
+        transport = _JmapRoutingTransport(api={"Email/import": errored})
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.create_draft(raw)
+
+        self.assertIn("accountNotFound", str(ctx.exception))
+
+
+class JmapSendDraftFailureTest(unittest.TestCase):
+    """The same silent-empty-id class of bug on the send path: an
+    `EmailSubmission/set` rejected with `notCreated` must raise, never return ""
+    and be reported to the user as a sent message."""
+
+    def test_submission_rejected_with_not_created_raises(self):
+        not_created = {
+            "methodResponses": [
+                ["EmailSubmission/set",
+                 {"accountId": ACCOUNT_ID,
+                  "notCreated": {"submission": {"type": "forbiddenFrom"}}}, "0"],
+            ],
+        }
+        transport = _JmapFakeTransport(responses=[not_created])
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.send_draft("Md-draft-1")
+
+        self.assertIn("forbiddenFrom", str(ctx.exception))
 
 
 class JmapSendDraftEmailSubmissionTest(unittest.TestCase):
@@ -431,12 +628,11 @@ class JmapCreateDraftTransmitsComposedContentTest(unittest.TestCase):
          `bodyStructure`/`blobId` field) landing in the Drafts mailbox with
          the `$draft` keyword still set.
 
-    This test does not over-pin step 3's exact method name/shape (the DN
-    leaves `Email/import` vs. a blob-referencing `Email/set` open) — it
-    instead asserts the OBSERVABLE outcome any correct implementation must
-    produce: the composed subject/from/to/body bytes must appear SOMEWHERE
-    in what the adapter's transport actually sent. Today nothing is sent
-    but the bare `$draft` keyword, so every assertion below fails.
+    Beyond the composed bytes reaching the wire, the draft is only real when
+    the `Email/import` actually REFERENCES the uploaded blob and the resolved
+    Drafts mailbox — an import carrying an empty `blobId`/`mailboxIds` is a
+    server-side rejection dressed up as a successful draft, so both are pinned
+    here against a transport that answers each call distinctly.
     """
 
     def test_create_draft_transmits_the_composed_message_content(self):
@@ -446,18 +642,7 @@ class JmapCreateDraftTransmitsComposedContentTest(unittest.TestCase):
             subject="Warranty claim for X200",
             body="Please advise on RMA for my X200 unit.",
         )
-        session_with_upload = dict(
-            _CANNED_SESSION,
-            uploadUrl="https://api.fastmail.com/upload/{accountId}/",
-        )
-        create_response = {
-            "methodResponses": [
-                ["Email/set", {"accountId": ACCOUNT_ID,
-                               "created": {"draft1": {"id": "Md-draft-2"}}}, "0"],
-            ],
-        }
-        transport = _JmapFakeTransport(
-            session_response=session_with_upload, responses=[create_response])
+        transport = _JmapRoutingTransport()
         adapter = JmapAdapter(
             account="fastmail_main", source_tag="[FM]", token="secret-token",
             session_url=SESSION_URL, transport=transport,
@@ -492,6 +677,18 @@ class JmapCreateDraftTransmitsComposedContentTest(unittest.TestCase):
             "(a POST whose body IS raw, not JSON-wrapped) to the session's "
             "uploadUrl — today no call carries the raw bytes at all",
         )
+
+        import_call = transport.api_call("Email/import")
+        self.assertIsNotNone(
+            import_call,
+            "the uploaded blob must be imported — a blob nobody imports is not a draft")
+        imported = list(import_call[1]["emails"].values())[0]
+        self.assertEqual(
+            imported.get("blobId"), BLOB_ID,
+            "Email/import must reference the blobId the upload returned, not \"\"")
+        self.assertEqual(
+            imported.get("mailboxIds"), {DRAFTS_MAILBOX_ID: True},
+            "Email/import must reference the Mailbox/query-resolved Drafts id, not {}")
 
 
 if __name__ == "__main__":

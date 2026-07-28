@@ -881,6 +881,21 @@ def cmd_mail_accounts(a):
         out(envelope)
 
 
+# Every exception a real mail adapter raises on a LIVE failure: a JMAP non-200 or
+# method-level rejection (`RuntimeError`), a missing key/uid (`LookupError`), and the
+# IMAP/network surface (`imaplib.IMAP4.error` / `OSError`, which `urllib.error.URLError`
+# subclasses). Rendered structurally by `_mail_failure_exit` — never as a traceback.
+_MAIL_LIVE_ERRORS = (LookupError, RuntimeError, imaplib.IMAP4.error, OSError,
+                     urllib.error.URLError)
+
+
+def _mail_failure_exit(e, **context):
+    """Render a live mail-adapter failure as the structured `{"error", ...}` payload
+    + exit 1 (AXI #6: no traceback) — the shared seam every mail verb uses."""
+    out({"error": str(e) or e.__class__.__name__, **context})
+    sys.exit(1)
+
+
 def cmd_mail_get(a):
     """Fetch one message by `--account` + `--uid` via that account's adapter. An
     unknown account or uid — or an adapter that cannot fetch by uid (JMAP) — is a
@@ -906,13 +921,8 @@ def cmd_mail_get(a):
         out({"error": "mail-get is not supported for this account",
              "account": a.account, "uid": a.uid})
         sys.exit(1)
-    except LookupError as e:
-        out({"error": str(e), "account": a.account, "uid": a.uid})
-        sys.exit(1)
-    except (imaplib.IMAP4.error, OSError, urllib.error.URLError) as e:
-        out({"error": str(e) or e.__class__.__name__,
-             "account": a.account, "uid": a.uid})
-        sys.exit(1)
+    except _MAIL_LIVE_ERRORS as e:
+        _mail_failure_exit(e, account=a.account, uid=a.uid)
     if msg is None:
         out({"error": "message not found", "account": a.account, "uid": a.uid})
         sys.exit(1)
@@ -946,14 +956,8 @@ def cmd_mail_extract(a):
         out({"error": "mail-extract is not supported for this account",
              "account": a.account, "uid": a.uid})
         sys.exit(1)
-    except (LookupError, RuntimeError) as e:
-        out({"error": str(e) or e.__class__.__name__,
-             "account": a.account, "uid": a.uid})
-        sys.exit(1)
-    except (imaplib.IMAP4.error, OSError, urllib.error.URLError) as e:
-        out({"error": str(e) or e.__class__.__name__,
-             "account": a.account, "uid": a.uid})
-        sys.exit(1)
+    except _MAIL_LIVE_ERRORS as e:
+        _mail_failure_exit(e, account=a.account, uid=a.uid)
     entities = extract_schema_org(html or "")
     candidates = to_store_candidates(entities)
     if _FMT == "json":
@@ -1069,7 +1073,10 @@ def cmd_mail_draft(a):
     else:
         raw = compose(a.from_addr, a.to, a.subject, a.body, cc=a.cc,
                       attachments=attachments)
-    draft_id = adapter.create_draft(raw)
+    try:
+        draft_id = adapter.create_draft(raw)
+    except _MAIL_LIVE_ERRORS as e:
+        _mail_failure_exit(e, account=a.account, to=a.to)
     _save_draft_link(a, draft_id)
     out({"status": "drafted", "draft": draft_id, "account": a.account})
 
@@ -1092,7 +1099,10 @@ def cmd_mail_send(a):
         out({"error": str(e), "account": a.account})
         sys.exit(1)
     adapter = _mail_adapter_or_exit(client, a.account, draft=a.draft)
-    message_id = adapter.send_draft(a.draft)
+    try:
+        message_id = adapter.send_draft(a.draft)
+    except _MAIL_LIVE_ERRORS as e:
+        _mail_failure_exit(e, account=a.account, draft=a.draft)
     linked = _record_sent_correspondence(a.draft, message_id)
     status = {"status": "sent", "message_id": message_id,
               "draft": a.draft, "account": a.account}
@@ -1141,6 +1151,8 @@ def cmd_mail_reply(a):
         source = adapter.fetch_message(a.uid)
     except KeyError:
         source = None
+    except _MAIL_LIVE_ERRORS as e:
+        _mail_failure_exit(e, account=a.account, uid=a.uid)
     if source is None:
         out({"error": "message not found", "account": a.account, "uid": a.uid})
         sys.exit(1)
@@ -1159,7 +1171,10 @@ def cmd_mail_reply(a):
         raw = compose(a.from_addr, to, subject, a.body,
                       in_reply_to=source.id, references=references,
                       attachments=attachments)
-    draft_id = adapter.create_draft(raw)
+    try:
+        draft_id = adapter.create_draft(raw)
+    except _MAIL_LIVE_ERRORS as e:
+        _mail_failure_exit(e, account=a.account, to=to)
     _save_draft_link(a, draft_id)
     out({"status": "drafted", "draft": draft_id, "account": a.account})
 

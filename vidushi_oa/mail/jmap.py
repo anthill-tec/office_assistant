@@ -54,13 +54,27 @@ def _urllib_transport(method, url, headers, body):
 
 def _created_id(payload, method_name) -> str:
     """Return the id of the single object created by `method_name` in a JMAP
-    `methodResponses` payload."""
+    `methodResponses` payload.
+
+    JMAP reports method-level failures INSIDE an HTTP 200 response — either a
+    per-object `notCreated` SetError or a whole-call `["error", {...}, callId]`
+    response — so every one of those is raised as a structured `RuntimeError`
+    rather than degrading into an empty id a caller would report as success."""
     for response in payload.get("methodResponses", []):
+        if response[0] == "error":
+            raise RuntimeError(
+                f"JMAP {method_name} failed: {json.dumps(response[1])}")
         if response[0] == method_name:
-            created = response[1].get("created", {})
-            for obj in created.values():
-                return obj.get("id", "")
-    return ""
+            not_created = response[1].get("notCreated") or {}
+            if not_created:
+                raise RuntimeError(
+                    f"JMAP {method_name} rejected: {json.dumps(not_created)}")
+            for obj in (response[1].get("created") or {}).values():
+                created_id = obj.get("id", "")
+                if created_id:
+                    return created_id
+            raise RuntimeError(f"JMAP {method_name} returned no created id")
+    raise RuntimeError(f"JMAP {method_name} returned no {method_name} response")
 
 
 def _format_address(addresses):
@@ -118,51 +132,51 @@ class JmapAdapter(MailAdapter):
         """Create a draft from the composed `raw_rfc822` message; return the
         created email's id.
 
-        When the session advertises an `uploadUrl` (every real Fastmail session
-        does), the literal RFC822 bytes are uploaded as a JMAP blob and then
-        imported into the Drafts mailbox with the `$draft` keyword — so the
-        composed content actually reaches the server. A minimal session with no
-        upload endpoint falls back to a bare `Email/set` draft."""
+        The literal RFC822 bytes are uploaded as a JMAP blob and then imported
+        into the Drafts mailbox with the `$draft` keyword — so the composed
+        content actually reaches the server. `uploadUrl` is a mandatory Session
+        property (RFC 8620 §2); a session without one offers no way to transmit
+        the content, so it is a structured failure rather than a silent
+        content-less draft."""
         api_url, account_id = self._session()
         if not self._upload_url:
-            return self._create_draft_via_set(api_url, account_id)
+            raise RuntimeError(
+                "JMAP session advertises no uploadUrl — cannot create a draft "
+                "carrying the composed message")
         blob_id = self._upload_blob(self._upload_url, raw_rfc822)
         return self._import_draft(api_url, account_id, blob_id)
 
-    def _create_draft_via_set(self, api_url, account_id) -> str:
-        """Fallback draft creation for a session without an `uploadUrl`: a single
-        `Email/set` carrying only the `$draft` keyword."""
-        body = {
-            "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
-            "methodCalls": [
-                ["Email/set",
-                 {"accountId": account_id,
-                  "create": {"draft": {"keywords": {"$draft": True}}}},
-                 "0"],
-            ],
-        }
-        status, payload = self._transport("POST", api_url, self._auth_headers(), body)
-        if status != 200:
-            raise RuntimeError(f"JMAP Email/set failed: HTTP {status}")
-        return _created_id(payload, "Email/set")
-
     def _upload_blob(self, upload_url, raw_rfc822) -> str:
         """Upload the literal `raw_rfc822` bytes to the session `uploadUrl` and
-        return the resulting `blobId`."""
+        return the resulting `blobId`.
+
+        Any 2xx is a successful upload — RFC 8620 §6.1 does not mandate 200, and
+        Fastmail/Cyrus answers `201 Created`."""
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "message/rfc822",
         }
         status, payload = self._transport("POST", upload_url, headers, raw_rfc822)
-        if status != 200:
+        if not 200 <= status < 300:
             raise RuntimeError(f"JMAP blob upload failed: HTTP {status}")
-        return payload.get("blobId", "")
+        blob_id = payload.get("blobId", "")
+        if not blob_id:
+            raise RuntimeError("JMAP blob upload returned no blobId")
+        return blob_id
 
     def _import_draft(self, api_url, account_id, blob_id) -> str:
         """Import an uploaded blob into the Drafts mailbox as a `$draft` message
-        via one `Email/import`; return the created email's id."""
+        via one `Email/import`; return the created email's id.
+
+        RFC 8621 §4.8 requires at least one mailbox on an `EmailImport`, so an
+        unresolvable Drafts mailbox fails fast instead of posting a
+        guaranteed-invalid `mailboxIds: {}` the user would see as a saved draft."""
         drafts_id = self._drafts_mailbox_id(api_url, account_id)
-        mailbox_ids = {drafts_id: True} if drafts_id else {}
+        if not drafts_id:
+            raise RuntimeError(
+                "JMAP account has no Drafts mailbox — refusing to import a draft "
+                "with no mailbox")
+        mailbox_ids = {drafts_id: True}
         body = {
             "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
             "methodCalls": [
