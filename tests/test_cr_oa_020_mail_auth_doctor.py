@@ -22,16 +22,16 @@ Neither the stdin-secret path on `mail-auth` nor the `doctor` verb exist yet:
   - `doctor` is not a registered subcommand, so `store.py doctor ...` fails at argparse
     ("invalid choice") — RED.
 
-Hermetic-environment choices (NO live creds / NO real OS keyring or vault):
+Hermetic-environment choices (NO live creds / NO real OS keyring):
   - Every subprocess run points `VIDUSHI_MAIL_CONFIG` at a tmp accounts file and
-    `VIDUSHI_SECRETS_FILE` at a tmp secrets file, and scrubs `op`/`bw` off `PATH` (and unsets
-    `OP_SERVICE_ACCOUNT_TOKEN`/`BW_SESSION`) so the vault-detection path never finds a real
-    vault CLI, regardless of what happens to be installed on the host running this suite.
+    `VIDUSHI_SECRETS_FILE` at a tmp secrets file, keeping every credential reference and
+    secret inside our own tmpdir regardless of the host running this suite.
   - For the stdin/e2e + doctor tests we pin `VIDUSHI_SECRET_BACKEND=file` so the secret sink
     is the tmp FILE backend (a plain 0600 JSON file under our own tmpdir) — NEVER the real
     keyring.
-  - For the ONE test that must exercise the "no vault provisioned -> fall back to keyring"
-    path (AC-b), we additionally force `PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring`
+  - For the ONE test that must exercise the "auto-selected keyring primary stores the secret
+    and warns" path (AC-b), we additionally force
+    `PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring`
     — a backend that ships with `keyring` itself (no extra dependency), whose `set_password`/
     `get_password` are no-ops that never touch real OS secret storage and never raise. This
     was verified necessary: probing this very sandbox shows `keyring.get_keyring()` resolves
@@ -73,19 +73,6 @@ NULL_KEYRING = "keyring.backends.null.Keyring"
 ALT_FILE_KEYRING = "keyrings.alt.file.PlaintextKeyring"
 
 
-def _scrub_path_of(path_value, *names):
-    """Return `path_value` with any directory containing one of `names` removed
-    (so a real `op`/`bw` on the host running this suite can never be found)."""
-    kept = []
-    for part in path_value.split(os.pathsep):
-        if not part:
-            continue
-        if any(os.path.exists(os.path.join(part, name)) for name in names):
-            continue
-        kept.append(part)
-    return os.pathsep.join(kept)
-
-
 class MailAuthDoctorTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="oa-cr020-s7-")
@@ -99,9 +86,6 @@ class MailAuthDoctorTest(unittest.TestCase):
         self.env["VIDUSHI_SECRET_BACKEND"] = "file"
         self.env["VIDUSHI_BACKEND"] = "sqlite"
         self.env["VIDUSHI_SQLITE_PATH"] = self.sqlite_path
-        self.env["PATH"] = _scrub_path_of(self.env.get("PATH", ""), "op", "bw")
-        self.env.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
-        self.env.pop("BW_SESSION", None)
         self.env.pop("PYTHON_KEYRING_BACKEND", None)
 
     def tearDown(self):
@@ -152,7 +136,8 @@ class MailAuthDoctorTest(unittest.TestCase):
         self.assertEqual(len(accounts), 1)
         entry = accounts[0]
         self.assertEqual(set(entry.keys()),
-                         {"name", "provider", "address", "secret_ref", "auth_mode"})
+                         {"name", "provider", "address", "secret_ref", "auth_mode", "send",
+                          "aliases"})
         self.assertEqual(entry["provider"], "gmail")
         self.assertEqual(entry["address"], "me@x.com")
         self.assertEqual(entry["auth_mode"], "password",
@@ -263,9 +248,9 @@ class MailAuthDoctorTest(unittest.TestCase):
     # AC-b — keyring fallback + warning, no crash
     # ------------------------------------------------------------------
 
-    def test_mail_auth_falls_back_to_keyring_with_warning_when_no_vault_provisioned(self):
-        # Auto-select the primary backend (no VIDUSHI_SECRET_BACKEND override): with op/bw
-        # absent from PATH, the resolver must land on keyring, not crash, and warn. Point it at
+    def test_mail_auth_stores_in_keyring_with_warning_when_backend_auto_selected(self):
+        # Auto-select the primary backend (no VIDUSHI_SECRET_BACKEND override): the resolver
+        # must land on the keyring, not crash, and warn. Point it at
         # a REAL, storable, hermetic keyring (keyrings.alt's file-backed PlaintextKeyring,
         # relocated under a fresh XDG_DATA_HOME tempdir) rather than the null no-op backend, so
         # the fallback actually stores the secret and the "keyring" warning is proven true, not

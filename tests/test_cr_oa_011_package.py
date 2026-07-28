@@ -207,12 +207,12 @@ class PyprojectTest(unittest.TestCase):
 
     def test_base_deps_are_toon_and_jsonschema_pymongo_is_optional(self):
         # §S3 — pymongo is OPTIONAL (SQLite is the default backend); base deps carry
-        # only python-toon + jsonschema.
+        # only toon-format + jsonschema.
         deps = self.data["project"].get("dependencies", [])
         self.assertTrue(deps, "expected [project].dependencies to be non-empty")
         self.assertTrue(
-            any(d.lower().replace("_", "-").startswith("python-toon") for d in deps),
-            f"expected a python-toon dependency, got: {deps}",
+            any(d.lower().startswith("toon-format") for d in deps),
+            f"expected a toon-format dependency, got: {deps}",
         )
         self.assertTrue(
             any(d.lower().startswith("jsonschema") for d in deps),

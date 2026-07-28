@@ -51,7 +51,7 @@ _CANNED_SESSION = {
     "apiUrl": API_URL,
     "accounts": {
         ACCOUNT_ID: {
-            "name": "new.book1604@fastmail.com",
+            "name": "you@fastmail.com",
             "isPersonal": True,
             "accountCapabilities": {"urn:ietf:params:jmap:mail": {}},
         },
@@ -70,7 +70,7 @@ def _canned_email_get_response(ids=("Ma1", "Ma2")):
             "messageId": ["<msg1@example.com>"],
             "subject": "Invoice from Acme",
             "from": [{"name": "Acme Billing", "email": "billing@acme.example"}],
-            "to": [{"name": "Antony John", "email": "new.book1604@fastmail.com"}],
+            "to": [{"name": "Alex Doe", "email": "you@fastmail.com"}],
             "receivedAt": "2026-07-20T10:00:00Z",
             "deliveredTo": "purchases-alias@fastmail.com",
         },
@@ -80,7 +80,7 @@ def _canned_email_get_response(ids=("Ma1", "Ma2")):
             "messageId": ["<msg2@example.com>"],
             "subject": "Your receipt",
             "from": [{"name": "Shop Receipts", "email": "receipts@shop.example"}],
-            "to": [{"name": "Antony John", "email": "new.book1604@fastmail.com"}],
+            "to": [{"name": "Alex Doe", "email": "you@fastmail.com"}],
             "receivedAt": "2026-07-21T11:00:00Z",
             "deliveredTo": "purchases-alias@fastmail.com",
         },
@@ -299,7 +299,7 @@ class JmapCapabilitiesTest(unittest.TestCase):
 
         self.assertEqual(
             adapter.capabilities(),
-            {"server_threads", "server_side_search", "projection"},
+            {"server_threads", "server_side_search", "projection", "send"},
         )
         self.assertNotIn("raw_query", adapter.capabilities())
 

@@ -201,7 +201,7 @@ class GmailCapabilitiesTest(unittest.TestCase):
 
         self.assertEqual(
             adapter.capabilities(),
-            {"raw_query", "server_side_categories", "server_threads"},
+            {"raw_query", "server_side_categories", "server_threads", "send"},
         )
 
 

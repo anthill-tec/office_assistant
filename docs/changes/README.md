@@ -42,8 +42,16 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-017](CR-OA-017-axi-conformance-audit.md) | AXI conformance audit + gap-closure (full verb surface) | maintenance | COMPLETED | 009, 010, 014 | 8 |
 | [CR-OA-018](CR-OA-018-pluggable-backend-and-packaging.md) | Pluggable backend (SQLite default) + GPL-v3 `uv`/PyPI packaging | feature | COMPLETED | 016, 017 | 8 |
 | [CR-OA-019](CR-OA-019-skill-mail-prerequisites.md) | Skill mail-access prerequisites (declared + orchestrated) | docs | SUPERSEDED (by 020) | 016 | 8 |
-| [CR-OA-020](CR-OA-020-embedded-mail-client.md) | Embedded mail client in `voa` (Gmail/Fastmail/Yahoo + vault-first creds) | feature | PENDING | 017 | 9 |
-| [CR-OA-021](CR-OA-021-skill-mail-verbs.md) | Skill revision — `Mailboxes & search` uses `voa mail-*` verbs | docs | PENDING | 016, 020 | 9 |
+| [CR-OA-020](CR-OA-020-embedded-mail-client.md) | Embedded mail client in `voa` (Gmail/Fastmail/Yahoo + vault-first creds) | feature | COMPLETED (2026-07-27) | 017 | 9 |
+| [CR-OA-021](CR-OA-021-skill-mail-verbs.md) | Skill revision — `Mailboxes & search` uses `voa mail-*` verbs | docs | COMPLETED (2026-07-27) | 016, 020 | 9 |
+| [CR-OA-022](CR-OA-022-embedded-mail-sending.md) | Embedded mail *sending* in `voa` (draft-then-confirm, per-mailbox identity, store-linked) | feature | COMPLETED (2026-07-28) | 020 | 10 |
+| [CR-OA-023](CR-OA-023-keyring-primary-os-aware-secret-setup.md) | Keyring-primary secret store + OS-aware `setup` (drop vault backends; keyring a base dep) | feature | COMPLETED (2026-07-28) | 020 | 10 |
+| [CR-OA-024](CR-OA-024-jmap-post-content-type-header.md) | Fastmail JMAP POST missing `Content-Type` header (400s every request) | bugfix | COMPLETED (2026-07-28) | 020 | 10 |
+| [CR-OA-025](CR-OA-025-gmail-xgmraw-quoted-phrase-escaping.md) | Gmail `X-GM-RAW` search mis-quotes embedded phrases + correct search hints | bugfix | COMPLETED (2026-07-28) | 020 | 10 |
+| [CR-OA-026](CR-OA-026-mail-search-expose-uid.md) | `mail-search` omits IMAP `uid` (+ account) → `mail-get` unusable | bugfix | COMPLETED (2026-07-28) | 020 | 10 |
+| [CR-OA-027](CR-OA-027-orders-order-date-nullable-validator.md) | `orders.order_date` validator rejects null despite documented `str\|null` | bugfix | COMPLETED (2026-07-28) | 015 | 10 |
+| [CR-OA-028](CR-OA-028-schema-org-email-extraction.md) | schema.org email-markup structured extraction (`voa mail-extract`) + in-engine body retrieval | feature | COMPLETED (2026-07-28) | 020, 024, 026 | 10 |
+| [CR-OA-029](CR-OA-029-purge-real-pii-from-public-surfaces.md) | Purge real personal identifiers from public surfaces (skill + tests) + enforce the no-personal-data invariant repo-wide | bugfix | COMPLETED (2026-07-28) | 023 | 10 |
 
 ## v0.1.0 milestone — Wave 6
 
@@ -127,6 +135,49 @@ mail. Design + primary-source research in
 **Order:** 017 (conformant CLI) → 020 → 021. Independent of the 018 packaging track; both can proceed in
 parallel after 017.
 
+## Wave 10 — embedded mail send + secret-store simplification (→ 1.1.0 minor)
+
+Wave 9 embedded mail **reading**; first real Phase-1 usage exposed two gaps. Design in
+[`../research/DN-mail-access.md`](../research/DN-mail-access.md) §Decision 7 (sending) + §Decision 8
+(secret store, supersedes §Decision 4).
+
+- **022** embeds mail **sending** — draft-then-confirm (`mail-draft`/`mail-send`/`mail-reply`, **never
+  auto-send**, engine-enforced), JMAP `EmailSubmission` + SMTP, masked-alias From, verified-recipient guard,
+  store-linked correspondence trail.
+- **023** simplifies the secret store — **drops the vault backends** (1Password/Bitwarden + `op://`),
+  **keyring becomes primary + a base dependency** (closing the installer gap), **OS-aware `setup`** with a
+  **doctor-driven remediation wizard** (agent guides, human performs the input steps), and the 0600 file
+  becomes an **explicit confirmed** choice (no silent downgrade).
+
+- **028** adds **schema.org email-markup structured extraction** (`voa mail-extract`) — parse `Order` /
+  `Invoice` / `ParcelDelivery` JSON-LD + microdata from the emails voa fetches → store candidates (agent
+  writes). Requires **in-engine HTML body retrieval** (IMAP + implementing JMAP `fetch_message`), kept
+  token-frugal by returning only compact candidates. **L** feature; the marketplace-API research (DN-external-
+  data-sources) concluded mail markup is the fidelity upgrade. Carrier-tracking aggregator (Decision 3) is
+  **deferred** by user decision.
+
+Cross-cutting invariants threaded through all: **no personal data in the client** (field descriptions +
+artificial samples only; real values live in the user's config/keyring), and the **agent-guides / human-inputs**
+split for every interactive step.
+
+- **024** fixes a **Fastmail-blocking bug** shipped in 1.0.0 — `JmapAdapter._auth_headers()` omits
+  `Content-Type: application/json`, so every Fastmail JMAP POST 400s (Gmail's IMAP path is unaffected). XS
+  one-line fix; the first usability issue surfaced by local Phase-1 use.
+- **025** fixes a **Gmail search bug** — `GmailImapAdapter.search()` wraps the `X-GM-RAW` arg in quotes
+  without escaping embedded `"`, so any **quoted phrase** yields a malformed IMAP `SEARCH` (qualifiers/`OR`/
+  parens are fine). Escapes/literals the arg so quoted phrases are **supported**, and corrects the
+  `mail-search` help + skill search-recipes guidance.
+- **026** fixes a **blocking mail bug** — `_mail_row()` drops `uid` + `account`, so a `mail-search` row
+  can't be fed to `mail-get` (Message-ID passed as `--uid` → `BAD Could not parse command`). No message body
+  was openable from search. Exposes both already-present fields on the row.
+- **027** fixes a **doc/validator mismatch** — `orders.order_date` validator rejects null though
+  `data/schema.md` documents `str|null`; widens the validator to `["string","null"]`.
+
+**Order:** the four bugfixes lead (unblock local use, smallest): **024** (Fastmail JMAP) + **026** (search
+uid) are the blocking pair, then **025** (Gmail quotes) + **027** (order_date) → then features **023**
+(secret store; 022's creds ride on it) → **022** (sending) → **028** (schema.org extraction; rides 024's JMAP
+fix + 026's uid). Each via RED/GREEN/VERIFY → no-mistakes → a combined **1.1.0** `git flow release`.
+
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
 tracking verbs still read JSONL; importing next repopulates Mongo so the store is functional
@@ -149,6 +200,17 @@ end-to-end. Both 006 and 004 depend only on the now-shipped 003.)
   / 004 port onto pymongo — not to be redone.
 - `data/*.jsonl` stay as the `snapshot` target (chezmoi-versioned); they are NOT committed to the
   project repo (gitignored). Mongo data lives on the local instance only.
+- **Wave 10 → 1.1.0 (2026-07-27):** CR-022 + CR-023 + CR-024 + CR-025 + CR-026 + CR-027 + CR-028 authored this
+  session (design phase, on develop). **Next session builds the 1.1.0 minor release** from them **plus any
+  further usability issues the user surfaces during local Phase-1 use** — those get filed as new CRs/tasks
+  at wave-open, not mid-execution (user directive). The **four bugfixes 024–027** all came from a local
+  Phase-1 mail-path session (Fastmail JMAP `Content-Type`; Gmail `X-GM-RAW` quoting; `mail-search` missing
+  `uid`; `orders.order_date` validator) — recorded as CRs rather than hotfixed today. 024 + 026 are the
+  blocking pair (Fastmail reads / opening any message). Vault-backend removal (023) is the one breaking bit,
+  accepted within the minor bump. **028 (schema.org extraction)** was added to 1.1.0 per user decision
+  (2026-07-27); it depends on 024 (JMAP fix) + 026 (search uid) and adds in-engine body retrieval. The
+  **carrier-tracking aggregator** (DN-external-data-sources §Decision 3) is **deferred** — opt-in option, not
+  in this release.
 
 ## Follow-up tasks
 Small items (no design surface → tasks, not CRs) surfaced during execution:

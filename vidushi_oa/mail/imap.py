@@ -10,8 +10,10 @@ thread ids straight from `X-GM-THRID`. `YahooImapAdapter` issues a plain RFC 350
 `SEARCH` and reconstructs threads client-side from `References`/`In-Reply-To`.
 """
 import email
+import email.utils
 import imaplib
 import re
+import smtplib
 
 from vidushi_oa.mail.base import MailAdapter, Message
 
@@ -21,13 +23,17 @@ _HEADER_SPEC = f"BODY.PEEK[HEADER.FIELDS ({_HEADER_FIELDS})]"
 
 _UID_RE = re.compile(rb"UID (\d+)")
 _THRID_RE = re.compile(rb"X-GM-THRID (\d+)")
+_APPENDUID_RE = re.compile(rb"APPENDUID (\d+) (\d+)")
+
+# SMTP submission (STARTTLS) port for every provider's message-submission agent.
+_SMTP_SUBMISSION_PORT = 587
 
 
 class ImapAdapter(MailAdapter):
     """Concrete IMAP adapter with a lazily-created, reused connection."""
 
     def __init__(self, account, source_tag, host, user, password, port=993,
-                 conn_factory=None):
+                 conn_factory=None, smtp_host=None, smtp_port=_SMTP_SUBMISSION_PORT):
         self.account = account
         self.source_tag = source_tag
         self.host = host
@@ -36,6 +42,11 @@ class ImapAdapter(MailAdapter):
         self.port = port
         self._factory = conn_factory or (lambda h, p: imaplib.IMAP4_SSL(h, p))
         self._connection = None
+        # Derive the SMTP submission host from the IMAP host when not injected
+        # (imap.gmail.com -> smtp.gmail.com, imap.mail.yahoo.com -> smtp.mail.yahoo.com).
+        self.smtp_host = smtp_host or (
+            "smtp." + host[len("imap."):] if host.startswith("imap.") else host)
+        self.smtp_port = smtp_port
 
     def _conn(self):
         """Create the connection once, then return the cached one."""
@@ -65,6 +76,81 @@ class ImapAdapter(MailAdapter):
         conn = self._conn()
         typ, data = conn.list()
         return _parse_folders(data)
+
+    def create_draft(self, raw_rfc822, folder="Drafts") -> str:
+        """APPEND `raw_rfc822` to `folder` flagged `\\Draft`; return a draft id.
+
+        A single IMAP `APPEND` stores the pre-rendered RFC 5322 bytes as a draft;
+        the returned id is the server-assigned UID parsed from the `APPENDUID`
+        response code (falling back to the raw response text when absent)."""
+        conn = self._conn()
+        typ, data = conn.append(folder, r"(\Draft)", None, raw_rfc822)
+        return _parse_append_uid(data)
+
+    def send_draft(self, draft_id, folder="Drafts") -> str:
+        """Dispatch the stored draft `draft_id` over SMTP (STARTTLS submission).
+
+        Fetches the drafted message's raw RFC 5322 bytes from `folder` by its
+        UID, parses the envelope sender (its `From`) and the recipient list (its
+        `To` + `Cc`), then connects to the provider's submission host on :587,
+        upgrades with STARTTLS, authenticates with this adapter's own IMAP
+        credential (the app-password already authorizes SMTP — DN §Decision 7),
+        and issues exactly one `sendmail` of the REAL draft bytes to the REAL
+        recipients. Returns the message's own `Message-ID` when present, else a
+        freshly-minted one."""
+        raw_bytes = self._fetch_draft_bytes(draft_id, folder)
+        parsed = email.message_from_bytes(raw_bytes)
+        from_addr = email.utils.parseaddr(parsed.get("From", ""))[1] or self.user
+        recipient_pairs = email.utils.getaddresses(
+            parsed.get_all("To", []) + parsed.get_all("Cc", []))
+        recipients = [addr for _name, addr in recipient_pairs if addr]
+        message_id = (parsed.get("Message-ID") or "").strip() or \
+            email.utils.make_msgid(domain=self.smtp_host)
+        smtp = smtplib.SMTP(self.smtp_host, self.smtp_port)
+        smtp.starttls()
+        smtp.login(self.user, self.password)
+        smtp.sendmail(from_addr, recipients, raw_bytes)
+        return message_id
+
+    def fetch_html_body(self, uid, folder=None) -> "str | None":
+        """Fetch message `uid`'s decoded `text/html` part as a `str`, or `None`.
+
+        Selects `folder` (default `INBOX`), issues one UID `FETCH (BODY[])` — the
+        CR-022 `_fetch_draft_bytes` tuple shape — parses the raw RFC 5322 bytes and
+        walks the MIME tree for the first `text/html` part, decoding it with that
+        part's charset. Returns `None` when the message carries no html part (e.g.
+        a plain-text-only message); the body is consumed in-engine only and is
+        never surfaced in `Message`/the AXI mail row."""
+        conn = self._conn()
+        conn.select(folder or "INBOX")
+        typ, data = conn.uid("FETCH", str(uid), "(BODY[])")
+        raw = None
+        for item in data or []:
+            if isinstance(item, tuple) and len(item) == 2:
+                raw = item[1]
+                break
+        if raw is None:
+            return None
+        parsed = email.message_from_bytes(raw)
+        for part in parsed.walk():
+            if part.get_content_type() != "text/html":
+                continue
+            payload = part.get_payload(decode=True)
+            if payload is None:
+                continue
+            charset = part.get_content_charset() or "utf-8"
+            return payload.decode(charset, errors="replace")
+        return None
+
+    def _fetch_draft_bytes(self, draft_id, folder="Drafts") -> bytes:
+        """Fetch the raw RFC 5322 bytes of draft `draft_id` from `folder` by UID."""
+        conn = self._conn()
+        conn.select(folder)
+        typ, data = conn.uid("FETCH", str(draft_id), "(BODY[])")
+        for item in data or []:
+            if isinstance(item, tuple) and len(item) == 2:
+                return item[1]
+        raise ValueError(f"draft {draft_id!r} not found in folder {folder!r}")
 
     def _fetch_spec(self) -> str:
         """The FETCH item spec — subclasses extend it (e.g. with `X-GM-THRID`)."""
@@ -115,11 +201,12 @@ class GmailImapAdapter(ImapAdapter):
     """Gmail adapter — server-side `X-GM-RAW` search and `X-GM-THRID` threads."""
 
     def capabilities(self) -> set:
-        return {"raw_query", "server_side_categories", "server_threads"}
+        return {"raw_query", "server_side_categories", "server_threads", "send"}
 
     def search(self, query, folder=None, limit=None) -> list:
         conn = self._conn()
-        typ, data = conn.uid("SEARCH", "X-GM-RAW", '"%s"' % query)
+        escaped = query.replace("\\", "\\\\").replace('"', '\\"')
+        typ, data = conn.uid("SEARCH", "X-GM-RAW", f'"{escaped}"')
         uids = _parse_uids(data)
         if limit is not None:
             uids = uids[:limit]
@@ -133,7 +220,7 @@ class YahooImapAdapter(ImapAdapter):
     """Yahoo adapter — plain RFC 3501 search + client-side thread reconstruction."""
 
     def capabilities(self) -> set:
-        return set()
+        return {"send"}
 
     def search(self, query, folder=None, limit=None) -> list:
         conn = self._conn()
@@ -149,6 +236,20 @@ class YahooImapAdapter(ImapAdapter):
             root = _thread_root(message)
             message.thread_id = root
         return messages
+
+
+def _parse_append_uid(data) -> str:
+    """Return the APPEND-assigned UID from an IMAP `APPENDUID` response, or the
+    raw response text as a fallback draft id."""
+    for chunk in data or []:
+        if isinstance(chunk, bytes):
+            match = _APPENDUID_RE.search(chunk)
+            if match:
+                return match.group(2).decode()
+    for chunk in data or []:
+        if isinstance(chunk, bytes) and chunk.strip():
+            return chunk.strip().decode(errors="replace")
+    return "draft"
 
 
 def _parse_uids(data) -> list:

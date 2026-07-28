@@ -73,6 +73,8 @@ The **user generates** every app-password/token in the provider's own settings a
 
 ## Decision 4 — vault-first pluggable secret resolver (keyring is the fallback)
 
+> **Superseded by [Decision 8](#decision-8--supersede-decision-4-keyring-primary-os-aware-setup-drop-the-vault-backends) (2026-07-27).** The vault backends (1Password/Bitwarden) are dropped; keyring becomes the primary (a base dep) and the 0600 file an explicit last resort. The rationale below is retained for lineage.
+
 Credentials are resolved through a **precedence chain**, not stored by `voa` itself — `voa` holds only a
 **reference**, the vault holds the secret, resolved at runtime and never persisted:
 
@@ -125,10 +127,7 @@ the non-interactive `voa setup`, DN-packaging-distribution Decision 5):
   *how to generate* the token, but never handles the secret). Precedented by `gh auth login` (interactive)
   in the same AXI ecosystem. A **non-interactive escape** (secret via stdin/env) remains for automation/CI.
   Every data/query verb stays strictly AXI-non-interactive; `mail-auth` is the single documented exception.
-- **Vault backend + fallback:** `mail-auth` detects/configures the **dedicated, read-only** vault the user
-  hosts on **1Password** (a service-account token scoped to that vault) or **Bitwarden** (session /
-  self-hosted); `voa` connects to it, never creates it. **If no vault is provisioned, it defaults to the
-  local OS keyring** (Decision 4's fallback).
+- **Secret backend (revised by [Decision 8](#decision-8--supersede-decision-4-keyring-primary-os-aware-setup-drop-the-vault-backends)):** ~~`mail-auth` detects/configures the dedicated, read-only vault on 1Password/Bitwarden~~ — the vault backends are **dropped**. `mail-auth`/`setup` now do an **OS-aware keyring** provision (primary), falling to the 0600 file only as an **explicit, confirmed** user choice. See Decision 8.
 - **Per-provider credential kind (the user generates it on the provider's site):**
   - **Fastmail** → **token-based API access** (a read-only JMAP token).
   - **Gmail** → **login access** (an IMAP app password; XOAUTH2 for a Workspace account with app passwords
@@ -136,21 +135,118 @@ the non-interactive `voa setup`, DN-packaging-distribution Decision 5):
   - **Yahoo** → **login access** (an IMAP app password).
   The agent presents the concrete generation steps; the user generates each and enters it via the
   interactive `mail-auth`.
-- **`voa doctor` — install/config health (gh-axi style).** A diagnostic verb reporting: engine version, the
-  active store backend + reachability, the active secret backend (vault reachable? else keyring), and each
-  configured mail provider + credential kind + whether its reference **resolves** — flagging missing/broken
-  config with a fix hint. TOON output; **never reveals a secret**. (Absorbs the earlier `setup --check`.)
+- **`voa doctor` — install/config health (gh-axi style) + remediation entry point.** A diagnostic verb
+  reporting: engine version, the active store backend + reachability, the active **secret backend**
+  (keyring wired? else the confirmed file store — per [Decision 8](#decision-8--supersede-decision-4-keyring-primary-os-aware-setup-drop-the-vault-backends)),
+  and each configured mail provider + credential kind + whether its reference **resolves**. Beyond flagging,
+  it emits the **ordered remediation plan / wizard** of Decision 8 (agent-runnable vs human-input-required
+  steps). TOON output; **never reveals a secret**. (Absorbs the earlier `setup --check`.)
+
+## Decision 7 — sending: draft-then-confirm, embedded (JMAP `EmailSubmission` + SMTP), send-capable creds
+
+**Why (gap):** Decisions 1–6 embedded the **read** side only; sending was deferred (a CR-OA-020 non-goal).
+But the skill's **Support domain requires draft-then-confirm outbound mail** (RMA / claims / service — "reply
+from the buying alias the vendor knows, **never auto-send**"), so sending is a **required system capability**
+that today still routes through the **harness mail MCP** — leaving Decision 1's "embed mail to supersede the
+MCP" **half-done and non-portable**. This decision closes it: embed sending in `voa`, with the safety spine
+enforced at the engine level. (Approved 2026-07-27.)
+
+- **Transport (parallels Decision 2's read hybrid).** Fastmail → **JMAP `EmailSubmission`** (native
+  identities/aliases); Gmail / Yahoo → **SMTP submission** (STARTTLS :587 / SSL :465). Both reuse the
+  Decision 4 secret resolver + the XOAUTH2 path; a Fastmail app-password can SMTP-send as the fallback.
+- **Credential scope — revisits Decision 3.** Decision 3 preferred a **read-only** Fastmail token ("cannot
+  mutate/send"); sending needs a **send-capable** credential — a Fastmail JMAP token scoped
+  `mail`+`submission`, or the IMAP **app-password** (which already authorizes SMTP) for Gmail/Yahoo, or
+  XOAUTH2 with the send scope. **Send is opt-in per account** (read-only accounts stay read-only); `mail-auth`
+  records a **`send`-capability flag**, and the send verbs refuse a non-send-capable account. The user still
+  generates every credential.
+- **Draft-then-confirm is the safety spine (engine-enforced) — `voa` has NO path that sends without an
+  explicit, identified `mail-send`:**
+  - `mail-draft` composes an RFC 5322 message and **saves a real draft** into the account's Drafts (JMAP
+    `Email/set` with `$draft` / IMAP `APPEND` to Drafts) — reviewable in the user's own mail client; returns
+    the draft id; **no network send**.
+  - `mail-send <draft-id>` dispatches **only that identified draft** (JMAP `EmailSubmission/set` / SMTP).
+  - `mail-reply` composes a **threaded** reply (`In-Reply-To`/`References` from a fetched message) as a draft.
+  This two-step is the engine-level enforcement of the skill's "draft-then-confirm, never auto-send" rule.
+  (Options weighed: a **real draft in the mailbox** vs a locally-staged send-queue — chose the real draft:
+  the user reviews it where they already read mail; no local queue to trust.)
+- **Identity / From — masked aliases.** The From is a **chosen identity** — the account address or a
+  **Fastmail masked alias** ("the buying alias the vendor knows") — validated against the account's identities
+  (JMAP `Identity/get` / a configured alias list); an unknown From is refused.
+- **Guards (mirror the skill).** Draft/send only to a **verified `contact`** (else a structured error unless
+  explicitly overridden); a message can be **linked to a store row** (`--case`/`--invoice`/…) and, on send,
+  recorded as a `document` + the relevant action resolved on that row — the tracked correspondence trail.
+
+## Decision 8 — supersede Decision 4: keyring-primary, OS-aware setup, drop the vault backends
+
+**Why (revision).** Decision 4 made a hosted **vault** (1Password `op` / Bitwarden `bw`) the PRIMARY
+secret store with keyring as a mere fallback. First real usage showed that inverted the cost/benefit:
+**Bitwarden is structurally unusable for `voa`** — `bw` needs an ephemeral `BW_SESSION` unlocked *per
+process every session*; an API token logs in but cannot unlock — and **1Password's** service-account +
+dedicated-vault provisioning is heavy ceremony for a single-user personal tool. Both are **tedious to set
+up and drive** for the value returned. This decision **drops both vault backends** and makes the **OS
+keyring the primary** store, with an OS-aware setup that offers what the host actually provides.
+(Approved 2026-07-27.)
+
+- **Revised precedence chain — two backends, no vault:**
+  ```
+  OS keyring (via the `keyring` library)          ← PRIMARY (base dependency, not an extra)
+     └─ if no Secret Service provider is wired ↓
+  0600 file (encrypted-at-rest, fs-perms)          ← explicit, CONFIRMED last resort (never a silent downgrade)
+  ```
+- **`keyring` becomes a BASE dependency** (out of the `[mail]` extra). The product is mail-driven; a
+  missing secret store is not an optional condition. (`pymongo` stays optional — a genuine alternative
+  backend; keyring is not.) This also closes the **installer gap**: a bare `uv tool install vidushi-oa`
+  no longer lands without a secret store.
+- **OS-aware `voa setup` / `voa mail-auth` — offer what the host provides.** Setup **detects the host OS +
+  desktop/Secret-Service provider** and presents the appropriate keyring path with concrete, actionable
+  guidance: **KDE** → enable KWallet's Secret Service (claim `org.freedesktop.secrets`); **GNOME/other
+  freedesktop** → gnome-keyring / libsecret; **macOS** → the login Keychain (native); **headless / no
+  provider** → the 0600 file **as a stated, confirmed choice**. It **pre-flights** the chosen backend (module
+  present + provider reachable + a set/get round-trip) rather than discovering failure at first mail call.
+- **No silent fallback.** The Decision 4 chain fell keyring→file with only a stderr warning, so a user who
+  wanted the keyring silently landed on the least-secure file store. Post-revision, reaching the file backend
+  is an **explicit, confirmed** outcome surfaced by setup and reported by `voa doctor`.
+- **Guided remediation is a wizard, not a wall of hints — and `voa doctor` is the detector + entry point.**
+  The interactive steps here need **human input** (typing the secret into `mail-auth`; flipping a desktop
+  KWallet toggle) and therefore **must not be run silently by the agent** (DN §Decision 6: the agent guides
+  *which* and *how*, the human enters the secret). So `voa doctor` doesn't just print fix hints — it emits an
+  **ordered, machine-readable remediation plan** where each step is classified **agent-runnable** (a
+  non-interactive command the agent may run) vs **human-input-required** (enable the OS Secret Service; run
+  the interactive `mail-auth` for account X — a *recommendation the agent walks the user through*, one step at
+  a time via the AXI `next[]` chain). A `voa doctor --fix` / `voa setup` **wizard mode** *instantiates* that
+  sequence — chaining into interactive `mail-auth`/provisioning for the human — rather than requiring the user
+  to assemble the raw `env VIDUSHI_SECRET_BACKEND=keyring voa mail-auth --provider … --address …` invocation
+  by hand. The agent's role is to **recommend and guide locally**; the human performs each input step.
+- **Removed surface (revises Decisions 4 + 6):** `OnePasswordBackend`, `BitwardenBackend`, the `op://`
+  reference routing, and their `VIDUSHI_SECRET_BACKEND` registry entries + auto-detect are **deleted**;
+  Decision 6's "detects/configures the dedicated vault … defaults to keyring" reduces to
+  keyring-primary/file-fallback. `op://`-style external references are a **non-goal** (a later CR can add a
+  remote-secret-manager backend behind an extra if ever needed).
 
 ## Consequences
 
-- **Dependency footprint: ~0–2 small deps** — `httpx` for Fastmail JMAP (or `urllib`, 0), optional
-  `keyring` for the fallback; the vault backends and both IMAP adapters add **zero** (stdlib + external
-  CLIs the user already has). Consistent with the lean ethos that dropped MCP and the Gmail API.
+- **Dependency footprint: ~1–2 small deps** — `httpx` for Fastmail JMAP (or `urllib`, 0) + **`keyring`
+  now a base dep** (Decision 8); both IMAP adapters add **zero** (stdlib). The dropped vault backends
+  remove the external-CLI assumption entirely. Consistent with the lean ethos that dropped MCP and the
+  Gmail API.
 - **Supersedes CR-OA-019** (MCP prerequisites) — mark it SUPERSEDED.
 - **The skill changes** — `SKILL.md`'s "Mailboxes & search" switches from MCP calls to `voa mail-*`
   verbs (a later skill-revision CR); the safety contract (phishing/customs) is unchanged.
 - **Independent of Wave 8** — CR-OA-017/018 (AXI + backend/packaging) are unaffected; mail is Wave 9.
 - **No credentials in any artifact** — never in the store, snapshots, packages, or git; only references.
+- **The client carries no personal data — only field descriptions (portability + privacy invariant).** The
+  `voa` client and everything it emits — prompts, `next[]` hints, help text, error messages, and the
+  setup/mail-auth/doctor **wizard** — hardcode **no** mail addresses, masked aliases, domains, account names,
+  or any personal identifier. Every such value is supplied by the user at runtime (interactive paste / their
+  own config store) and lives **only** in the user's config + keyring, never in `vidushi_oa/` source. Prompts
+  and hints tell the user **what to paste into each field, illustrated with an artificial example for format**
+  ("your Fastmail address, e.g. `you@fastmail.com`"; "the app password you generated, e.g.
+  `abcd-efgh-ijkl-mnop`") — the sample is **fictitious** (`example`-style placeholders), shown only to convey
+  shape; it is never a pre-filled real value and is never persisted. Generic, reusable, **portable**. Provider
+  *infrastructure* endpoints (e.g. `imap.gmail.com`) are not personal data and may be coded. This is what lets
+  the public PyPI/GitHub artifact ship with zero of the user's information in it — the agent guides *which*
+  field (with an example shape), the human supplies the real value.
 
 ## Risks
 
