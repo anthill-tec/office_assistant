@@ -55,10 +55,17 @@ validators); `validate` reports violations; `import` / `snapshot` move data betw
 active backend; `doctor` is a diagnostic health read (engine version, store + secret backend, per-account
 resolution — absorbs `setup --check`).
 
-**Embedded mail client (read-only):** `mail-search '<query>' [--accounts a,b]` searches the configured
+**Embedded mail client — read:** `mail-search '<query>' [--accounts a,b]` searches the configured
 accounts server-side and merges + de-dupes by `Message-ID` (fail-soft per account); `mail-accounts` lists
-them; `mail-get --account <name> --uid <uid>` fetches one message; `mail-auth --provider <p> --address <a>`
-registers a credential *reference* (never the secret) with `--auth-mode password|xoauth2`.
+them; `mail-get --account <name> --uid <uid>` fetches one message; `mail-extract --account <name> --uid <uid>`
+parses that message's schema.org markup into store candidates (it only *suggests* the `voa add`);
+`mail-auth --provider <p> --address <a>` registers a credential *reference* (never the secret) with
+`--auth-mode password|xoauth2`, and `--send` opts that account into send capability (read-only otherwise).
+
+**Embedded mail client — outbound (draft-then-confirm):** `mail-draft` and `mail-reply` compose and save a
+**real draft** — never a send — to a **verified** contact address from one of the account's own identities;
+`mail-send --account <n> --draft <draft-id>` is the only verb that dispatches, and it sends that one saved
+draft, refuses a non-send-capable account, and files the copy in `Sent`. Full contract: `docs/changes/CR-OA-022-embedded-mail-sending.md`.
 
 **Backend selection:** `VIDUSHI_BACKEND` picks **`sqlite`** (default, at `$XDG_DATA_HOME/vidushi-oa/oa.db`,
 override `VIDUSHI_SQLITE_PATH`) or **`mongo`** (needs the `[mongo]` extra) on `127.0.0.1:27017` db

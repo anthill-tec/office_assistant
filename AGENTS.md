@@ -65,11 +65,17 @@ voa warranty-sweep [--dry-run]       # expire past-term warranties (+ open renew
 voa due-sweep [--dry-run]            # flag subscriptions/insurance inside the renewal window
 voa delivery-sweep [--dry-run]       # chase orders stalled in transit (open stuck-chase)
 
-# embedded mail client (read-only) — search/fetch the configured mailboxes through voa itself
+# embedded mail client — read: search/fetch the configured mailboxes through voa itself
 voa mail-search '<query>' [--accounts a,b]         # server-side search across accounts, merged + de-duped by Message-ID (fail-soft: one bad account -> failed_accounts, not a wipeout)
 voa mail-accounts                    # list configured accounts + adapter capabilities
 voa mail-get --account <name> --uid <uid>          # fetch one full message by account + uid
-voa mail-auth --provider <p> --address <a> [--auth-mode password|xoauth2] [--secret-ref <ref>]   # register a credential REFERENCE (never the secret; prompt/stdin if --secret-ref omitted)
+voa mail-extract --account <name> --uid <uid>      # parse the body's schema.org markup into store candidates; suggests the `voa add`, never writes
+voa mail-auth --provider <p> --address <a> [--auth-mode password|xoauth2] [--secret-ref <ref>] [--send] [--alias <addr>]   # register a credential REFERENCE (never the secret; prompt/stdin if --secret-ref omitted); --send opts THIS account into send capability (accounts are read-only by default), --alias adds an allowed From identity
+
+# embedded mail client — outbound: draft-then-confirm (see "Conventions" below); mail-send is the ONLY verb that dispatches
+voa mail-draft --account <n> --from <a> --to <a> --subject <s> --body <b> [--cc <a>] [--attach <path>] [--case|--invoice|--warranty|--order <id>] [--force]   # save a REAL draft in Drafts, ZERO send; recipient must be a verified contact (--force overrides) and --from must be the account address or a registered alias; an FK flag links the draft so the send records correspondence on that row
+voa mail-reply --account <n> --uid <uid> --from <a> --body <b> [--attach <path>] [--case|--invoice|--warranty|--order <id>] [--force]   # same guards, but composes a THREADED reply (In-Reply-To/References) to the source message's sender — still ZERO send
+voa mail-send --account <n> --draft <draft-id>     # dispatch that ONE saved draft; refuses an account without send capability, files the copy in Sent, and de-drafts the original ONLY once that Sent copy is confirmed
 
 # admin — active-backend provisioning, schema validation, migration + versioning
 voa setup [--check]                  # provision the active backend (SQLite default / Mongo), then init (--check diagnoses only)
