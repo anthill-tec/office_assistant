@@ -203,7 +203,9 @@ def test_mail_search_row_projection_is_exactly_id_tag_subject_sender_date(monkey
 
     rows = json.loads(capsys.readouterr().out.strip())
     gm_one_row = next(r for r in rows if r["id"] == GM_ONE.id)
-    assert set(gm_one_row.keys()) == {"id", "source_tag", "subject", "sender", "date"}
+    # CR-OA-026 §S1/§S2: the minimal-default row projection now also carries
+    # uid + account (needed so next[] can emit a runnable mail-get).
+    assert set(gm_one_row.keys()) == {"id", "uid", "account", "source_tag", "subject", "sender", "date"}
     assert gm_one_row["subject"] == "GM One"
     assert gm_one_row["sender"] == "a@gm.com"
     assert gm_one_row["source_tag"] == "[GM]"
