@@ -68,6 +68,57 @@ class ComposeMessageTest(unittest.TestCase):
         self.assertIsNone(parsed["Cc"], "Cc header must be absent when no cc arg is given")
 
 
+class ComposeOriginatorHeadersTest(unittest.TestCase):
+    """RFC 5322 §3.6.4 originator headers — a composed message must carry its own
+    `Date` and `Message-ID`.
+
+    Beyond RFC completeness this is what keeps two identical `voa mail-draft`
+    runs from serialising to byte-identical RFC822: Fastmail/Cyrus blobIds are
+    content-addressed, so identical bytes collide on the same blob and the
+    second `Email/import` answers an `alreadyExists` SetError."""
+
+    def test_compose_sets_a_date_header(self):
+        from vidushi_oa.mail.compose import compose
+
+        raw = compose(from_addr="me@x", to="v@y", subject="S", body="B")
+        parsed = _parse(raw)
+        self.assertIsNotNone(parsed["Date"], "composed message must carry a Date header")
+
+    def test_compose_sets_a_message_id_header(self):
+        from vidushi_oa.mail.compose import compose
+
+        raw = compose(from_addr="me@x", to="v@y", subject="S", body="B")
+        parsed = _parse(raw)
+        message_id = str(parsed["Message-ID"] or "")
+        self.assertTrue(
+            message_id.startswith("<") and message_id.endswith(">"),
+            f"composed message must carry an angle-addr Message-ID; got {message_id!r}",
+        )
+
+    def test_message_id_domain_comes_from_the_from_address_not_the_local_host(self):
+        """RFC 5322 §3.6.4 wants a domain the sender owns — and the stdlib default
+        (`socket.getfqdn()`) would leak the user's machine name into every draft."""
+        from vidushi_oa.mail.compose import compose
+
+        raw = compose(from_addr="Me <me@fastmail.com>", to="v@y", subject="S", body="B")
+        parsed = _parse(raw)
+        self.assertTrue(
+            str(parsed["Message-ID"]).endswith("@fastmail.com>"),
+            f"Message-ID must be scoped to the From domain; got {parsed['Message-ID']!r}",
+        )
+
+    def test_two_identical_composes_are_not_byte_identical(self):
+        from vidushi_oa.mail.compose import compose
+
+        first = compose(from_addr="me@x", to="v@y", subject="S", body="B")
+        second = compose(from_addr="me@x", to="v@y", subject="S", body="B")
+        self.assertNotEqual(
+            first, second,
+            "identical compose() calls must not serialise to identical bytes — a "
+            "content-addressed blob store would collide them onto one draft",
+        )
+
+
 class ComposeReplyThreadingTest(unittest.TestCase):
     """§S2 AC1 (reply half) — In-Reply-To / References threading."""
 

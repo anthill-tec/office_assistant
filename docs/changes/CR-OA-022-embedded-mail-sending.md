@@ -30,7 +30,9 @@ and `send_draft(draft_id) -> message_id`.
 
 ### §S2 RFC 5322 composition + reply threading + From-identity
 A `compose(from_addr, to, subject, body, cc=None, in_reply_to=None, references=None, attachments=None) -> bytes`
-builds a valid RFC 5322 message (`email.message.EmailMessage`). A **reply** sets `In-Reply-To` to the source
+builds a valid RFC 5322 message (`email.message.EmailMessage`), always stamping the §3.6.4 originator headers
+**`Date`** and a **`Message-ID`** scoped to the From domain (`EmailMessage` mints neither, and without them two
+identical drafts serialize to identical bytes a content-addressed blob store collapses into one). A **reply** sets `In-Reply-To` to the source
 `Message-ID` and `References` to the source chain (from a `mail-get`-fetched `Message`). The **From** is a
 **validated identity** — the account address or a configured **Fastmail masked alias** (JMAP `Identity/get` /
 an alias list on the account entry); an unknown From is refused.
@@ -43,7 +45,9 @@ an alias list on the account entry); an unknown From is refused.
   `drafts`-role mailbox with the `$draft` keyword; IMAP `APPEND`s the bytes with `\Draft` —
   emits a TOON status with the **draft id**; performs **no network send**.
 - **`mail-send`** `--account --draft <draft-id>` — dispatches **only that identified draft** (JMAP
-  `EmailSubmission/set` / SMTP); emits the sent **message id**.
+  `EmailSubmission/set` / SMTP); emits the sent **message id**. The JMAP submission carries an
+  `onSuccessUpdateEmail` patch clearing `$draft` and moving the message into the `sent`-role mailbox, so a
+  sent message stops being a draft and Sent holds the record of the correspondence.
 - **`mail-reply`** `--account --uid <src-uid> --from --body [--attach] [--case]` — fetches the source, composes
   a **threaded** reply (§S2), saves it as a draft (same as `mail-draft`).
 
@@ -74,13 +78,14 @@ Drafts store) — **no live sending in the suite**. Live-send verification is a 
 
 ### §S2
 - [ ] `compose(from_addr="me@x", to="v@y", subject="S", body="B")` returns bytes whose parsed headers are `From: me@x`, `To: v@y`, `Subject: S`; a reply built with `in_reply_to="<m1@y>"` sets `In-Reply-To: <m1@y>` and includes `<m1@y>` in `References`.
+- [ ] Every composed message carries a `Date` and a `Message-ID` whose domain comes from the From address (never the local host), so two identical `compose(...)` calls are not byte-identical.
 - [ ] `compose(from_addr=<not-an-identity>, …)` (or the verb path) raises/exits with a structured error naming the invalid From.
 - [ ] **No personal data in the client (DN Consequences invariant):** the From/recipient/alias values come only from account config + verb args — a grep asserts the send path in `vidushi_oa/` hardcodes no real mailbox address or masked alias.
 
 ### §S3
 - [ ] `mail-draft` against a fake adapter records exactly one draft-save (an IMAP `APPEND`, or a JMAP blob upload of the literal RFC822 bytes followed by one `Email/import` that references BOTH the returned `blobId` and the resolved `drafts` mailbox id, with `$draft` set) and **zero** sends (the fake's send-count is 0), and returns a `draft` id in its TOON status.
-- [ ] The JMAP draft path never reports a draft it did not create: a blob upload answering any 2xx (incl. `201 Created`) succeeds, while a session with no `uploadUrl`, an upload returning no `blobId`, a failed or empty `Mailbox/query` (whose own server error is surfaced verbatim, not re-labelled "no Drafts mailbox"), or an `Email/import` answering `notCreated`/`["error", …]` each raise a structured error instead of an empty draft id.
-- [ ] `mail-send --draft <id>` triggers exactly one `send_draft(<id>)` on the adapter and returns a message id.
+- [ ] The JMAP draft path never reports a draft it did not create: a blob upload answering any 2xx (incl. `201 Created`) succeeds, while a session with no `uploadUrl`, an upload returning no `blobId`, a failed or empty `Mailbox/query` (whose own server error is surfaced verbatim, not re-labelled "no Drafts mailbox"), or an `Email/import` answering `notCreated`/`["error", …]` each raise a structured error instead of an empty draft id. An `Email/import` answering `alreadyExists` is the one exception: re-drafting an unchanged message returns the SetError's `existingId` (the draft already in Drafts) rather than failing.
+- [ ] `mail-send --draft <id>` triggers exactly one `send_draft(<id>)` on the adapter and returns a message id. The JMAP `EmailSubmission/set` carries an `onSuccessUpdateEmail` patch clearing `keywords/$draft` and setting `mailboxIds` to the resolved `sent`-role mailbox (the move is skipped, but `$draft` still cleared, when the account has no Sent mailbox).
 - [ ] **No-auto-send invariant (mechanically auditable):** a grep shows `send_draft`/`EmailSubmission/set`/`sendmail` invoked from **only** `cmd_mail_send` in `vidushi_oa/_cli.py` (no other verb calls a send path).
 - [ ] **Caller-existence:** `voa --help` lists `mail-draft`/`mail-send`/`mail-reply`, and each is wired via a non-test `set_defaults` caller (grep ≥1 each).
 

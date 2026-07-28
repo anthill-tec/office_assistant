@@ -31,7 +31,9 @@ Pinned shapes for GREEN (per CR-OA-022 §S1 + the DN §Decision 7 design):
     `$draft` keyword, returning the created email's id (superseding the original
     content-less `Email/set` shape, which created EMPTY Fastmail drafts);
     `send_draft` issues exactly one `EmailSubmission/set` call whose `create`
-    object's `emailId` references that draft's email id.
+    object's `emailId` references that draft's email id, with an
+    `onSuccessUpdateEmail` patch clearing `$draft` and filing the message in the
+    `sent`-role mailbox.
 
 No real network / no real SMTP or IMAP connection anywhere in this file — SMTP
 is faked via `mock.patch` substituting a `FakeSMTP` for `smtplib.SMTP`; IMAP is
@@ -72,9 +74,22 @@ BLOB_ID = "Gb-blob-1"
 # mandatory Session property) — the blob+import draft flow is the only path.
 _SESSION_WITH_UPLOAD = dict(_CANNED_SESSION, uploadUrl=UPLOAD_URL_TEMPLATE)
 
+SENT_MAILBOX_ID = "Mb-sent"
+
 _MAILBOX_QUERY_OK = {
     "methodResponses": [
         ["Mailbox/query", {"accountId": ACCOUNT_ID, "ids": [DRAFTS_MAILBOX_ID]}, "0"],
+    ],
+}
+_SENT_MAILBOX_QUERY_OK = {
+    "methodResponses": [
+        ["Mailbox/query", {"accountId": ACCOUNT_ID, "ids": [SENT_MAILBOX_ID]}, "0"],
+    ],
+}
+_SUBMISSION_OK = {
+    "methodResponses": [
+        ["EmailSubmission/set",
+         {"accountId": ACCOUNT_ID, "created": {"submission": {"id": "S-sent-1"}}}, "0"],
     ],
 }
 _IMPORT_OK = {
@@ -381,7 +396,12 @@ class _JmapRoutingTransport:
 
     `_JmapFakeTransport`'s flat queue hands the same payload to all three, which
     silently masks a draft carrying neither a real blob nor a real mailbox — the
-    exact wiring this fake exists to pin."""
+    exact wiring this fake exists to pin.
+
+    A `Mailbox/query` is additionally routed by its `filter.role`, so the
+    `drafts` lookup and the `sent` lookup can answer with different ids: an
+    `api` key `"Mailbox/query:<role>"` wins for that role, and the plain
+    `"Mailbox/query"` key is the fallback for any role without one."""
 
     def __init__(self, session=None, upload=None, upload_status=200, api=None):
         self.session = _SESSION_WITH_UPLOAD if session is None else session
@@ -389,7 +409,9 @@ class _JmapRoutingTransport:
         self.upload_status = upload_status
         self.api = dict(api or {})
         self.api.setdefault("Mailbox/query", _MAILBOX_QUERY_OK)
+        self.api.setdefault("Mailbox/query:sent", _SENT_MAILBOX_QUERY_OK)
         self.api.setdefault("Email/import", _IMPORT_OK)
+        self.api.setdefault("EmailSubmission/set", _SUBMISSION_OK)
         self.calls = []
 
     def __call__(self, method, url, headers, body):
@@ -398,15 +420,24 @@ class _JmapRoutingTransport:
             return 200, self.session
         if url == UPLOAD_URL:
             return self.upload_status, self.upload
-        return 200, self.api.get(body["methodCalls"][0][0], {"methodResponses": []})
+        call = body["methodCalls"][0]
+        if call[0] == "Mailbox/query":
+            role = (call[1].get("filter") or {}).get("role")
+            keyed = self.api.get(f"Mailbox/query:{role}")
+            if keyed is not None:
+                return 200, keyed
+        return 200, self.api.get(call[0], {"methodResponses": []})
 
     def api_call(self, name):
-        """The single `methodCalls` entry posted for JMAP method `name`, or None."""
-        for method, url, _headers, body in self.calls:
-            if method == "POST" and url != UPLOAD_URL \
-                    and body["methodCalls"][0][0] == name:
-                return body["methodCalls"][0]
-        return None
+        """The first `methodCalls` entry posted for JMAP method `name`, or None."""
+        calls = self.api_calls(name)
+        return calls[0] if calls else None
+
+    def api_calls(self, name):
+        """Every `methodCalls` entry posted for JMAP method `name`."""
+        return [body["methodCalls"][0] for method, url, _headers, body in self.calls
+                if method == "POST" and url != UPLOAD_URL
+                and body["methodCalls"][0][0] == name]
 
     def upload_bodies(self):
         return [body for method, url, _headers, body in self.calls
@@ -558,6 +589,121 @@ class JmapCreateDraftBlobImportTest(unittest.TestCase):
         self.assertIn("accountNotFound", str(ctx.exception))
 
 
+class JmapImportAlreadyExistsTest(unittest.TestCase):
+    """Re-drafting the same message must be idempotent, not a hard error.
+
+    Blob ids are content-addressed, so a repeated draft resolves to the same blob
+    and `Email/import` answers the RFC 8621 §4.9 `alreadyExists` SetError carrying
+    the `existingId` of the message already in Drafts. That is the draft the user
+    asked for — returning its id is the correct outcome, not exit 1."""
+
+    _ALREADY_EXISTS = {
+        "methodResponses": [
+            ["Email/import",
+             {"accountId": ACCOUNT_ID,
+              "notCreated": {"draft": {"type": "alreadyExists",
+                                       "existingId": "Md-draft-existing"}}}, "0"],
+        ],
+    }
+
+    def test_already_exists_returns_the_existing_draft_id(self):
+        transport = _JmapRoutingTransport(api={"Email/import": self._ALREADY_EXISTS})
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        self.assertEqual(adapter.create_draft(raw), "Md-draft-existing")
+
+    def test_already_exists_without_an_existing_id_still_raises(self):
+        """No `existingId` means no draft to point the user at — that is a real
+        failure, not something to paper over with an empty id."""
+        malformed = {
+            "methodResponses": [
+                ["Email/import",
+                 {"accountId": ACCOUNT_ID,
+                  "notCreated": {"draft": {"type": "alreadyExists"}}}, "0"],
+            ],
+        }
+        transport = _JmapRoutingTransport(api={"Email/import": malformed})
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.create_draft(raw)
+
+        self.assertIn("alreadyExists", str(ctx.exception))
+
+
+class JmapUploadBodyIsAlwaysBytesTest(unittest.TestCase):
+    """The upload POST must carry the message as raw bytes. A `str` handed to the
+    default `urllib` transport would be JSON-encoded — a quoted, escaped payload
+    that uploads cleanly and yields a corrupt draft with no error anywhere."""
+
+    def test_a_str_message_is_uploaded_as_encoded_bytes_not_a_json_string(self):
+        transport = _JmapRoutingTransport()
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        raw = _build_raw_message("Draft subject", "me@fastmail.com", "v@example.com", "Body")
+
+        adapter.create_draft(raw.decode("utf-8"))
+
+        self.assertEqual(transport.upload_bodies(), [raw],
+                         "a str message must be encoded to bytes before the upload POST")
+
+
+class JmapSendDraftFilesTheSentMessageTest(unittest.TestCase):
+    """A submitted draft must stop being a draft: `EmailSubmission/set` carries an
+    `onSuccessUpdateEmail` patch that clears `$draft` and moves the message into
+    the `sent`-role mailbox. Without it every sent message stays in Drafts and
+    Sent stays empty — no mailbox record of outbound correspondence."""
+
+    def _adapter(self, transport):
+        return JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+
+    def test_submission_moves_the_email_to_sent_and_clears_the_draft_keyword(self):
+        transport = _JmapRoutingTransport()
+
+        self.assertEqual(self._adapter(transport).send_draft("Md-draft-1"), "S-sent-1")
+
+        submission = transport.api_call("EmailSubmission/set")
+        self.assertIsNotNone(submission)
+        patches = submission[1].get("onSuccessUpdateEmail") or {}
+        self.assertEqual(list(patches), ["#submission"],
+                         f"the patch must back-reference the created submission; got {patches!r}")
+        patch_object = patches["#submission"]
+        self.assertEqual(patch_object.get("mailboxIds"), {SENT_MAILBOX_ID: True},
+                         "a sent message must be moved into the sent-role mailbox")
+        self.assertIn("keywords/$draft", patch_object)
+        self.assertIsNone(patch_object["keywords/$draft"],
+                          "the $draft keyword must be cleared on a successful send")
+
+    def test_an_account_with_no_sent_mailbox_still_clears_the_draft_keyword(self):
+        """A missing Sent mailbox is no reason to refuse to send — unlike an import,
+        a submission needs no mailbox — but the message must stop being a draft."""
+        empty = {
+            "methodResponses": [
+                ["Mailbox/query", {"accountId": ACCOUNT_ID, "ids": []}, "0"],
+            ],
+        }
+        transport = _JmapRoutingTransport(api={"Mailbox/query:sent": empty})
+
+        self.assertEqual(self._adapter(transport).send_draft("Md-draft-1"), "S-sent-1")
+
+        patch_object = transport.api_call("EmailSubmission/set")[1]["onSuccessUpdateEmail"]["#submission"]
+        self.assertNotIn("mailboxIds", patch_object)
+        self.assertIsNone(patch_object["keywords/$draft"])
+
+
 class JmapDraftsMailboxQueryFailureTest(unittest.TestCase):
     """A `Mailbox/query` that fails at the METHOD level still arrives inside an
     HTTP 200, so a status-only check mis-reports an auth/account failure as "your
@@ -639,7 +785,7 @@ class JmapSendDraftFailureTest(unittest.TestCase):
                   "notCreated": {"submission": {"type": "forbiddenFrom"}}}, "0"],
             ],
         }
-        transport = _JmapFakeTransport(responses=[not_created])
+        transport = _JmapRoutingTransport(api={"EmailSubmission/set": not_created})
         adapter = JmapAdapter(
             account="fastmail_main", source_tag="[FM]", token="secret-token",
             session_url=SESSION_URL, transport=transport,
@@ -656,14 +802,7 @@ class JmapSendDraftEmailSubmissionTest(unittest.TestCase):
     `EmailSubmission/set` referencing the draft's email id."""
 
     def test_send_draft_issues_exactly_one_email_submission_set_referencing_the_draft(self):
-        submission_response = {
-            "methodResponses": [
-                ["EmailSubmission/set",
-                 {"accountId": ACCOUNT_ID,
-                  "created": {"sub1": {"id": "S-sent-1"}}}, "0"],
-            ],
-        }
-        transport = _JmapFakeTransport(responses=[submission_response])
+        transport = _JmapRoutingTransport()
         adapter = JmapAdapter(
             account="fastmail_main", source_tag="[FM]", token="secret-token",
             session_url=SESSION_URL, transport=transport,
@@ -671,11 +810,9 @@ class JmapSendDraftEmailSubmissionTest(unittest.TestCase):
 
         message_id = adapter.send_draft("Md-draft-1")
 
-        post_bodies = transport.post_bodies()
-        self.assertEqual(len(post_bodies), 1)
-        method_calls = post_bodies[0]["methodCalls"]
-        submission_calls = [c for c in method_calls if c[0] == "EmailSubmission/set"]
-        self.assertEqual(len(submission_calls), 1)
+        submission_calls = transport.api_calls("EmailSubmission/set")
+        self.assertEqual(len(submission_calls), 1,
+                         "exactly one EmailSubmission/set may be issued per send")
         created_objects = list(submission_calls[0][1]["create"].values())
         self.assertEqual(len(created_objects), 1)
         self.assertEqual(created_objects[0].get("emailId"), "Md-draft-1")
