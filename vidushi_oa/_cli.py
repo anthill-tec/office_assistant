@@ -978,8 +978,12 @@ def cmd_mail_extract(a):
 
 def _mail_adapter_or_exit(client, account, **extra):
     """Resolve `account`'s adapter via the same `client._adapters` seam `cmd_mail_get`
-    uses, or render an unknown-account structured error + exit 1 (no traceback). The
-    shared draft-then-confirm resolution for `mail-draft`/`mail-send`/`mail-reply`."""
+    uses, or render an unknown-account structured error + exit 1 (no traceback).
+
+    Shared by every account-scoped verb — the draft-then-confirm trio
+    (`mail-draft`/`mail-send`/`mail-reply`) AND read-only `mail-extract` — so it
+    resolves an account and nothing more: send-gating belongs in the send verbs,
+    not here, where it would also gate a read."""
     adapter = client._adapters.get(account)
     if adapter is None:
         build_failure = next(

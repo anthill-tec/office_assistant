@@ -25,8 +25,13 @@ _HEADER_SPEC = f"BODY.PEEK[HEADER.FIELDS ({_HEADER_FIELDS})]"
 _UID_RE = re.compile(rb"UID (\d+)")
 _THRID_RE = re.compile(rb"X-GM-THRID (\d+)")
 _APPENDUID_RE = re.compile(rb"APPENDUID (\d+) (\d+)")
-# RFC 6154 special-use attribute marking the mailbox sent mail is filed in.
+# RFC 6154 special-use attributes marking the mailboxes sent mail and drafts live in.
 _SENT_ATTR_RE = re.compile(rb"\\Sent\b", re.IGNORECASE)
+_DRAFTS_ATTR_RE = re.compile(rb"\\Drafts\b", re.IGNORECASE)
+# Provider names to fall back on when a LIST advertises no special-use attribute
+# (Gmail namespaces both mailboxes; Yahoo spells Drafts in the singular).
+_SENT_FALLBACKS = ("Sent", "[Gmail]/Sent Mail", "Sent Items")
+_DRAFTS_FALLBACKS = ("Drafts", "[Gmail]/Drafts", "Draft")
 # An RFC 3501 LIST line: `(attrs) delimiter name`, where the delimiter is a quoted
 # char or NIL and the name is either a quoted string or a bare atom.
 _LIST_LINE_RE = re.compile(rb'^\s*\([^)]*\)\s+(?:"[^"]*"|NIL)\s+(?P<name>.+?)\s*$')
@@ -54,6 +59,7 @@ class ImapAdapter(MailAdapter):
         self._factory = conn_factory or (lambda h, p: imaplib.IMAP4_SSL(h, p))
         self._connection = None
         self._sent_mailbox = None
+        self._drafts_mailbox = None
         # Derive the SMTP submission host from the IMAP host when not injected
         # (imap.gmail.com -> smtp.gmail.com, imap.mail.yahoo.com -> smtp.mail.yahoo.com).
         self.smtp_host = smtp_host or (
@@ -89,28 +95,35 @@ class ImapAdapter(MailAdapter):
         typ, data = conn.list()
         return _parse_folders(data)
 
-    def create_draft(self, raw_rfc822, folder="Drafts") -> str:
+    def create_draft(self, raw_rfc822, folder=None) -> str:
         """APPEND `raw_rfc822` to `folder` flagged `\\Draft`; return a draft id.
 
         A single IMAP `APPEND` stores the pre-rendered RFC 5322 bytes as a draft;
         the returned id is the server-assigned UID parsed from the `APPENDUID`
         response code (falling back to the raw response text when absent).
 
+        `folder` defaults to the account's own `\\Drafts` special-use mailbox
+        (`_drafts_mailbox_name`) rather than the literal `"Drafts"`: Gmail files
+        drafts in `[Gmail]/Drafts` and Yahoo in `Draft`, so a hard-coded name
+        makes the APPEND a guaranteed `NO [TRYCREATE]` on both.
+
         `imaplib` raises only on a tagged `BAD`, so a refusal (`NO [TRYCREATE]`,
         `NO [OVERQUOTA]`) returns quietly and would otherwise be reported as a
         successful draft whose id is the server's error text. The tagged status is
         checked and a rejection raised structurally, mirroring the JMAP path."""
         conn = self._conn()
-        typ, data = conn.append(folder, r"(\Draft)", None, raw_rfc822)
+        mailbox = folder or self._drafts_mailbox_name()
+        typ, data = conn.append(mailbox, r"(\Draft)", None, raw_rfc822)
         if typ != "OK":
             raise RuntimeError(
-                f"IMAP APPEND to {folder!r} rejected: {typ} {_response_text(data)}")
+                f"IMAP APPEND to {mailbox!r} rejected: {typ} {_response_text(data)}")
         return _parse_append_uid(data)
 
-    def send_draft(self, draft_id, folder="Drafts") -> str:
+    def send_draft(self, draft_id, folder=None) -> str:
         """Dispatch the stored draft `draft_id` over SMTP (STARTTLS submission).
 
-        Fetches the drafted message's raw RFC 5322 bytes from `folder` by its
+        Fetches the drafted message's raw RFC 5322 bytes from `folder` (the
+        account's `\\Drafts` special-use mailbox by default) by its
         UID, parses the envelope sender (its `From`) and the recipient list (its
         `To` + `Cc`), then connects to the provider's submission host on :587,
         upgrades with STARTTLS, authenticates with this adapter's own IMAP
@@ -122,7 +135,8 @@ class ImapAdapter(MailAdapter):
         Once the provider has accepted the message, `_file_sent_copy` files it in
         Sent and retires the Drafts copy — the IMAP counterpart of the JMAP
         `onSuccessUpdateEmail` patch."""
-        raw_bytes = self._fetch_draft_bytes(draft_id, folder)
+        mailbox = folder or self._drafts_mailbox_name()
+        raw_bytes = self._fetch_draft_bytes(draft_id, mailbox)
         parsed = email.message_from_bytes(raw_bytes)
         from_addr = email.utils.parseaddr(parsed.get("From", ""))[1] or self.user
         recipient_pairs = email.utils.getaddresses(
@@ -134,7 +148,7 @@ class ImapAdapter(MailAdapter):
         smtp.starttls()
         smtp.login(self.user, self.password)
         smtp.sendmail(from_addr, recipients, raw_bytes)
-        self._file_sent_copy(raw_bytes, draft_id, folder)
+        self._file_sent_copy(raw_bytes, draft_id, mailbox)
         return message_id
 
     def _file_sent_copy(self, raw_bytes, draft_id, folder) -> None:
@@ -155,15 +169,21 @@ class ImapAdapter(MailAdapter):
         a tagged `NO` (quota, permission, mailbox vanished between LIST and APPEND)
         quietly rather than raising, so the two statuses that gate the destructive
         step are read explicitly: the Sent `APPEND`, and the `+FLAGS (\\Deleted)`
-        `STORE` that immediately precedes the `UID EXPUNGE`. On either failure, or
-        when no Sent mailbox resolves, the draft is left exactly where it is so the
-        message can never end up in neither folder.
+        `STORE` that precedes the `UID EXPUNGE`. On either failure, or when no Sent
+        mailbox resolves, the draft is left exactly where it is so the message can
+        never end up in neither folder.
+
+        `-FLAGS (\\Draft)` is issued only AFTER that gate has passed, for the same
+        reason: on the retain path the keyword must stay set, or the retained
+        message becomes a non-draft sitting in Drafts that no client will offer to
+        resume, alongside a Sent copy.
 
         The remaining statuses are deliberately not read, none being able to
         destroy anything on its own: `imaplib` drops to `AUTH` state on a refused
         `SELECT`, so the UID commands that follow raise rather than address the
-        wrong mailbox; a refused `-FLAGS (\\Draft)` only leaves the keyword set;
-        and a refused `UID EXPUNGE` only leaves the draft flagged `\\Deleted`."""
+        wrong mailbox; a refused `-FLAGS (\\Draft)` only leaves the keyword set on
+        a message already flagged `\\Deleted`; and a refused `UID EXPUNGE` only
+        leaves the draft flagged `\\Deleted`."""
         try:
             conn = self._conn()
             if not self.server_files_sent_copy:
@@ -177,12 +197,12 @@ class ImapAdapter(MailAdapter):
                           f"the sent message stays in {folder!r}")
                     return
             conn.select(folder)
-            conn.uid("STORE", str(draft_id), "-FLAGS", r"(\Draft)")
             typ, data = conn.uid("STORE", str(draft_id), "+FLAGS", r"(\Deleted)")
             if typ != "OK":
                 _warn(f"could not retire the {folder!r} copy of draft {draft_id} "
                       f"({typ} {_response_text(data)})")
                 return
+            conn.uid("STORE", str(draft_id), "-FLAGS", r"(\Draft)")
             # UID EXPUNGE removes only this draft; a bare EXPUNGE would also reap
             # anything else the user had flagged `\Deleted` in the folder.
             conn.uid("EXPUNGE", str(draft_id))
@@ -192,20 +212,45 @@ class ImapAdapter(MailAdapter):
 
     def _sent_mailbox_name(self) -> str:
         """Resolve (and cache) the `\\Sent` special-use mailbox name (RFC 6154);
-        empty string when a LIST that answered advertises none.
+        empty string when a LIST that answered advertises neither the attribute
+        nor a known provider name."""
+        if self._sent_mailbox is None:
+            self._sent_mailbox = self._resolve_special_use(
+                _SENT_ATTR_RE, _SENT_FALLBACKS)
+        return self._sent_mailbox
+
+    def _drafts_mailbox_name(self) -> str:
+        """Resolve (and cache) the `\\Drafts` special-use mailbox name (RFC 6154).
+
+        The counterpart of `_sent_mailbox_name`, but a missing Drafts mailbox is a
+        structural failure rather than an empty string: the drafting verbs have
+        nowhere to APPEND to and nowhere to fetch back from, and the literal
+        `"Drafts"` they used to assume is wrong on Gmail (`[Gmail]/Drafts`) and
+        Yahoo (`Draft`) alike."""
+        if self._drafts_mailbox is None:
+            self._drafts_mailbox = self._resolve_special_use(
+                _DRAFTS_ATTR_RE, _DRAFTS_FALLBACKS)
+        if not self._drafts_mailbox:
+            raise RuntimeError(
+                "no \\Drafts mailbox on this account: the IMAP LIST advertises "
+                "neither the RFC 6154 special-use attribute nor any of "
+                f"{', '.join(_DRAFTS_FALLBACKS)}")
+        return self._drafts_mailbox
+
+    def _resolve_special_use(self, attr_re, fallbacks) -> str:
+        """One LIST, resolved to the mailbox carrying `attr_re`'s special-use
+        attribute (else the first `fallbacks` name the server actually listed).
 
         `imaplib` returns a tagged `NO` quietly, so the status is read: a refused
-        LIST raises rather than passing for `no \\Sent mailbox`, and only a LIST
-        that genuinely answered is cached. Caching a refusal would make every
-        later send in the process skip Sent and keep its draft, diagnosed as a
-        Sent folder the account does not have."""
-        if self._sent_mailbox is None:
-            typ, data = self._conn().list()
-            if typ != "OK":
-                raise RuntimeError(
-                    f"IMAP LIST rejected: {typ} {_response_text(data)}")
-            self._sent_mailbox = _find_sent_mailbox(data)
-        return self._sent_mailbox
+        LIST raises rather than passing for `no such mailbox`, and only a LIST
+        that genuinely answered is cached by the callers. Caching a refusal would
+        make every later send in the process skip Sent and keep its draft,
+        diagnosed as a Sent folder the account does not have."""
+        typ, data = self._conn().list()
+        if typ != "OK":
+            raise RuntimeError(
+                f"IMAP LIST rejected: {typ} {_response_text(data)}")
+        return _find_special_use_mailbox(data, attr_re, fallbacks)
 
     def fetch_html_body(self, uid, folder=None) -> "str | None":
         """Fetch message `uid`'s decoded `text/html` part as a `str`, or `None`.
@@ -237,15 +282,17 @@ class ImapAdapter(MailAdapter):
             return payload.decode(charset, errors="replace")
         return None
 
-    def _fetch_draft_bytes(self, draft_id, folder="Drafts") -> bytes:
-        """Fetch the raw RFC 5322 bytes of draft `draft_id` from `folder` by UID."""
+    def _fetch_draft_bytes(self, draft_id, folder=None) -> bytes:
+        """Fetch the raw RFC 5322 bytes of draft `draft_id` from `folder` by UID
+        (the account's `\\Drafts` special-use mailbox when not given)."""
         conn = self._conn()
-        conn.select(folder)
+        mailbox = folder or self._drafts_mailbox_name()
+        conn.select(mailbox)
         typ, data = conn.uid("FETCH", str(draft_id), "(BODY[])")
         for item in data or []:
             if isinstance(item, tuple) and len(item) == 2:
                 return item[1]
-        raise ValueError(f"draft {draft_id!r} not found in folder {folder!r}")
+        raise ValueError(f"draft {draft_id!r} not found in folder {mailbox!r}")
 
     def _fetch_spec(self) -> str:
         """The FETCH item spec — subclasses extend it (e.g. with `X-GM-THRID`)."""
@@ -350,14 +397,29 @@ def _parse_append_uid(data) -> str:
     return "draft"
 
 
-def _find_sent_mailbox(data) -> str:
-    """The name of the `\\Sent` special-use mailbox in an IMAP LIST response."""
+def _find_special_use_mailbox(data, attr_re, fallbacks=()) -> str:
+    """The name of the mailbox carrying `attr_re`'s RFC 6154 special-use attribute
+    in an IMAP LIST response.
+
+    Special-use is authoritative, so it wins outright. Servers that advertise no
+    attribute at all still have the mailbox under a provider-specific name, so the
+    `fallbacks` are matched (case-insensitively) against the names the server DID
+    list — never assumed to exist."""
+    listed = []
     for line in data or []:
-        if not isinstance(line, bytes) or not _SENT_ATTR_RE.search(line):
+        if not isinstance(line, bytes):
             continue
         name = _list_mailbox_name(line)
-        if name:
+        if not name:
+            continue
+        if attr_re.search(line):
             return name
+        listed.append(name)
+    by_lowered = {name.lower(): name for name in listed}
+    for candidate in fallbacks:
+        match = by_lowered.get(candidate.lower())
+        if match:
+            return match
     return ""
 
 

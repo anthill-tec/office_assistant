@@ -148,10 +148,12 @@ class FakeImapConn:
     stored draft rather than fabricating one.
 
     `list()` answers a LIST response advertising the RFC 6154 special-use
-    attributes, so the Sent mailbox can be resolved by role rather than by a
-    hard-coded name. `list_error`, when set, is raised instead — the mailbox
-    bookkeeping that follows a send must never turn a delivered message into a
-    failure. `list_statuses` is a queue of tagged statuses one per LIST call
+    attributes, so the Sent and Drafts mailboxes can be resolved by role rather
+    than by a hard-coded name. `list_error`, when set, is raised instead — the
+    mailbox bookkeeping that follows a send must never turn a delivered message
+    into a failure; `list_errors` is the same thing as a queue (one entry per LIST
+    call, `None` = answer normally), so a LIST that only fails AFTER delivery can
+    be exercised. `list_statuses` is a queue of tagged statuses one per LIST call
     (falling back to `OK` once drained), so a refusal that later recovers can be
     exercised — imaplib returns a tagged `NO` quietly.
 
@@ -169,7 +171,7 @@ class FakeImapConn:
 
     def __init__(self, append_response=None, fetch_body=None, list_response=None,
                  list_error=None, append_responses=None, store_response=None,
-                 list_statuses=None):
+                 list_statuses=None, list_errors=None):
         self.append_response = append_response or ("OK", [b"[APPENDUID 1 900] (Success)"])
         self.append_responses = dict(append_responses or {})
         self.store_response = store_response or ("OK", [b"Completed"])
@@ -177,6 +179,7 @@ class FakeImapConn:
         self.list_response = list(
             self._DEFAULT_LIST if list_response is None else list_response)
         self.list_error = list_error
+        self.list_errors = list(list_errors or [])
         self.list_statuses = list(list_statuses or [])
         self.login_calls = []
         self.select_calls = []
@@ -198,8 +201,9 @@ class FakeImapConn:
 
     def list(self, directory='""', pattern="*"):
         self.list_calls += 1
-        if self.list_error is not None:
-            raise self.list_error
+        error = self.list_errors.pop(0) if self.list_errors else self.list_error
+        if error is not None:
+            raise error
         status = self.list_statuses.pop(0) if self.list_statuses else "OK"
         if status != "OK":
             return (status, [b"[SERVERBUG] LIST refused"])
@@ -478,6 +482,7 @@ class ImapSendDraftFilesTheSentCopyTest(unittest.TestCase):
         fake = FakeImapConn(
             fetch_body=self._draft_bytes(),
             list_response=[b'(\\HasNoChildren) "/" INBOX',
+                           b'(\\HasNoChildren \\Drafts) "/" Drafts',
                            b'(\\HasNoChildren \\Sent) "/" Sent'])
 
         self._send(self._yahoo(fake))
@@ -496,8 +501,10 @@ class ImapSendDraftFilesTheSentCopyTest(unittest.TestCase):
     def test_an_account_with_no_sent_mailbox_keeps_the_drafts_copy(self):
         """No Sent copy was filed, so destroying the Drafts copy would leave the
         sent message recorded in neither folder."""
-        fake = FakeImapConn(fetch_body=self._draft_bytes(),
-                            list_response=[b'(\\HasNoChildren) "/" "INBOX"'])
+        fake = FakeImapConn(
+            fetch_body=self._draft_bytes(),
+            list_response=[b'(\\HasNoChildren) "/" "INBOX"',
+                           b'(\\HasNoChildren \\Drafts) "/" "Drafts"'])
 
         _fake_smtp, message_id = self._send(self._yahoo(fake))
 
@@ -530,6 +537,20 @@ class ImapSendDraftFilesTheSentCopyTest(unittest.TestCase):
         self.assertTrue(message_id)
         self.assertEqual([c for c in fake.uid_calls if c[0] == "EXPUNGE"], [])
 
+    def test_a_refused_delete_flag_store_leaves_the_draft_keyword_set(self):
+        """On the retain path the draft must be left exactly as it was: clearing
+        `\\Draft` first would strand a non-draft in Drafts that no client offers to
+        resume, while a Sent copy of it already exists."""
+        fake = FakeImapConn(fetch_body=self._draft_bytes(),
+                            store_response=("NO", [b"Permission denied"]))
+
+        self._send(self._yahoo(fake))
+
+        flag_ops = [(args[1], args[2]) for command, args in fake.uid_calls
+                    if command == "STORE"]
+        self.assertNotIn(("-FLAGS", r"(\Draft)"), flag_ops,
+                         f"the retained draft must keep its \\Draft flag; got {flag_ops!r}")
+
     def test_gmail_still_expunges_the_draft_the_server_filed_itself(self):
         """Gmail files the Sent copy server-side, so the safety gate is satisfied
         without an APPEND of our own."""
@@ -547,8 +568,10 @@ class ImapSendDraftFilesTheSentCopyTest(unittest.TestCase):
     def test_a_refused_list_keeps_the_drafts_copy(self):
         """`imaplib` returns a tagged `NO` quietly, so an unread LIST status reads
         as `no \\Sent mailbox` — the safety gate must still hold and the draft
-        survive."""
-        fake = FakeImapConn(fetch_body=self._draft_bytes(), list_statuses=["NO"])
+        survive. (The first LIST resolves Drafts; the refusal is the Sent lookup,
+        which runs after delivery and may never fail the send.)"""
+        fake = FakeImapConn(fetch_body=self._draft_bytes(),
+                            list_statuses=["OK", "NO"])
 
         _fake_smtp, message_id = self._send(self._yahoo(fake))
 
@@ -562,28 +585,106 @@ class ImapSendDraftFilesTheSentCopyTest(unittest.TestCase):
         send in the process skip Sent and pile up drafts, diagnosed as a Sent
         folder that does not exist. Only a LIST that genuinely answered may be
         cached."""
-        fake = FakeImapConn(fetch_body=self._draft_bytes(), list_statuses=["NO"])
+        fake = FakeImapConn(fetch_body=self._draft_bytes(),
+                            list_statuses=["OK", "NO"])
         adapter = self._yahoo(fake)
 
         self._send(adapter)
         self._send(adapter)
 
-        self.assertEqual(fake.list_calls, 2,
-                         "the refused LIST must be retried, not cached")
+        self.assertEqual(fake.list_calls, 3,
+                         "the refused Sent LIST must be retried, not cached "
+                         "(and the answered Drafts LIST cached, not repeated)")
         self.assertEqual([c[0] for c in fake.append_calls], ["Sent"],
                          "the recovered LIST must resolve Sent and file the copy")
         self.assertIn(("EXPUNGE", ("901",)), fake.uid_calls)
 
     def test_a_mailbox_bookkeeping_failure_never_fails_a_delivered_send(self):
         """The message is already in the provider's hands by the time any of this
-        runs — reporting a failure would tell the user nothing was sent."""
-        fake = FakeImapConn(fetch_body=self._draft_bytes(),
-                            list_error=imaplib.IMAP4.error("LIST failed"))
+        runs — reporting a failure would tell the user nothing was sent. (The
+        first LIST resolves Drafts, before delivery; the one that blows up is the
+        post-delivery Sent lookup.)"""
+        fake = FakeImapConn(
+            fetch_body=self._draft_bytes(),
+            list_errors=[None, imaplib.IMAP4.error("LIST failed")])
 
         fake_smtp, message_id = self._send(self._yahoo(fake))
 
         self.assertEqual(len(fake_smtp.sendmail_calls), 1)
         self.assertTrue(message_id, "a delivered message must still report its id")
+
+
+class ImapDraftsMailboxSpecialUseTest(unittest.TestCase):
+    """The Drafts mailbox is resolved by its RFC 6154 `\\Drafts` special-use
+    attribute, exactly as Sent is — the literal `"Drafts"` is wrong on Gmail
+    (`[Gmail]/Drafts`) and Yahoo (`Draft`), where it makes every APPEND a
+    `NO [TRYCREATE]` and every draft SELECT a failure."""
+
+    _GMAIL_LIST = [
+        b'(\\HasNoChildren) "/" "INBOX"',
+        b'(\\HasNoChildren \\Drafts) "/" "[Gmail]/Drafts"',
+        b'(\\HasNoChildren \\Sent) "/" "[Gmail]/Sent Mail"',
+    ]
+
+    def _adapter(self, fake):
+        factory, _ = _make_conn_factory(fake)
+        return GmailImapAdapter(
+            account="gmail_main", source_tag="[GM]", host="imap.gmail.com",
+            user="me@gmail.com", password="app-pw", conn_factory=factory,
+        )
+
+    def _raw(self):
+        return _build_raw_message("Draft subject", "me@gmail.com",
+                                  "v@example.com", "Body text")
+
+    def test_create_draft_appends_to_the_special_use_drafts_mailbox(self):
+        fake = FakeImapConn(list_response=self._GMAIL_LIST)
+
+        self._adapter(fake).create_draft(self._raw())
+
+        self.assertEqual([c[0] for c in fake.append_calls], ["[Gmail]/Drafts"])
+
+    def test_a_listed_provider_name_resolves_when_no_attribute_is_advertised(self):
+        """Plenty of servers advertise no special-use at all; the fallback names
+        are matched against what the server DID list, never assumed to exist."""
+        fake = FakeImapConn(list_response=[b'(\\HasNoChildren) "/" "INBOX"',
+                                           b'(\\HasNoChildren) "/" "Draft"'])
+
+        self._adapter(fake).create_draft(self._raw())
+
+        self.assertEqual([c[0] for c in fake.append_calls], ["Draft"])
+
+    def test_an_account_with_no_drafts_mailbox_is_a_structural_error(self):
+        fake = FakeImapConn(list_response=[b'(\\HasNoChildren) "/" "INBOX"'])
+
+        with self.assertRaises(RuntimeError) as caught:
+            self._adapter(fake).create_draft(self._raw())
+
+        self.assertIn("Drafts", str(caught.exception))
+        self.assertEqual(fake.append_calls, [],
+                         "nothing may be appended to a mailbox that does not exist")
+
+    def test_a_refused_list_raises_instead_of_assuming_a_drafts_name(self):
+        """`imaplib` returns a tagged `NO` quietly — an unread status would append
+        the draft to a guessed mailbox name."""
+        fake = FakeImapConn(list_statuses=["NO"])
+
+        with self.assertRaises(RuntimeError):
+            self._adapter(fake).create_draft(self._raw())
+
+        self.assertEqual(fake.append_calls, [])
+
+    def test_send_draft_reads_the_draft_from_the_resolved_drafts_mailbox(self):
+        raw = compose(from_addr="me@gmail.com", to="vendor@example.com",
+                      subject="Warranty claim", body="Please assist.")
+        fake = FakeImapConn(fetch_body=raw, list_response=self._GMAIL_LIST)
+        adapter = self._adapter(fake)
+
+        with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=FakeSMTP()):
+            adapter.send_draft("900")
+
+        self.assertIn("[Gmail]/Drafts", fake.select_calls)
+        self.assertNotIn("Drafts", fake.select_calls)
 
 
 class AdapterCapabilitiesIncludeSendTest(unittest.TestCase):

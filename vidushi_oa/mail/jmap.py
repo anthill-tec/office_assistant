@@ -148,9 +148,13 @@ class JmapAdapter(MailAdapter):
     def capabilities(self) -> set:
         return {"server_threads", "server_side_search", "projection", "send"}
 
-    def create_draft(self, raw_rfc822, folder="Drafts") -> str:
+    def create_draft(self, raw_rfc822) -> str:
         """Create a draft from the composed `raw_rfc822` message; return the
         created email's id.
+
+        Takes no `folder`, unlike the IMAP contract: JMAP resolves the target
+        mailbox by its `drafts` role (`_import_draft`), so a folder NAME has
+        nothing to bind to and would be silently discarded.
 
         The literal RFC822 bytes are uploaded as a JMAP blob and then imported
         into the Drafts mailbox with the `$draft` keyword — so the composed
