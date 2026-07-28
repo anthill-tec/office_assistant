@@ -632,6 +632,7 @@ def test_add_account_then_load_accounts_round_trips_a_reference_only_entry(tmp_p
         "secret_ref": "keyring:fastmail-main",
         "auth_mode": "password",
         "send": False,
+        "aliases": [],
     }]
 
 
@@ -683,7 +684,7 @@ def test_accounts_file_contains_exactly_the_reference_only_schema_no_secret_mate
 
     loaded = accounts.load_accounts()
     assert len(loaded) == 1
-    assert set(loaded[0].keys()) == {"name", "provider", "address", "secret_ref", "auth_mode", "send"}
+    assert set(loaded[0].keys()) == {"name", "provider", "address", "secret_ref", "auth_mode", "send", "aliases"}
 
 
 # ─────────────────────────── cmd_mail_auth (direct-call) ───────────────────────────
@@ -705,7 +706,7 @@ def test_cmd_mail_auth_persists_only_a_reference_never_a_secret(tmp_path, monkey
     assert entry["address"] == "user@fastmail.com"
     assert entry["secret_ref"] == "keyring:fastmail-main"
     assert entry["auth_mode"] == "password"
-    assert set(entry.keys()) == {"name", "provider", "address", "secret_ref", "auth_mode", "send"}
+    assert set(entry.keys()) == {"name", "provider", "address", "secret_ref", "auth_mode", "send", "aliases"}
 
     captured = capsys.readouterr().out
     assert "fastmail" in captured

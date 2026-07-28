@@ -37,6 +37,7 @@ import argparse, json, os, sys, datetime, re, getpass, imaplib, urllib.error
 from vidushi_oa.mail.base import SOURCE_TAGS
 from vidushi_oa.mail.factory import build_client
 from vidushi_oa.mail import accounts, send_gate
+from vidushi_oa.mail import compose as compose_mod
 from vidushi_oa.mail.compose import compose
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -934,6 +935,41 @@ def _mail_adapter_or_exit(client, account, **extra):
     return adapter
 
 
+def _verified_recipient_or_exit(recipient, force, **extra):
+    """Verified-recipient guard (§S4): the outbound `recipient` must match a
+    `contact`'s `support_email` (the verified-address allow-list) unless `force` is
+    set. A non-matching recipient is a structured error naming it + exit 1 (no
+    traceback); `--force` bypasses the check entirely."""
+    if force:
+        return
+    from vidushi_oa.backends import get_backend, query as Q
+    match = get_backend().store("contacts").find_one(
+        Q.cond("support_email", "eq", recipient))
+    if match is None:
+        out({"error": f"recipient {recipient} is not a verified contact "
+                      f"(no matching support_email); pass --force to override",
+             **extra})
+        sys.exit(1)
+
+
+def _validate_from_or_exit(account, from_addr, **extra):
+    """From-identity guard (§S4): `from_addr` must be one of the account's own
+    identities — its registered `address` plus any configured `aliases`. Delegates
+    to `compose.validate_from`; an unknown From is a structured error naming it +
+    exit 1. Skipped when the account is not in the registry (nothing to validate
+    against)."""
+    entry = next((e for e in accounts.load_accounts()
+                  if e.get("name") == account), None)
+    if entry is None:
+        return
+    identities = {entry.get("address")} | set(entry.get("aliases", []))
+    try:
+        compose_mod.validate_from(from_addr, identities)
+    except ValueError as e:
+        out({"error": str(e), "account": account, **extra})
+        sys.exit(1)
+
+
 def cmd_mail_draft(a):
     """Compose (§S2) and save a REAL draft via the account adapter's
     `create_draft(raw)`; emit a flat TOON/JSON status carrying the `draft` id.
@@ -941,6 +977,9 @@ def cmd_mail_draft(a):
     code path that can dispatch a message."""
     client = _mail_client_or_exit()
     adapter = _mail_adapter_or_exit(client, a.account)
+    _verified_recipient_or_exit(a.to, getattr(a, "force", False),
+                                account=a.account, to=a.to)
+    _validate_from_or_exit(a.account, a.from_addr, to=a.to)
     raw = compose(a.from_addr, a.to, a.subject, a.body, cc=a.cc)
     draft_id = adapter.create_draft(raw)
     out({"status": "drafted", "draft": draft_id, "account": a.account})
@@ -987,6 +1026,9 @@ def cmd_mail_reply(a):
     subject = source.subject if source.subject.lower().startswith("re:") \
         else f"Re: {source.subject}"
     to = source.sender or source.to
+    _verified_recipient_or_exit(to, getattr(a, "force", False),
+                                account=a.account, to=to)
+    _validate_from_or_exit(a.account, a.from_addr, to=to)
     raw = compose(a.from_addr, to, subject, a.body,
                   in_reply_to=source.id, references=references)
     draft_id = adapter.create_draft(raw)
@@ -1002,7 +1044,8 @@ def _read_secret_no_argv(name):
     return sys.stdin.readline().rstrip("\n")
 
 
-def _provision_account_secret(provider, address, auth_mode="password", send=False):
+def _provision_account_secret(provider, address, auth_mode="password", send=False,
+                              aliases=None):
     """Interactive secret-entry shared by ``cmd_mail_auth`` and ``doctor --fix``.
 
     Reads the secret via the hidden-input/stdin path ONLY (never a CLI arg), stores
@@ -1031,7 +1074,8 @@ def _provision_account_secret(provider, address, auth_mode="password", send=Fals
                 f"vidushi-oa: no secret backend pinned; stored the secret in the "
                 f"auto-selected '{primary.name}' backend.\n")
     accounts.add_account(name=name, provider=provider, address=address,
-                         secret_ref=secret_ref, auth_mode=auth_mode, send=send)
+                         secret_ref=secret_ref, auth_mode=auth_mode, send=send,
+                         aliases=aliases or [])
     return secret_ref
 
 
@@ -1061,12 +1105,14 @@ def cmd_mail_auth(a):
              "provider": a.provider})
         sys.exit(1)
     send = bool(getattr(a, "send", False))
+    aliases = getattr(a, "alias", None) or []
     if a.secret_ref:
         secret_ref = a.secret_ref
         accounts.add_account(name, a.provider, a.address, secret_ref,
-                             auth_mode=auth_mode, send=send)
+                             auth_mode=auth_mode, send=send, aliases=aliases)
     else:
-        secret_ref = _provision_account_secret(a.provider, a.address, auth_mode, send)
+        secret_ref = _provision_account_secret(
+            a.provider, a.address, auth_mode, send, aliases)
 
     out({"status": "registered", "name": name, "provider": a.provider,
          "address": a.address, "secret_ref": secret_ref, "auth_mode": auth_mode,
@@ -1294,6 +1340,10 @@ def main():
     mau.add_argument("--send", action="store_true", dest="send",
                      help="grant this account SEND capability (opt-in; read-only by "
                           "default). The send verbs refuse a non-send-capable account.")
+    mau.add_argument("--alias", action="append", dest="alias", default=None,
+                     help="an additional From identity for this account (a configured "
+                          "Fastmail masked alias, etc.). Repeatable; the From-identity "
+                          "guard accepts the account address plus every configured alias.")
     read_json(mau); mau.set_defaults(func=cmd_mail_auth)
     # CR-OA-022 §S3: draft-then-confirm send verbs. `--from` -> dest `from_addr`
     # (``from`` is a Python keyword). `--attach`/`--case` parse now (attachment
@@ -1307,6 +1357,9 @@ def main():
     mdr.add_argument("--cc", default=None)
     mdr.add_argument("--attach", default=None)
     mdr.add_argument("--case", default=None)
+    mdr.add_argument("--force", action="store_true", dest="force",
+                     help="bypass the verified-recipient guard and draft to an "
+                          "un-verified recipient anyway (still never sends).")
     read_json(mdr); mdr.set_defaults(func=cmd_mail_draft)
     msn = add_parser("mail-send")
     msn.add_argument("--account", required=True)
@@ -1319,6 +1372,9 @@ def main():
     mrp.add_argument("--body", required=True)
     mrp.add_argument("--attach", default=None)
     mrp.add_argument("--case", default=None)
+    mrp.add_argument("--force", action="store_true", dest="force",
+                     help="bypass the verified-recipient guard and reply to an "
+                          "un-verified sender anyway (still never sends).")
     read_json(mrp); mrp.set_defaults(func=cmd_mail_reply)
     dr = add_parser("doctor"); read_json(dr)
     dr.add_argument("--fix", action="store_true", dest="fix",

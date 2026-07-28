@@ -143,11 +143,33 @@ def restore_cli_fmt():
     cli._FMT = original
 
 
+def _isolate_backend(monkeypatch, tmp_path, name="oa"):
+    """Point the sqlite backend + mail-accounts registry at throwaway tmp paths
+    (mirrors `test_cr_oa_022_send_guards.py`) so the §S4 verified-recipient guard —
+    which `cmd_mail_draft`/`cmd_mail_reply` now enforce — consults an isolated
+    contacts store rather than the real one."""
+    monkeypatch.setenv("VIDUSHI_BACKEND", "sqlite")
+    monkeypatch.setenv("VIDUSHI_SQLITE_PATH", str(tmp_path / f"{name}.db"))
+    monkeypatch.setenv("VIDUSHI_MAIL_CONFIG", str(tmp_path / "accounts.json"))
+
+
+def _seed_contact(contact_id, support_email, vendor="Acme"):
+    """Seed a verified `contact` whose `support_email` is the recipient under test,
+    so the §S4 verified-recipient guard admits it — keeping these §S3 tests on the
+    legitimately-verified path (never `--force`)."""
+    from vidushi_oa.backends import get_backend
+    store = get_backend().store("contacts")
+    store.ensure_id_index()
+    store.insert({"id": contact_id, "vendor": vendor, "support_email": support_email})
+
+
 # --------------------------------------------------------------------------- #
 # mail-draft — saves exactly one draft, zero sends
 # --------------------------------------------------------------------------- #
 
-def test_mail_draft_saves_exactly_one_draft_and_sends_zero(monkeypatch, capsys):
+def test_mail_draft_saves_exactly_one_draft_and_sends_zero(monkeypatch, capsys, tmp_path):
+    _isolate_backend(monkeypatch, tmp_path)
+    _seed_contact("ven_acme", "vendor@example.com")
     adapter = RecordingAdapter("gmail_main", "[GM]", caps={"send"})
     client = MailClient({"gmail_main": adapter})
     monkeypatch.setattr(cli, "build_client", lambda **kw: client)
@@ -173,7 +195,9 @@ def test_mail_draft_saves_exactly_one_draft_and_sends_zero(monkeypatch, capsys):
     assert b"Subject: Order query" in raw
 
 
-def test_mail_draft_json_mode_status_carries_the_draft_id_no_envelope(monkeypatch, capsys):
+def test_mail_draft_json_mode_status_carries_the_draft_id_no_envelope(monkeypatch, capsys, tmp_path):
+    _isolate_backend(monkeypatch, tmp_path)
+    _seed_contact("ven_vendor", "support@vendor.com")
     adapter = RecordingAdapter("fastmail_main", "[FM]", caps={"send"})
     client = MailClient({"fastmail_main": adapter})
     monkeypatch.setattr(cli, "build_client", lambda **kw: client)
@@ -246,7 +270,9 @@ def test_mail_send_json_mode_returns_the_exact_message_id(monkeypatch, capsys, t
 # mail-reply — builds a threaded draft, zero send
 # --------------------------------------------------------------------------- #
 
-def test_mail_reply_builds_a_threaded_draft_with_zero_sends(monkeypatch, capsys):
+def test_mail_reply_builds_a_threaded_draft_with_zero_sends(monkeypatch, capsys, tmp_path):
+    _isolate_backend(monkeypatch, tmp_path)
+    _seed_contact("ven_acme", "vendor@example.com")
     source = _msg("<m1@y>", "gmail_main", "[GM]", "Order Update",
                   "vendor@example.com", "2026-07-25T09:00:00Z", "src-1")
     adapter = RecordingAdapter("gmail_main", "[GM]", caps={"send"}, messages=[source])
