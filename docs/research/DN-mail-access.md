@@ -178,6 +178,19 @@ enforced at the engine level. (Approved 2026-07-27.)
   explicitly overridden); a message can be **linked to a store row** (`--case`/`--invoice`/…) and, on send,
   recorded as a `document` + the relevant action resolved on that row — the tracked correspondence trail.
 
+### Decision 7 — as-built refinement (2026-07-29; re-sync of design to code)
+
+Decision 7's transport mechanics were **hardened past their first-cut design during the 1.1.1 review loop, outside the CR-driven RED/GREEN/VERIFY cycle** (a no-mistakes pass, not a CR) — so this subsection re-syncs the DN to what actually shipped. It supersedes the mechanism specifics above (the shape/rationale/safety-spine of Decision 7 stand); CR-OA-022 is a completed, time-bound record and is **not** amended.
+
+- **JMAP draft — blob upload + `Email/import`, superseding `Email/set $draft`.** A composed message is uploaded as an RFC822 blob to the session `uploadUrl`, then `Email/import`ed into the `drafts`-role mailbox with `$draft`. Never a silent empty draft: accept any 2xx on the upload (Fastmail answers `201 Created`); require a resolved, non-empty `drafts` mailbox; surface a `Mailbox/query` server error **verbatim** (not re-labelled "no Drafts mailbox"); and raise a structured error on an empty `blobId`, a `notCreated` SetError (`alreadyExists` included), or a top-level `["error", …]`.
+- **`compose()` stamps `Date` + a From-domain `Message-ID` and serializes CRLF** (`email.policy.SMTP`, RFC 5322 §2.1) — the bytes an IMAP `APPEND` literal and a `message/rfc822` blob both transmit verbatim. Consequence, accepted: two identical drafts are **not** byte-identical, so a re-drafted identical message creates a *new* draft — content-address idempotency is intentionally not relied on (fine for draft-then-confirm).
+- **JMAP send — `EmailSubmission/set` + `onSuccessUpdateEmail`** clears `$draft` and moves the message to the `sent`-role mailbox. The Sent-role lookup is **non-fatal**: a method-level *or* transport-level failure (`HTTPError`/`OSError` from a 4xx/5xx, `ValueError` from a non-JSON 2xx body) skips only the file-to-Sent move — a submission needs no mailbox, so the lookup never blocks a send.
+- **IMAP/SMTP send — safe-gated file-to-Sent.** After the one `sendmail`, the sent bytes are `APPEND`ed `\Seen` to the `\Sent` special-use mailbox (skipped for Gmail, which files its own), then the Drafts copy is retired (`-FLAGS \Draft`, `+FLAGS \Deleted`, UID `EXPUNGE`) **only after a confirmed Sent copy exists** — a tagged-`OK` `APPEND`, or a provider that self-files. No `\Sent` mailbox, a refused `APPEND`/`STORE`, or any raised bookkeeping failure leaves the draft untouched, so a sent message can never end up in neither folder. All of it runs after delivery — none can fail a sent message.
+- **Folder resolution — RFC 6154 special-use via `LIST`** for **both** Sent and Drafts (quoted or bare-atom names; tagged status checked; a non-answer never cached), with fallbacks (`[Gmail]/Drafts`, `Draft`). IMAP `create_draft` raises structurally on a refused `APPEND` (parity with the JMAP `notCreated` handling), never a `drafted` status carrying the server's error text as the draft id.
+- **SMTP auth per credential kind.** App-password accounts `smtp.login`; a **Workspace/XOAUTH2 Gmail** account authenticates via `smtp.auth("XOAUTH2", …)` — re-`EHLO` after `STARTTLS` — reusing the `xoauth2.py` token helpers (`_xoauth2_raw`/`_token()`), never `login` with an empty password. The connection is closed after send.
+- **Guards cover To *and* Cc** — the verified-`contact` guard applies to every recipient (`--force` overrides); **AXI #6** — every mail verb renders its live-failure surface (protocol + transport `OSError`/`HTTPError`/`URLError` + non-JSON `ValueError`) as a structured error + non-zero exit, never a traceback.
+- **Still owed (accepted gap).** All send/draft tests are **in-process fakes** encoding *our* assumptions of each provider — the class that let the round-1 empty-Fastmail-draft bug pass green. A **real-provider E2E validation tier** is the proper fix (see [[mail-e2e-test-tier-intent]]); until it exists, a real Fastmail round-trip is a **manual pre-ship check**. Full IMAP/SMTP send parity for the remaining Workspace edges rides the same real-provider validation.
+
 ## Decision 8 — supersede Decision 4: keyring-primary, OS-aware setup, drop the vault backends
 
 **Why (revision).** Decision 4 made a hosted **vault** (1Password `op` / Bitwarden `bw`) the PRIMARY
@@ -233,7 +246,12 @@ keyring the primary** store, with an OS-aware setup that offers what the host ac
   Gmail API.
 - **Supersedes CR-OA-019** (MCP prerequisites) — mark it SUPERSEDED.
 - **The skill changes** — `SKILL.md`'s "Mailboxes & search" switches from MCP calls to `voa mail-*`
-  verbs (a later skill-revision CR); the safety contract (phishing/customs) is unchanged.
+  verbs; the safety contract (phishing/customs) is unchanged. **The consumer side of Decision 7 lands
+  *with* the send feature, not as a deferred CR** (the earlier "later skill-revision CR" punt was the bug
+  that shipped the engine verbs without wiring them): the Support domain drives draft-then-confirm through
+  the engine — `voa mail-draft`/`mail-reply` to the verified support `contact` (citing invoice + warranty)
+  → show the user → `voa mail-send <draft-id>` **only on explicit confirmation** — and "Mailboxes & search"
+  documents the send verbs alongside the read verbs.
 - **Independent of Wave 8** — CR-OA-017/018 (AXI + backend/packaging) are unaffected; mail is Wave 9.
 - **No credentials in any artifact** — never in the store, snapshots, packages, or git; only references.
 - **The client carries no personal data — only field descriptions (portability + privacy invariant).** The

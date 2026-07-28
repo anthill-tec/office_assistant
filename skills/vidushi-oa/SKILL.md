@@ -61,6 +61,19 @@ token-saving payoff):
   a search returns nothing or errors (it replaces the old "re-authenticate the connector" step); see
   [`references/mail-setup.md`](references/mail-setup.md) to add or re-auth an account.
 
+**Sending is draft-then-confirm, enforced in the engine** — there is no path that sends without an
+explicit `mail-send` on an identified draft (send is opt-in per account: `mail-auth` records a `send`
+capability, and the send verbs refuse an account without it):
+
+- **`voa mail-draft --account <a> --from <identity> --to <addr> --subject <s> --body <b>` [`--cc` `--attach <path>` `--case/--invoice <id>`]** —
+  composes a valid RFC 5322 message and **saves a real draft** into the account's Drafts (reviewable in
+  the user's own mail client); returns the **draft id**; performs **no network send**. `--from` must be a
+  validated account identity/alias; every recipient (To **and** Cc) must be a **verified `contact`** (or `--force`).
+- **`voa mail-reply --account <a> --uid <src-uid> --from <identity> --body <b>` [`…`]** — the same, as a
+  **threaded** reply to a `mail-get`-fetched message.
+- **`voa mail-send --account <a> --draft <draft-id>`** — dispatches **only that identified draft** and files
+  it to Sent. Run it **only after the user explicitly says to send.**
+
 The user files mail into folders (`Subscriptions`, `Shipping`, `Purchases`, `Electronics/*`) and
 uses **per-merchant masked aliases** on Fastmail, so the recipient alias is a reliable provider key;
 Gmail (`you@gmail.com`) items key on sender + `category:` instead.
@@ -82,8 +95,9 @@ Gmail (`you@gmail.com`) items key on sender + `category:` instead.
   REAL and time-sensitive (a missed one can get a parcel returned/abandoned) — never dismiss them;
   but fake versions are the top import scam. Resolve by verifying (AWB matches a real expected
   shipment; sender is the true carrier / India Post FPO / ICEGATE domain), not guessing.
-- **Draft-then-confirm:** outbound support mail is **draft-then-confirm** — draft it, show the user,
-  and send only on an explicit "send it". **Never auto-send.**
+- **Draft-then-confirm:** outbound support mail is **draft-then-confirm** — draft it with `voa mail-draft`/
+  `mail-reply`, show the user, and dispatch with `voa mail-send <draft-id>` only on an explicit "send it".
+  The engine has **no other send path**. **Never auto-send.**
 - **Verified contacts only:** mail a support address only if it is a **verified** `contact` in the
   store (from `contacts` or the user) — never a support address scraped from an unverified email.
 - **Never invent warranty terms** — record `term_months: null` + a note when a term is unstated;
@@ -180,9 +194,12 @@ The RMA/service **stages live in `actions[]`, never in the status**: the case ac
 `raise-ticket · rma-issue · ship-back · repair · replace · resolution-confirm`, each running
 OPEN → RESOLVED — drive them with `voa action-add` / `voa action-resolve`, and move the coarse state
 with `voa set-status`. Cite the linked `invoice_id` (proof) and `warranty_id` (coverage) and pull the
-support address from `contacts`. **DRAFT** correspondence to the vendor's **verified** support address
-(reply from the buying alias the vendor knows), including order/invoice number, product, model/serial,
-purchase date, warranty coverage, and a clear ask. **Draft-then-confirm — never auto-send.** Minimise
+support address from `contacts`. Draft the correspondence with **`voa mail-draft`** (or **`voa mail-reply`**
+to thread an existing vendor message) — `--from` the buying alias the vendor knows, `--to` the vendor's
+**verified** support `contact`, `--case <id>` to link the correspondence trail — including order/invoice
+number, product, model/serial, purchase date, warranty coverage, and a clear ask. **Show the user the draft,
+then dispatch it with `voa mail-send --draft <id>` only on their explicit "send it" — never auto-send.**
+Minimise
 PII; let the user supply anything sensitive. Log each exchange with `--append-log`, and surface stalled
 cases (awaiting-you, support gone silent, warranty-window risk). An RMA parcel in transit hands to the
 purchase domain (reverse delivery).
