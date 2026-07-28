@@ -22,6 +22,20 @@ Think of it as *a system of roles plus its persistent memory*: the one executabl
 1. **Access the stores ONLY through the `voa` CLI** (the in-repo `scripts/store.py` is a path-compat shim to it). The store is **SQLite by default** (`$XDG_DATA_HOME/vidushi-oa/oa.db`; MongoDB opt-in via `VIDUSHI_BACKEND=mongo`); `data/*.jsonl` are `snapshot` outputs (chezmoi-versioned), not the source of truth. Query the CLI for exactly the rows/fields you need (token-frugal). Going around it — hand-editing the JSONL snapshots or hitting the DB directly — bypasses id-generation, dedupe, the schema validators, and the state-machine transitions.
 2. **Use the purpose-built skills for their tasks — don't improvise.** When a request matches a skill's domain (below), invoke that skill *first* and follow its steps; reach for the browser/web only as a skill's own documented fallback. (This is a standing user rule; improvising has caused real misses.)
 
+## Release process — MANDATORY (never skip a step)
+
+A push to `main` carrying a SemVer tag **auto-publishes to PyPI**, and a published version can **never** be re-uploaded (only yanked). So `git flow release finish X.Y.Z` + `git push origin main --tags` is an **irreversible point of no return**. Follow this every time — the steps below are mandatory, in order, and were codified because they were once skipped (1.1.0 shipped without them):
+
+1. **Ask before releasing.** A version bump / release requires explicit human approval — never start one unprompted.
+2. **Release via git-flow only** — `git flow release start X.Y.Z` off `develop`. Never hand-tag, never bump a version literal (hatch-vcs derives the version from the tag).
+3. **On the release branch, BEFORE `finish`, run the full validation set and confirm each is GREEN:**
+   - **`no-mistakes`** — the validation pipeline (code review, tests, lint, docs). **Mandatory on the release branch.**
+   - the **release gate** — `scripts/skill-release-gate.py --project-dir .` (build wheel + AXI/functional conformance). Run it with `VIDUSHI_BACKEND` **unset** so it exercises the shipped SQLite default (this machine's `VIDUSHI_BACKEND=mongo` leaks a false failure otherwise).
+   - the **full test suite** — `.venv/bin/python -m pytest tests/ -q`.
+   - a **TestPyPI dry-run** — trigger the `test-publish` (`workflow_dispatch`) CI job and confirm the package uploads cleanly to TestPyPI **before** any production publish.
+4. **Irreversible-publish checkpoint.** Before `git flow release finish` + the `main`/tag push, present the user an explicit **"this next step publishes to PyPI irreversibly — confirm?"** gate and WAIT for a clear yes. Cutting the release and publishing are one automated pipeline once main is pushed — treat the push as the publish.
+5. **After the push:** monitor CI (`ci-monitor` / `gh run watch`) and confirm the publish job succeeded + the version is live on PyPI.
+
 ## Commands (the `voa` CLI — pluggable backend: SQLite default / Mongo opt-in)
 
 Types: `contacts` · `invoices` · `warranties` · `cases` · `products` · `subscriptions` · `insurance` · `orders`. Full field schemas in `data/schema.md`.
