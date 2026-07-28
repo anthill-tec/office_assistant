@@ -135,7 +135,7 @@ read-only **deep-sweep mode**). Load it for any mail/admin task; its operational
 
 **Replacement path (a one-time swap; pruning the legacy files is the user's, outside this repo):**
 1. **Install** the bundle (see `README.md` / `scripts/README.md` install section): `npx skills add ./skills/vidushi-oa` for the skill + the engine (`uv tool install vidushi-oa`, or `--editable .` in-repo, then `voa setup`).
-2. **Verify** it: `agentskills validate skills/vidushi-oa` exits 0 (or run the release gate `~/.claude/scripts/skill-release-gate.py`).
+2. **Verify** it: `agentskills validate skills/vidushi-oa` exits 0 (or run the vendored release gate — see "Release process" step 3.iii).
 3. **Remove** the seven legacy `~/.claude/skills/` skills + the `inbox-analyst` agent — the unified skill now covers them all.
 
 **Domains of the unified skill** (each writes through `voa`; load `references/*` for specifics):

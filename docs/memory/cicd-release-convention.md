@@ -83,6 +83,17 @@ a `License ::` trove classifier** (PEP 639: the SPDX expression supersedes it). 
   `~/.claude/scripts/skill-release-gate.py`, since a runner has no `~/.claude`); CI runs
   `.venv/bin/python scripts/skill-release-gate.py --project-dir .`. Keep the copy in sync with the home
   source. The per-project config is **`.skill-release.toml`** (its stale `7`→`8` store count is fixed).
+- **The gate must exercise the shipped SQLite default, so `.skill-release.toml` `[env]` pins
+  `VIDUSHI_BACKEND = "sqlite"` + a throwaway `VIDUSHI_SQLITE_PATH = "$TMP/oa.db"`.** The gate inherits the
+  runner env, so this machine's ambient `VIDUSHI_BACKEND=mongo` ([[mongo-preexisting-data-migration]])
+  would otherwise make the checks validate Mongo, and an unset sqlite path would land on the operator's
+  real `$XDG_DATA_HOME/vidushi-oa/oa.db`. Run it locally as
+  `env -u VIDUSHI_BACKEND .venv/bin/python scripts/skill-release-gate.py --project-dir .` (belt-and-braces;
+  the shell is fish, where a bare `VAR=… cmd` prefix fails).
+- **The pytest suite is the OPPOSITE backend, by design — it needs a live `mongod` on
+  `127.0.0.1:27017` + the `[mongo]` extra.** `tests/conftest.py` pins `VIDUSHI_BACKEND=mongo` for every
+  test via an autouse fixture; without those prerequisites the suite errors on the missing dependency,
+  not on a regression. Gate = shipped SQLite default, suite = Mongo path.
 - **Test the CI workflow locally with `act`** — `act -l` for a fast parse-check (catches YAML errors, the
   Node-actions bump, etc.), a full `act push`/`act workflow_dispatch` to exercise jobs in Docker. (Caveat: a
   local mongod holding `27017` blocks act's own `mongo:7` service — stop it for a full act run.)
