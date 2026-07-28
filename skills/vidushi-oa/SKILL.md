@@ -1,11 +1,12 @@
 ---
 name: vidushi-oa
-description: Cross-harness personal office-assistant skill — reads the user's mail (Fastmail + Gmail) and runs the whole post-purchase / personal-admin lifecycle (subscriptions, purchases & deliveries incl. customs, invoices, warranties, product catalogue, support cases) over the local vidushi-oa store, driven exclusively through the `voa` CLI. Portable and harness-agnostic; a read-only deep-sweep mode does heavy cross-mailbox triage.
+description: Cross-harness personal office-assistant skill — reads the user's mail (Fastmail + Gmail), sends outbound mail draft-then-confirm, and runs the whole post-purchase / personal-admin lifecycle (subscriptions, purchases & deliveries incl. customs, invoices, warranties, product catalogue, support cases) over the local vidushi-oa store, driven exclusively through the `voa` CLI. Portable and harness-agnostic; a read-only deep-sweep mode does heavy cross-mailbox triage.
 ---
 
 # Vidushi OA — Unified Personal Office Assistant
 
-A single, portable skill that reads the user's two mailboxes and runs the full
+A single, portable skill that reads the user's two mailboxes (and sends from them
+draft-then-confirm) and runs the full
 post-purchase / personal-admin lifecycle over a shared local store. It consolidates
 six role-domains — **subscription** watch, **purchase**/delivery tracking, **invoice**
 capture, **warranty** tracking, **product** catalogue, and **support** case management —
@@ -96,7 +97,8 @@ Gmail (`you@gmail.com`) items key on sender + `category:` instead.
   but fake versions are the top import scam. Resolve by verifying (AWB matches a real expected
   shipment; sender is the true carrier / India Post FPO / ICEGATE domain), not guessing.
 - **Draft-then-confirm:** outbound support mail is **draft-then-confirm** — draft it with `voa mail-draft`/
-  `mail-reply`, show the user, and dispatch with `voa mail-send <draft-id>` only on an explicit "send it".
+  `mail-reply`, show the user, and dispatch with `voa mail-send --account <a> --draft <draft-id>` only on
+  an explicit "send it".
   The engine has **no other send path**. **Never auto-send.**
 - **Verified contacts only:** mail a support address only if it is a **verified** `contact` in the
   store (from `contacts` or the user) — never a support address scraped from an unverified email.
@@ -198,7 +200,8 @@ support address from `contacts`. Draft the correspondence with **`voa mail-draft
 to thread an existing vendor message) — `--from` the buying alias the vendor knows, `--to` the vendor's
 **verified** support `contact`, `--case <id>` to link the correspondence trail — including order/invoice
 number, product, model/serial, purchase date, warranty coverage, and a clear ask. **Show the user the draft,
-then dispatch it with `voa mail-send --draft <id>` only on their explicit "send it" — never auto-send.**
+then dispatch it with `voa mail-send --account <a> --draft <id>` only on their explicit "send it" — never
+auto-send.**
 Minimise
 PII; let the user supply anything sensitive. Log each exchange with `--append-log`, and surface stalled
 cases (awaiting-you, support gone silent, warranty-window risk). An RMA parcel in transit hands to the

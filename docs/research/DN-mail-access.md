@@ -189,7 +189,7 @@ Decision 7's transport mechanics were **hardened past their first-cut design dur
 - **Folder resolution — RFC 6154 special-use via `LIST`** for **both** Sent and Drafts (quoted or bare-atom names; tagged status checked; a non-answer never cached), with fallbacks (`[Gmail]/Drafts`, `Draft`). IMAP `create_draft` raises structurally on a refused `APPEND` (parity with the JMAP `notCreated` handling), never a `drafted` status carrying the server's error text as the draft id.
 - **SMTP auth per credential kind.** App-password accounts `smtp.login`; a **Workspace/XOAUTH2 Gmail** account authenticates via `smtp.auth("XOAUTH2", …)` — re-`EHLO` after `STARTTLS` — reusing the `xoauth2.py` token helpers (`_xoauth2_raw`/`_token()`), never `login` with an empty password. The connection is closed after send.
 - **Guards cover To *and* Cc** — the verified-`contact` guard applies to every recipient (`--force` overrides); **AXI #6** — every mail verb renders its live-failure surface (protocol + transport `OSError`/`HTTPError`/`URLError` + non-JSON `ValueError`) as a structured error + non-zero exit, never a traceback.
-- **Still owed (accepted gap).** All send/draft tests are **in-process fakes** encoding *our* assumptions of each provider — the class that let the round-1 empty-Fastmail-draft bug pass green. A **real-provider E2E validation tier** is the proper fix (see [[mail-e2e-test-tier-intent]]); until it exists, a real Fastmail round-trip is a **manual pre-ship check**. Full IMAP/SMTP send parity for the remaining Workspace edges rides the same real-provider validation.
+- **Still owed (accepted gap).** All send/draft tests are **in-process fakes** encoding *our* assumptions of each provider — the class that let the round-1 empty-Fastmail-draft bug pass green. A **real-provider E2E validation tier** is the proper fix — tracked separately, outside this DN; until it exists, a real Fastmail round-trip is a **manual pre-ship check**. Full IMAP/SMTP send parity for the remaining Workspace edges rides the same real-provider validation.
 
 ## Decision 8 — supersede Decision 4: keyring-primary, OS-aware setup, drop the vault backends
 
@@ -250,7 +250,8 @@ keyring the primary** store, with an OS-aware setup that offers what the host ac
   *with* the send feature, not as a deferred CR** (the earlier "later skill-revision CR" punt was the bug
   that shipped the engine verbs without wiring them): the Support domain drives draft-then-confirm through
   the engine — `voa mail-draft`/`mail-reply` to the verified support `contact` (citing invoice + warranty)
-  → show the user → `voa mail-send <draft-id>` **only on explicit confirmation** — and "Mailboxes & search"
+  → show the user → `voa mail-send --account <a> --draft <draft-id>` **only on explicit confirmation** — and
+  "Mailboxes & search"
   documents the send verbs alongside the read verbs.
 - **Independent of Wave 8** — CR-OA-017/018 (AXI + backend/packaging) are unaffected; mail is Wave 9.
 - **No credentials in any artifact** — never in the store, snapshots, packages, or git; only references.
