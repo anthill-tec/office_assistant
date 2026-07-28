@@ -69,12 +69,14 @@ send-capable at `mail-auth` time, and `mail-send` refuses one that is not — se
 
 - **`voa mail-draft --account <a> --from <identity> --to <addr> --subject <s> --body <b>` [`--cc` `--attach <path>` `--case/--invoice <id>`]** —
   composes a valid RFC 5322 message and **saves a real draft** into the account's Drafts (reviewable in
-  the user's own mail client); returns the **draft id**; performs **no network send**. `--from` must be a
+  the user's own mail client); returns the **draft id** and an AXI `next[]` carrying the ready-to-run
+  `mail-send` command; performs **no network send**. `--from` must be a
   validated account identity/alias; every recipient (To **and** Cc) must be a **verified `contact`** (or `--force`).
 - **`voa mail-reply --account <a> --uid <src-uid> --from <identity> --body <b>` [`…`]** — the same, as a
   **threaded** reply to a `mail-get`-fetched message.
-- **`voa mail-send --account <a> --draft <draft-id>`** — dispatches **only that identified draft** and files
-  it to Sent. Run it **only after the user explicitly says to send.**
+- **`voa mail-send`** — dispatches **only that identified draft** and files it to Sent. **Take the exact
+  command from the draft's `next[]`** (the CLI returns `mail-send --account <a> --draft <id>` — don't
+  hand-assemble the flags), and run it **only after the user explicitly says to send.**
 
 The user files mail into folders (`Subscriptions`, `Shipping`, `Purchases`, `Electronics/*`) and
 uses **per-merchant masked aliases** on Fastmail, so the recipient alias is a reliable provider key;
@@ -98,9 +100,8 @@ Gmail (`you@gmail.com`) items key on sender + `category:` instead.
   but fake versions are the top import scam. Resolve by verifying (AWB matches a real expected
   shipment; sender is the true carrier / India Post FPO / ICEGATE domain), not guessing.
 - **Draft-then-confirm:** outbound support mail is **draft-then-confirm** — draft it with `voa mail-draft`/
-  `mail-reply`, show the user, and dispatch with `voa mail-send --account <a> --draft <draft-id>` only on
-  an explicit "send it".
-  The engine has **no other send path**. **Never auto-send.**
+  `mail-reply`, show the user, and on an explicit "send it" run the `mail-send` command the draft returns in
+  its `next[]`. The engine has **no other send path**. **Never auto-send.**
 - **Verified contacts only:** mail a support address only if it is a **verified** `contact` in the
   store (from `contacts` or the user) — never a support address scraped from an unverified email.
 - **Never invent warranty terms** — record `term_months: null` + a note when a term is unstated;
@@ -201,7 +202,7 @@ support address from `contacts`. Draft the correspondence with **`voa mail-draft
 to thread an existing vendor message) — `--from` the buying alias the vendor knows, `--to` the vendor's
 **verified** support `contact`, `--case <id>` to link the correspondence trail — including order/invoice
 number, product, model/serial, purchase date, warranty coverage, and a clear ask. **Show the user the draft,
-then dispatch it with `voa mail-send --account <a> --draft <id>` only on their explicit "send it" — never
+then run the `mail-send` step from the draft's `next[]` only on their explicit "send it" — never
 auto-send.**
 Minimise
 PII; let the user supply anything sensitive. Log each exchange with `--append-log`, and surface stalled
