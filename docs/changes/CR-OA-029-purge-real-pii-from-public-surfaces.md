@@ -14,7 +14,7 @@ CR-OA-023 established the **no-personal-data invariant** — the shipped client 
 address, alias, or account name — and `test_cr_oa_020`'s `_REAL_PERSONAL_MARKERS` guard enforces it over
 `vidushi_oa/`. But the guard is **scoped to the engine only**: two other **public** surfaces still carry real
 PII. The repo publishes to a **public GitHub repo** (the skill is added via `npx skills add anthill-tec/office_assistant/skills/vidushi-oa`) and PyPI, so anything tracked ships publicly. (The real store data is safe — `data/*.jsonl` and `documents/**` are gitignored.) Leaks found:
-- `skills/vidushi-oa/SKILL.md` — the **shipped skill** hardcodes the user's real `antojk@gmail.com` and `antojk@anthilllabs.in`.
+- `skills/vidushi-oa/SKILL.md` — the **shipped skill** hardcodes the user's real Gmail address and `antojk@anthilllabs.in`.
 - Five test files hardcode `new.book1604@fastmail.com` and the real display name `Antony John`.
 
 ## Scope
@@ -24,7 +24,7 @@ Across the public surfaces (`skills/`, `tests/`; `vidushi_oa/` is already clean)
 identifier with an artificial placeholder consistent with the existing convention (provider infrastructure
 hostnames such as `imap.gmail.com` / the provider domain remain exempt):
 - `new.book1604@fastmail.com` → a fictitious Fastmail-domain placeholder (e.g. `you@fastmail.com`).
-- `antojk@gmail.com` → a fictitious Gmail-domain placeholder (e.g. `you@gmail.com`).
+- the real Gmail address → a fictitious Gmail-domain placeholder (e.g. `you@gmail.com`).
 - `antojk@anthilllabs.in` → a fictitious business placeholder on a reserved domain (e.g. `you@yourbusiness.example`).
 - the display name `Antony John` → a fictitious name (e.g. `Alex Doe`).
 The replacements keep each test's behaviour identical (a consistent fake address/name per fixture) and keep

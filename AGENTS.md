@@ -109,7 +109,7 @@ case (claim/RMA) ── invoice_id / warranty_id / product_id / contact_id ─�
 - **`orders`** is the purchase-**fulfilment** lifecycle (ordered → shipped → delivered, incl. international/customs), keyed off its own delivery state machine and linked back via `invoice_id` / `product_id`; the proof-of-purchase document lives in `invoices`. It rides `delivery-sweep` for stalled shipments.
 - **Every row carries the shared lifecycle** — a `status` (NEW/UNKNOWN/IN_PROGRESS/COMPLETED, +EXPIRED for warranties, +DUE for recurring), a domain-specific `actions[]` set (each OPEN→RESOLVED), and `documents[]`. Transitions are locked into `transitions.py` and fired via `event`/the sweeps — see `data/schema.md`.
 
-**Data sources:** the skills read the user's mailboxes through the **embedded `voa mail-*` client** (Fastmail + Gmail `antojk@gmail.com`, searched server-side, then merged + de-duped) and write findings here. A harness mail MCP (FastmailMCP, a Gmail connector) is an optional **alternative**, never the default — only `voa mail-*` yields the token-saving merge/tag pass (CR-OA-020/021).
+**Data sources:** the skills read the user's mailboxes through the **embedded `voa mail-*` client** (Fastmail + the configured Gmail account, searched server-side, then merged + de-duped) and write findings here. A harness mail MCP (FastmailMCP, a Gmail connector) is an optional **alternative**, never the default — only `voa mail-*` yields the token-saving merge/tag pass (CR-OA-020/021).
 
 ## Vidushi OA toolkit — roles
 
