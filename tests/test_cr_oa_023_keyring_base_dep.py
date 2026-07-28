@@ -110,7 +110,7 @@ class KeyringBaseDependencyTest(unittest.TestCase):
         )
         self.assertRegex(
             base_keyring_lines[0],
-            r"^Requires-Dist:\s*keyring",
+            r"^\s*keyring",
             f"expected the base keyring requirement line to declare 'keyring', got: "
             f"{base_keyring_lines[0]!r}",
         )
