@@ -32,8 +32,10 @@ Design pinned here for GREEN (see also the final RED report):
     `cmd_mail_get` uses), calls `adapter.create_draft(raw)`, and emits
     `{"status": "drafted", "draft": <draft_id>, "account": a.account}` through
     `out()` (TOON by default, matching `cmd_mail_auth`'s flat status-object
-    convention — no `tally`/`next` envelope). It NEVER calls `send_draft`/
-    `EmailSubmission/set`/`sendmail`.
+    convention — no `tally` envelope; the TOON status additionally carries the
+    AXI #9 `next[]` holding the runnable `mail-send` for that draft, while `--json`
+    stays the bare object the CR-OA-010 decision-B contract pins). It NEVER calls
+    `send_draft`/`EmailSubmission/set`/`sendmail`.
   - `cmd_mail_send(a)` reads `a.account`/`a.draft`, resolves the account's REGISTRY
     entry via `vidushi_oa.mail.accounts.load_accounts()` (matched by `name`), calls
     `send_gate.ensure_send_capable(entry)` (raising `PermissionError` -> structured
@@ -218,6 +220,62 @@ def test_mail_draft_json_mode_status_carries_the_draft_id_no_envelope(monkeypatc
     assert "next" not in payload
 
 
+def test_mail_draft_toon_next_carries_the_runnable_mail_send_command(monkeypatch, capsys, tmp_path):
+    """AXI #9 — the shipped skill takes the confirm-and-send command verbatim from the
+    draft's `next[]` instead of hand-assembling the flags, so the TOON status must carry
+    the runnable `mail-send` built from THIS draft's id + account (mirroring the
+    `query`/`get` next[] coverage). Hand-assembly is exactly what SKILL.md forbids, so a
+    generic template here would be as broken as no `next[]` at all."""
+    from vidushi_oa import toon as oa_toon
+
+    _isolate_backend(monkeypatch, tmp_path)
+    _seed_contact("ven_acme", "vendor@example.com")
+    adapter = RecordingAdapter("gmail_main", "[GM]", caps={"send"})
+    client = MailClient({"gmail_main": adapter})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "toon"
+
+    cli.cmd_mail_draft(Namespace(
+        account="gmail_main", from_addr="me@gmail.com", to="vendor@example.com",
+        subject="Order query", body="Please help with my order.",
+        cc=None, attach=None, case=None,
+    ))
+
+    assert adapter.sends == 0, "emitting a next[] must not turn mail-draft into a send"
+    payload = oa_toon.from_toon(capsys.readouterr().out)
+    assert payload["next"] == ["mail-send --account gmail_main --draft draft-1"], (
+        "TOON mail-draft must carry an AXI #9 next[] whose single entry is the runnable "
+        f"mail-send for this draft id + account; got {payload!r}"
+    )
+
+
+def test_mail_reply_toon_next_carries_the_runnable_mail_send_command(monkeypatch, capsys, tmp_path):
+    """The threaded-reply verb saves a draft exactly like `mail-draft`, so it owes the
+    same AXI #9 confirm-and-send hint — otherwise the reply half of draft-then-confirm
+    dead-ends where the draft half doesn't."""
+    from vidushi_oa import toon as oa_toon
+
+    _isolate_backend(monkeypatch, tmp_path)
+    _seed_contact("ven_acme", "vendor@example.com")
+    source = _msg("m1", "gmail_main", "[GM]", "Your order", "vendor@example.com",
+                  "2026-07-20", "77")
+    adapter = RecordingAdapter("gmail_main", "[GM]", caps={"send"}, messages=[source])
+    client = MailClient({"gmail_main": adapter})
+    monkeypatch.setattr(cli, "build_client", lambda **kw: client)
+    cli._FMT = "toon"
+
+    cli.cmd_mail_reply(Namespace(
+        account="gmail_main", uid="77", from_addr="me@gmail.com",
+        body="Thanks — following up.", attach=None, case=None,
+    ))
+
+    assert adapter.sends == 0, "emitting a next[] must not turn mail-reply into a send"
+    payload = oa_toon.from_toon(capsys.readouterr().out)
+    assert payload["next"] == ["mail-send --account gmail_main --draft draft-1"], (
+        f"TOON mail-reply must carry the same runnable mail-send next[]; got {payload!r}"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # mail-send — sends exactly one identified draft
 # --------------------------------------------------------------------------- #
@@ -245,6 +303,10 @@ def test_mail_send_triggers_exactly_one_send_draft_and_returns_message_id(monkey
     from vidushi_oa import toon as oa_toon
     payload = oa_toon.from_toon(capsys.readouterr().out)
     assert payload["message_id"] == "sent-draft-42", f"must return the sent message id; got {payload!r}"
+    assert "next" not in payload, (
+        "an UNLINKED send is terminal — there is no row to follow up on, so AXI #9 "
+        f"must omit next[] rather than invent one; got {payload!r}"
+    )
 
 
 def test_mail_send_json_mode_returns_the_exact_message_id(monkeypatch, capsys, tmp_path):

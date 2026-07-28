@@ -531,6 +531,32 @@ class GmailXoauth2SendDraftSmtpAuthTest(unittest.TestCase):
             fake_smtp.auth_calls[0][1],
             "user=me@workspace.example\x01auth=Bearer access-token-123\x01\x01")
 
+    def test_a_334_continuation_is_answered_with_the_empty_sasl_response(self):
+        """Per the XOAUTH2 SASL profile a `334` AFTER the initial response is the
+        server's base64-JSON ERROR challenge, not a second request for the credential:
+        the client answers with an empty string so the server emits the precise `535`
+        status line. Re-sending the payload costs a redundant round trip and a vaguer
+        `SMTPAuthenticationError` on every expired/revoked token."""
+        captured = []
+
+        class ChallengingSMTP(FakeSMTP):
+            def auth(self, mechanism, authobject, *, initial_response_ok=True):
+                captured.append(authobject)
+                return super().auth(mechanism, authobject,
+                                    initial_response_ok=initial_response_ok)
+
+        self._send(ChallengingSMTP())
+        authobject = captured[0]
+
+        self.assertEqual(
+            authobject(),
+            "user=me@workspace.example\x01auth=Bearer access-token-123\x01\x01",
+            "the INITIAL response must still be the raw SASL payload")
+        self.assertEqual(
+            authobject("eyJzdGF0dXMiOiI0MDEifQ=="), "",
+            "a continuation must answer the error challenge with an empty response, "
+            "never re-send the rejected credential")
+
     def test_the_smtp_and_imap_sides_share_one_minted_token(self):
         """The token provider is the account's refresh exchange — minting a second
         one per send would double every token request."""

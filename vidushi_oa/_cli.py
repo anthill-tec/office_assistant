@@ -1054,6 +1054,17 @@ _MAIL_FK_STORES = {"case": "cases", "invoice": "invoices",
 _CORRESPONDENCE_ACTION = {"cases": "raise-ticket"}
 
 
+def _drafted_status(account, draft_id):
+    """The flat status a saved draft emits, carrying the AXI #9 `next[]` whose single
+    entry is the runnable confirm-and-send step for THIS draft (`mail-send --account
+    <a> --draft <id>`). The hint is TOON-only — `--json` stays the bare object the
+    CR-OA-010 decision-B contract pins."""
+    status = {"status": "drafted", "draft": draft_id, "account": account}
+    if _FMT == "toon":
+        status["next"] = [f"mail-send --account {account} --draft {draft_id}"]
+    return status
+
+
 def _save_draft_link(a, draft_id):
     """If the draft carried an FK flag (`--case`/`--invoice`/…), persist a
     draft_id -> (store type, row id) link so `mail-send` can record the sent message
@@ -1084,7 +1095,8 @@ def _attachments_or_exit(path):
 
 def cmd_mail_draft(a):
     """Compose (§S2) and save a REAL draft via the account adapter's
-    `create_draft(raw)`; emit a flat TOON/JSON status carrying the `draft` id.
+    `create_draft(raw)`; emit a flat TOON/JSON status carrying the `draft` id (and,
+    in TOON, the AXI #9 `next[]` holding the runnable `mail-send` for that draft).
     Performs ZERO network send — draft-then-confirm requires `mail-send` be the only
     code path that can dispatch a message."""
     client = _mail_client_or_exit()
@@ -1104,15 +1116,17 @@ def cmd_mail_draft(a):
     except _MAIL_LIVE_ERRORS as e:
         _mail_failure_exit(e, account=a.account, to=a.to)
     _save_draft_link(a, draft_id)
-    out({"status": "drafted", "draft": draft_id, "account": a.account})
+    out(_drafted_status(a.account, draft_id))
 
 
 def cmd_mail_send(a):
     """Dispatch ONLY the identified draft via the adapter's `send_draft(draft_id)`,
     gated on `send_gate.ensure_send_capable(entry)` (a non-send-capable account is a
     structured error + exit 1 whose message names "send"). Emits the sent
-    `message_id`. This is the ONLY function in this module that may call a send-path
-    token."""
+    `message_id`, plus — for a draft that was FK-linked (§S5), in TOON only — an AXI #9
+    `next[]` pointing at the row the correspondence was recorded on (`get <type> <id>`);
+    an unlinked send has no follow-up step, so it omits `next`. This is the ONLY
+    function in this module that may call a send-path token."""
     client = _mail_client_or_exit()
     entry = next((e for e in accounts.load_accounts()
                   if e.get("name") == a.account), None)
@@ -1134,6 +1148,8 @@ def cmd_mail_send(a):
               "draft": a.draft, "account": a.account}
     if linked:
         status["linked"] = linked
+        if _FMT == "toon":
+            status["next"] = [f"get {linked['type']} {linked['id']}"]
     out(status)
 
 
@@ -1202,7 +1218,7 @@ def cmd_mail_reply(a):
     except _MAIL_LIVE_ERRORS as e:
         _mail_failure_exit(e, account=a.account, to=to)
     _save_draft_link(a, draft_id)
-    out({"status": "drafted", "draft": draft_id, "account": a.account})
+    out(_drafted_status(a.account, draft_id))
 
 
 def _read_secret_no_argv(name):

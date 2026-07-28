@@ -110,10 +110,16 @@ class GmailXoauth2Adapter(GmailImapAdapter):
         whatever `str` comes back — so, exactly as on the `imaplib` side, the RAW
         `_xoauth2_raw` form is handed over (decoded to `str`, which is what smtplib
         encodes); the already-encoded `build_xoauth2_string` would go out
-        double-encoded."""
+        double-encoded. A continuation only ever happens on FAILURE — per the XOAUTH2
+        SASL profile a `334` after the initial response is the server's base64-JSON
+        error challenge — so the continuation answers with the empty string the profile
+        mandates, which elicits the precise `535` status line instead of re-sending a
+        credential the server has already rejected."""
         token = self._token()
 
         def authobject(_challenge=None):
+            if _challenge is not None:
+                return ""
             return _xoauth2_raw(self.user, token).decode()
 
         smtp.auth("XOAUTH2", authobject)
