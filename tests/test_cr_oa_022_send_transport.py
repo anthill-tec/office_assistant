@@ -116,45 +116,80 @@ def _build_raw_message(subject, from_addr, to_addr, body):
 
 
 class FakeSMTP:
-    """Records every `.starttls()` / `.login()` / `.auth()` / `.sendmail()` /
-    `.quit()` call — no real socket. Constructor-call args are recorded on the
-    class-level factory mock (via `mock.patch(..., return_value=...)`), not here.
+    """Records every `.ehlo()` / `.starttls()` / `.login()` / `.auth()` /
+    `.sendmail()` / `.quit()` call — no real socket. Constructor-call args are
+    recorded on the class-level factory mock (via
+    `mock.patch(..., return_value=...)`), not here. `commands` is the ordered
+    protocol trace, so the sequence itself can be asserted.
 
-    `auth` mirrors `smtplib.SMTP.auth`: it invokes the caller's `authobject` with
-    NO argument for the initial response and records the string it hands back —
-    the mechanism-specific SASL payload smtplib base64-encodes itself.
+    The greeting state machine mirrors the stdlib and RFC 3207, because the ORDER
+    is the contract under test: `starttls` greets first if needed and then DISCARDS
+    the greeting (`smtplib.SMTP.starttls` clears `helo_resp`/`ehlo_resp`/
+    `esmtp_features`), `login` re-greets internally the way `SMTP.login` does, and
+    `auth` — like `SMTP.auth` — does NOT. A command issued on an ungreeted channel
+    is answered `503 EHLO/HELO first`, exactly as a real submission server answers
+    it; the stdlib's `auth` silently absorbs that 503 as "already authenticated",
+    so a fake that accepted it too would pass an adapter that cannot send at all.
 
     `sendmail_error`/`quit_error`, when set, are raised instead — a submission that
     fails must still close its connection, and a `QUIT` that fails must not turn a
     delivered message into an error."""
 
     def __init__(self, sendmail_error=None, quit_error=None):
+        self.ehlo_calls = []
         self.starttls_calls = []
         self.login_calls = []
         self.auth_calls = []
         self.sendmail_calls = []
         self.quit_calls = 0
+        self.commands = []
         self.sendmail_error = sendmail_error
         self.quit_error = quit_error
+        self._greeted = False
+
+    def _require_greeting(self, command):
+        if not self._greeted:
+            raise smtplib.SMTPResponseException(
+                503, b"5.5.1 EHLO/HELO first. " + command.encode())
+
+    def ehlo(self, name=""):
+        self._greeted = True
+        self.ehlo_calls.append(name)
+        self.commands.append("ehlo")
+        return (250, b"ok")
+
+    def ehlo_or_helo_if_needed(self):
+        if not self._greeted:
+            self.ehlo()
 
     def starttls(self, context=None):
+        self.ehlo_or_helo_if_needed()
         self.starttls_calls.append(context)
+        self.commands.append("starttls")
+        self._greeted = False
 
     def login(self, user, password):
+        self.ehlo_or_helo_if_needed()
         self.login_calls.append((user, password))
+        self.commands.append("login")
 
     def auth(self, mechanism, authobject, *, initial_response_ok=True):
+        self._require_greeting("AUTH")
         self.auth_calls.append((mechanism, authobject()))
+        self.commands.append("auth")
         return (235, b"2.7.0 Accepted")
 
     def sendmail(self, from_addr, to_addrs, msg, *args, **kwargs):
+        self._require_greeting("MAIL")
         if self.sendmail_error is not None:
             raise self.sendmail_error
         self.sendmail_calls.append((from_addr, to_addrs, msg))
+        self.commands.append("sendmail")
         return {}
 
     def quit(self):
         self.quit_calls += 1
+        self.commands.append("quit")
         if self.quit_error is not None:
             raise self.quit_error
 
@@ -358,6 +393,18 @@ class GmailSendDraftSmtpTest(unittest.TestCase):
 
         self.assertEqual(fake_smtp.login_calls, [("me@gmail.com", "app-pw")])
 
+    def test_the_tls_channel_is_greeted_before_the_app_password_login(self):
+        """STARTTLS discards the pre-TLS greeting (RFC 3207), so the encrypted
+        channel must be greeted again before any authentication."""
+        fake_smtp = FakeSMTP()
+        with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=fake_smtp):
+            self.adapter.send_draft("900")
+
+        self.assertEqual(
+            fake_smtp.commands,
+            ["ehlo", "starttls", "ehlo", "login", "sendmail", "quit"],
+            f"got {fake_smtp.commands!r}")
+
     def test_send_draft_dispatches_the_real_draft_bytes_to_the_real_recipients(self):
         fake_smtp = FakeSMTP()
         with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=fake_smtp):
@@ -455,6 +502,22 @@ class GmailXoauth2SendDraftSmtpAuthTest(unittest.TestCase):
         self.assertEqual(len(fake_smtp.sendmail_calls), 1)
         self.assertEqual(len(fake_smtp.starttls_calls), 1)
         self.assertTrue(message_id, "send_draft must return a non-empty message id")
+
+    def test_the_tls_channel_is_greeted_before_the_xoauth2_auth_command(self):
+        """The XOAUTH2 path is where the missing greeting actually bites: STARTTLS
+        discards the pre-TLS EHLO (RFC 3207) and `smtplib.SMTP.auth` — unlike
+        `SMTP.login` — never re-issues one, so `AUTH XOAUTH2` lands on an ungreeted
+        channel, is answered `503 EHLO/HELO first`, and is then absorbed by `auth`
+        as the RFC 4954 already-authenticated case — leaving the send to fail at
+        `MAIL FROM` with `530 Authentication Required`."""
+        fake_smtp = FakeSMTP()
+
+        self._send(fake_smtp)
+
+        self.assertEqual(
+            fake_smtp.commands,
+            ["ehlo", "starttls", "ehlo", "auth", "sendmail", "quit"],
+            f"got {fake_smtp.commands!r}")
 
     def test_the_sasl_payload_carries_the_refreshed_bearer_token_unencoded(self):
         """`smtplib.SMTP.auth` base64-encodes whatever the authobject returns, so the

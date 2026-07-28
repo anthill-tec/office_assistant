@@ -126,12 +126,25 @@ class ImapAdapter(MailAdapter):
         account's `\\Drafts` special-use mailbox by default) by its
         UID, parses the envelope sender (its `From`) and the recipient list (its
         `To` + `Cc`), then connects to the provider's submission host on :587,
-        upgrades with STARTTLS, authenticates through `_smtp_login` (this adapter's
-        own IMAP credential — the app-password already authorizes SMTP, DN
-        §Decision 7 — or whatever SASL mechanism a subclass needs), and issues
-        exactly one `sendmail` of the REAL draft bytes to the REAL recipients.
-        Returns the message's own `Message-ID` when present, else a freshly-minted
-        one.
+        upgrades with STARTTLS, re-greets, authenticates through `_smtp_login`
+        (this adapter's own IMAP credential — the app-password already authorizes
+        SMTP, DN §Decision 7 — or whatever SASL mechanism a subclass needs), and
+        issues exactly one `sendmail` of the REAL draft bytes to the REAL
+        recipients. Returns the message's own `Message-ID` when present, else a
+        freshly-minted one.
+
+        The EHLO after STARTTLS is what makes `_smtp_login` a usable seam. RFC 3207
+        requires the client to discard everything it learned before the TLS
+        handshake, and `smtplib.SMTP.starttls` duly clears `helo_resp`/`ehlo_resp`/
+        `esmtp_features` — so the encrypted channel has not been greeted at all.
+        `SMTP.login` hides that by re-greeting internally, but `SMTP.auth` does not,
+        and an `AUTH` issued before an `EHLO` is answered `503 EHLO/HELO first` —
+        which `auth` then reads as the RFC 4954 already-authenticated case and
+        returns quietly, so the send fails much later at `MAIL FROM` with
+        `530 Authentication Required`. Greeting here restores the invariant for
+        every `_smtp_login` implementation instead of leaving each override to
+        rediscover it; on the app-password path `login`'s own greeting is then a
+        no-op.
 
         The submission connection is closed on every path: an unsent `QUIT` leaves
         the submission server recording an aborted session, and on a failure path
@@ -155,6 +168,7 @@ class ImapAdapter(MailAdapter):
         smtp = smtplib.SMTP(self.smtp_host, self.smtp_port)
         try:
             smtp.starttls()
+            smtp.ehlo_or_helo_if_needed()
             self._smtp_login(smtp)
             smtp.sendmail(from_addr, recipients, raw_bytes)
         finally:
