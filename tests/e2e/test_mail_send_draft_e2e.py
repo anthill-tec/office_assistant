@@ -347,7 +347,51 @@ def test_yahoo_imap_draft_then_send_appends_to_sent(stalwart_emulator, tmp_path)
 
 
 # ---------------------------------------------------------------------------
-# Case 4 — AXI #9 end-to-end: mail-draft's TOON output carries a runnable
+# Case 4 — a REAL partially-refused submission is a failure, not a send.
+#
+# `smtplib.sendmail` raises only when EVERY `RCPT TO` was refused; a submission the
+# server accepted for some recipients and refused for others comes back as a quiet
+# per-recipient dict. The fakes can only assert we read that dict — this drives a
+# real SMTP server into producing one (one deliverable emulator mailbox + one
+# unknown local address Stalwart rejects) and pins the user-visible consequence:
+# non-zero exit, a structured error naming the refused address, and the draft still
+# sitting in Drafts to fix and re-send.
+# ---------------------------------------------------------------------------
+def test_a_partially_refused_submission_fails_and_keeps_the_draft(
+        stalwart_emulator, tmp_path):
+    ya = stalwart_emulator.profiles["yahoo"]
+    env = _voa_env(tmp_path)
+    account = _register(env, ya)
+
+    drafts_box = _special_use_mailbox(ya, "\\Drafts")
+    unknown = "nosuchuser@" + ya.address.split("@", 1)[1]
+
+    subject = _unique("Partial refusal")
+    r = _voa(env, "mail-draft", "--account", account, "--from", ya.address,
+             "--to", ya.address, "--cc", unknown, "--subject", subject,
+             "--body", "one deliverable recipient, one unknown one", "--force")
+    assert r.returncode == 0, f"mail-draft failed: {r.stdout!r} {r.stderr!r}"
+    draft_id = json.loads(r.stdout)["draft"]
+    assert _imap_wait(ya, drafts_box, subject) is not None, "draft never landed"
+
+    r = _voa(env, "mail-send", "--account", account, "--draft", draft_id)
+    assert r.returncode != 0, \
+        f"a partly-refused submission was reported as sent: {r.stdout!r}"
+    payload = json.loads(r.stdout)
+    assert "error" in payload, payload
+    assert unknown in payload["error"], \
+        f"the error must name the refused recipient: {payload['error']!r}"
+    assert payload["draft"] == draft_id and payload["account"] == account, payload
+
+    # The draft is untouched — still in Drafts, still flagged \Draft — so the user can
+    # drop the bad address and send it again.
+    kept = _imap_wait(ya, drafts_box, subject)
+    assert kept is not None, "the refused draft was expunged from Drafts"
+    assert "\\Draft" in kept[2], f"the kept draft lost its \\Draft flag: {kept}"
+
+
+# ---------------------------------------------------------------------------
+# Case 5 — AXI #9 end-to-end: mail-draft's TOON output carries a runnable
 # mail-send --account ... --draft ... in next[].
 # ---------------------------------------------------------------------------
 def test_mail_draft_toon_next_hint_is_runnable_mail_send(stalwart_emulator, tmp_path):

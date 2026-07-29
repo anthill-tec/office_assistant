@@ -279,13 +279,17 @@ class DecisionSevenAsBuiltTest(unittest.TestCase):
             "a.cc, as the DN's as-built subsection claims",
         )
 
-    def test_records_the_still_owed_real_provider_e2e_gap(self):
-        self.assertRegex(
-            self.section, r"E2E",
-            "the accepted gap — a real-provider E2E validation tier is still owed — "
-            "must stay recorded; the in-process fakes are what let the round-1 empty-"
-            "draft bug pass green",
-        )
+    def test_records_how_the_fakes_only_gap_is_covered(self):
+        """The fakes-only gap must stay accounted for — it is what let the round-1
+        empty-draft bug pass green. It is now CLOSED by the real-server e2e tier, so
+        the subsection has to name that tier and point at its design of record
+        (matched case-insensitively: the DN writes the marker `@pytest.mark.e2e`)."""
+        self.assertRegex(self.section, r"(?i)\be2e\b",
+                         "the as-built subsection must record the real-provider e2e "
+                         "tier that closes the fakes-only gap")
+        self.assertIn("DN-mail-e2e-emulator-testing.md", self.section,
+                      "the subsection must link the e2e tier's design of record "
+                      "rather than restating what it does or does not reproduce")
 
     def test_skill_consequence_no_longer_defers_the_wiring(self):
         m = re.search(r"^-\s+\*\*The skill changes\*\*.*?(?=^-\s+\*\*)", self.dn,
