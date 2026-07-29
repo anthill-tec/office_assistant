@@ -16,6 +16,7 @@ import urllib.request
 
 from vidushi_oa.mail.base import MailAdapter, Message
 from vidushi_oa.mail.imap import ImapAdapter, imap_endpoint_kwargs
+from vidushi_oa.mail.query import QueryModel, parse
 
 _MAIL_CAPABILITY = "urn:ietf:params:jmap:mail"
 _CORE_CAPABILITY = "urn:ietf:params:jmap:core"
@@ -192,6 +193,46 @@ def _header_all_to_str(value) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def compile_filter(model: QueryModel) -> dict:
+    """Compile a portable `QueryModel` into an RFC 8621 `Email/query` filter
+    (CR-OA-031 §S2).
+
+    Each element of the model becomes its own `FilterCondition` — bare terms
+    (and quoted phrases) map to `text`, `subject:`/`from:`/`to:` to the
+    same-named conditions, `has:attachment` to `hasAttachment: true`, and
+    `newer_than:` to `after` — instead of the whole query string being posted as
+    one opaque `text` blob, which made every qualifier either match nothing
+    (`subject:Amazon` as literal text) or silently do nothing (`newer_than:`).
+
+    A single condition is sent bare; two or more are wrapped in the model's
+    `FilterOperator` (`AND` — the implicit default — or `OR`). `newer_than:`
+    resolves to the ISO-8601 `UTCDate` JMAP requires, at MIDNIGHT UTC of the
+    cutoff date the parser already computed, so "newer than 7 days" includes the
+    whole cutoff day — the intuitive reading of the parser's date-only model.
+
+    `category:` has no JMAP equivalent and is deliberately NOT compiled here:
+    the refusal contract that keeps it from being silently dropped is §S5's, and
+    building it in this cycle would pre-empt that step.
+    """
+    conditions = [{"text": term} for term in model.terms]
+    if model.subject is not None:
+        conditions.append({"subject": model.subject})
+    if model.from_ is not None:
+        conditions.append({"from": model.from_})
+    if model.to is not None:
+        conditions.append({"to": model.to})
+    if model.has_attachment:
+        conditions.append({"hasAttachment": True})
+    if model.newer_than is not None:
+        conditions.append({"after": f"{model.newer_than.isoformat()}T00:00:00Z"})
+
+    if not conditions:
+        return {}
+    if len(conditions) == 1:
+        return conditions[0]
+    return {"operator": model.operator, "conditions": conditions}
 
 
 class JmapAdapter(MailAdapter):
@@ -434,7 +475,8 @@ class JmapAdapter(MailAdapter):
             "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
             "methodCalls": [
                 ["Email/query",
-                 {"accountId": account_id, "filter": {"text": query}},
+                 {"accountId": account_id,
+                  "filter": compile_filter(parse(query))},
                  "0"],
                 ["Email/get",
                  {"accountId": account_id,
