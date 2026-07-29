@@ -42,9 +42,13 @@ import pytest
 STALWART_IMAGE = "stalwartlabs/mail-server:v0.11.8-alpine"
 EMU_DOMAIN = "emu.test"
 # submission / IMAP / JMAP-HTTP-admin+API + ManageSieve (the last is needed ONLY to seed the
-# gmail per-account Sieve script; the round-trips themselves use 587/143/8080 per the DN).
+# gmail per-account Sieve script). Seeding + test assertions use PLAINTEXT IMAP 143; the
+# real `voa` IMAP round-trip uses IMAPS 993 (implicit TLS) because `ImapAdapter` dials
+# `imaplib.IMAP4_SSL` — a NON-verifying stdlib context (CERT_NONE), so Stalwart's
+# self-signed cert is accepted with no CA/trust-store setup. SMTP 587 carries STARTTLS.
 PORT_HTTP = 8080
 PORT_IMAP = 143
+PORT_IMAPS = 993
 PORT_SMTP = 587
 PORT_SIEVE = 4190
 
@@ -73,16 +77,21 @@ class Profile:
     host: str
     address: str
     password: str
-    imap_port: int
-    smtp_port: int
+    imap_port: int       # PLAINTEXT IMAP (143) — seeding + in-test assertions
+    smtp_port: int       # submission (587) with STARTTLS — the voa send path
+    imaps_port: int = 0  # IMAPS (993, implicit TLS) — the voa IMAP round-trip path
     jmap_url: str = ""   # fastmail only — the JMAP session resource URL
     token: str = ""      # fastmail only — the Bearer token voa registers (base64 addr:pass)
 
     def endpoint(self) -> dict:
-        """The ``endpoint`` override object (Decision 3) for this profile."""
+        """The ``endpoint`` override object (Decision 3) for this profile.
+
+        The IMAP override points at the IMAPS (993) implicit-TLS port, not plaintext
+        143: ``ImapAdapter`` dials ``imaplib.IMAP4_SSL``. Its stdlib context does not
+        verify the cert, so Stalwart's self-signed cert needs no CA/trust setup."""
         if self.provider == "fastmail":
             return {"jmap_url": self.jmap_url}
-        return {"imap_host": self.host, "imap_port": self.imap_port,
+        return {"imap_host": self.host, "imap_port": self.imaps_port,
                 "smtp_host": self.host, "smtp_port": self.smtp_port}
 
 
@@ -94,6 +103,7 @@ class Emulator:
     http_port: int
     admin_user: str
     admin_password: str
+    container_ip: str = ""   # docker bridge IP — reachable from the host on native ports
     profiles: dict = field(default_factory=dict)
 
     @property
@@ -208,10 +218,17 @@ def _imap_login(host, port, address, password, retries=10):
 def _seed(emu: Emulator):
     base, auth = emu.admin_base, _basic(emu.admin_user, emu.admin_password)
 
-    # 1. Settings: permit cleartext IMAP/SMTP auth (the emulator runs without TLS).
+    # 1. Settings: permit cleartext IMAP/SMTP auth on the plaintext listeners, and pin
+    #    `server.hostname` to the container's bridge IP. Stalwart builds the JMAP session
+    #    `apiUrl`/`uploadUrl` as `http://<server.hostname>:8080/...` (the classic
+    #    reverse-proxy "internal host leaks into .well-known/jmap" case — stalw.art
+    #    /docs/server/reverse-proxy). The default is the container id, which is
+    #    unresolvable from the host; the bridge IP is reachable on the native :8080, so
+    #    the URL `JmapAdapter` follows off the session actually resolves.
     settings = [
         ["imap.auth.allow-plain-text", "true"],
         ["session.auth.mechanisms", "[plain, login]"],
+        ["server.hostname", emu.container_ip],
     ]
     status, payload = _admin_call(base, auth, "POST", "/api/settings",
                                   [{"type": "insert", "prefix": None,
@@ -235,12 +252,16 @@ def _seed(emu: Emulator):
         assert status == 200, f"{provider} create failed: {status} {payload}"
         emu.profiles[provider] = Profile(
             name=address, provider=provider, host=emu.host, address=address,
-            password=password, imap_port=_MAPPED[PORT_IMAP], smtp_port=_MAPPED[PORT_SMTP])
+            password=password, imap_port=_MAPPED[PORT_IMAP],
+            smtp_port=_MAPPED[PORT_SMTP], imaps_port=_MAPPED[PORT_IMAPS])
 
     # 3. fastmail: JMAP session URL + the Bearer token voa registers (base64 addr:pass —
     #    Stalwart accepts it as a Bearer credential at /.well-known/jmap).
     fm = emu.profiles["fastmail"]
-    fm.jmap_url = f"{emu.admin_base}/.well-known/jmap"
+    # Point the session resource at the SAME reachable host the advertised apiUrl uses
+    # (the bridge IP on native :8080), so the session fetch and every follow-up JMAP call
+    # resolve to one host.
+    fm.jmap_url = f"http://{emu.container_ip}:{PORT_HTTP}/.well-known/jmap"
     fm.token = base64.b64encode(f"{fm.address}:{fm.password}".encode()).decode()
     # Stalwart 401s the FIRST Bearer request for a freshly-created account, then caches and
     # serves 200s. Prime that cache so the first real ``Bearer <token>`` request (ours, or
@@ -262,6 +283,18 @@ def _seed(emu: Emulator):
         sieve.put_and_activate("autosent", _GMAIL_SIEVE)
     finally:
         sieve.close()
+
+    # 5. yahoo: a plain profile with STANDARD (real-Yahoo) folder names. Stalwart's
+    #    default sent folder is the Exchange-style "Sent Items"; real Yahoo — and the
+    #    generic IMAP path this profile emulates — names it "Sent". Rename it so the
+    #    profile is faithful (DN Decision 2: "standard folder names") and the generic
+    #    send path APPENDs the sent copy to a space-free \Sent mailbox.
+    ya = emu.profiles["yahoo"]
+    conn = _imap_login(ya.host, ya.imap_port, ya.address, ya.password)
+    try:
+        _ok(conn.rename('"Sent Items"', "Sent"), "rename yahoo Sent Items")
+    finally:
+        conn.logout()
 
 
 def _warm_bearer(jmap_url, token, retries=10):
@@ -322,7 +355,8 @@ def stalwart_emulator():
     DockerContainer = testcontainers.DockerContainer
 
     container = (DockerContainer(STALWART_IMAGE)
-                 .with_exposed_ports(PORT_HTTP, PORT_IMAP, PORT_SMTP, PORT_SIEVE))
+                 .with_exposed_ports(PORT_HTTP, PORT_IMAP, PORT_IMAPS,
+                                     PORT_SMTP, PORT_SIEVE))
     try:
         container.start()
     except Exception as e:  # noqa: BLE001 — any docker-side failure means "skip locally"
@@ -331,17 +365,33 @@ def stalwart_emulator():
     try:
         host = container.get_container_host_ip()
         _MAPPED.clear()
-        for internal in (PORT_HTTP, PORT_IMAP, PORT_SMTP, PORT_SIEVE):
+        for internal in (PORT_HTTP, PORT_IMAP, PORT_IMAPS, PORT_SMTP, PORT_SIEVE):
             _MAPPED[internal] = int(container.get_exposed_port(internal))
 
         admin_password = _read_admin_password(container)
         emu = Emulator(host=host, http_port=_MAPPED[PORT_HTTP],
-                       admin_user="admin", admin_password=admin_password)
+                       admin_user="admin", admin_password=admin_password,
+                       container_ip=_container_ip(container))
         _wait_for_admin(emu.admin_base, _basic("admin", admin_password))
         _seed(emu)
         yield emu
     finally:
         container.stop()
+
+
+def _container_ip(container) -> str:
+    """The container's docker bridge IP (reachable from the host on native ports).
+
+    Used as ``server.hostname`` so Stalwart advertises a JMAP ``apiUrl`` the host can
+    actually reach (the mapped host port can never appear there — Stalwart always
+    appends the internal listener port, :8080)."""
+    wrapped = container.get_wrapped_container()
+    wrapped.reload()
+    net = wrapped.attrs["NetworkSettings"]
+    ip = net.get("IPAddress")
+    if not ip:
+        ip = next(iter(net["Networks"].values()))["IPAddress"]
+    return ip
 
 
 def _read_admin_password(container, timeout=60):
