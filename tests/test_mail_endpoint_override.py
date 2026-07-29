@@ -358,6 +358,11 @@ class MailAuthEndpointFlagTest(unittest.TestCase):
         self.env["VIDUSHI_SECRETS_FILE"] = self.secrets_path
         self.env["VIDUSHI_SECRET_BACKEND"] = "file"
         self.env["VIDUSHI_FORMAT"] = "json"
+        # Pin the store into the same throwaway dir: `doctor` reads the active
+        # backend, and the suite-wide Mongo pin would otherwise reach a real server.
+        self.env["VIDUSHI_BACKEND"] = "sqlite"
+        self.env["VIDUSHI_SQLITE_PATH"] = os.path.join(self.tmp, "oa.db")
+        self.env["VIDUSHI_DATA_DIR"] = self.tmp
         self.env.pop("PYTHON_KEYRING_BACKEND", None)
 
     def tearDown(self):
@@ -386,6 +391,79 @@ class MailAuthEndpointFlagTest(unittest.TestCase):
             "imap_host": "emu.local",
             "imap_port": 1143,
         })
+
+    def _mail_auth(self, *args, stdin=None):
+        return subprocess.run(
+            [sys.executable, STORE, "mail-auth", *args],
+            capture_output=True, text=True, env=self.env, input=stdin)
+
+    def _entry(self):
+        with open(self.accounts_path, encoding="utf-8") as f:
+            entries = json.load(f)
+        self.assertEqual(len(entries), 1, f"expected one entry; got {entries!r}")
+        return entries[0]
+
+    def test_clearing_tls_verify_per_doctor_preserves_send_aliases_and_auth_mode(self):
+        """`doctor`'s TLS remediation re-registers the account to drop a
+        `tls_verify: false` override. `add_account` replaces the matched entry
+        WHOLESALE, so a re-registration that does not re-state `--send` / `--alias` /
+        `--auth-mode` must carry the stored ones forward — otherwise following
+        doctor's own advice silently revokes send capability, wipes every alias, and
+        resets an XOAUTH2 Gmail account to `password` (which then builds a plain
+        `GmailImapAdapter`)."""
+        r = self._mail_auth(
+            "--provider", "gmail", "--address", "me@emu.test",
+            "--secret-ref", "vidushi-oa/gmail:me@emu.test",
+            "--auth-mode", "xoauth2", "--send",
+            "--alias", "vendor.alias@emu.test", "--alias", "second@emu.test",
+            "--endpoint", json.dumps({"imap_host": "emu.local", "imap_port": 1993,
+                                      "tls_verify": False}))
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+
+        # Exactly what doctor's remediation step emits: the endpoint minus
+        # `tls_verify`, plus the account's own --secret-ref, and nothing else.
+        r = self._mail_auth(
+            "--provider", "gmail", "--address", "me@emu.test",
+            "--secret-ref", "vidushi-oa/gmail:me@emu.test",
+            "--endpoint", json.dumps({"imap_host": "emu.local", "imap_port": 1993}))
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+
+        entry = self._entry()
+        self.assertEqual(entry.get("endpoint"),
+                         {"imap_host": "emu.local", "imap_port": 1993},
+                         f"the tls_verify opt-out must be gone: {entry!r}")
+        self.assertTrue(entry.get("send"),
+                        f"re-registration must not revoke send capability: {entry!r}")
+        self.assertEqual(entry.get("aliases"),
+                         ["vendor.alias@emu.test", "second@emu.test"],
+                         f"re-registration must not wipe configured aliases: {entry!r}")
+        self.assertEqual(entry.get("auth_mode"), "xoauth2",
+                         f"re-registration must not reset the auth-mode: {entry!r}")
+
+    def test_doctor_tls_remediation_names_a_command_that_preserves_the_account(self):
+        r = self._mail_auth(
+            "--provider", "gmail", "--address", "me@emu.test",
+            "--secret-ref", "vidushi-oa/gmail:me@emu.test", "--send",
+            "--endpoint", json.dumps({"imap_host": "emu.local", "tls_verify": False}))
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+
+        r = subprocess.run([sys.executable, STORE, "doctor"],
+                           capture_output=True, text=True, env=self.env)
+        payload = json.loads(r.stdout)
+        row = payload["accounts"][0]
+        self.assertFalse(row["tls_verify"],
+                         f"doctor must surface a disabled TLS verification: {row!r}")
+        steps = [s["step"] for s in payload["remediation"]
+                 if "tls_verify" in s["step"]]
+        self.assertEqual(len(steps), 1, f"expected one TLS step: {payload!r}")
+        step = steps[0]
+        self.assertIn("--secret-ref vidushi-oa/gmail:me@emu.test", step,
+                      f"the suggested command must pass the account's existing "
+                      f"secret-ref so the stored credential is never re-read from "
+                      f"stdin; got {step!r}")
+        self.assertIn('--endpoint \'{"imap_host": "emu.local"}\'', step,
+                      f"the suggested endpoint must drop ONLY tls_verify, keeping "
+                      f"every other configured key; got {step!r}")
 
     def test_mail_auth_help_lists_endpoint_flag(self):
         r = subprocess.run([sys.executable, STORE, "mail-auth", "--help"],

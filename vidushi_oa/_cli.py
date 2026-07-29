@@ -1277,21 +1277,35 @@ def cmd_mail_auth(a):
 
     ``--auth-mode xoauth2`` (Gmail only) records that the secret is a JSON blob
     ``{client_id, client_secret, refresh_token}`` driving the XOAUTH2 refresh-token
-    flow; it too is entered via the hidden prompt / stdin, never as a CLI arg."""
+    flow; it too is entered via the hidden prompt / stdin, never as a CLI arg.
+
+    RE-REGISTRATION IS ADDITIVE, NEVER DESTRUCTIVE. ``add_account`` replaces the
+    matched entry wholesale, so every field the CLI does not re-specify is read off
+    the existing entry first — ``send``, ``aliases`` and ``auth_mode`` alongside the
+    ``endpoint`` the registry itself already carries forward. Without that, a
+    re-register aimed at ONE field (rotating the secret, or clearing a
+    ``tls_verify: false`` override on `doctor`'s advice) silently revoked send
+    capability, wiped every configured alias, and reset an XOAUTH2 Gmail account to
+    ``password`` — which then builds a plain `GmailImapAdapter`. ``--send`` is
+    `store_true`, so an omitted flag cannot mean "revoke"; it only ever ADDS the
+    capability, and dropping it is a deliberate edit of the registry."""
     from vidushi_oa.mail import accounts
     if a.provider not in _MAIL_PROVIDERS:
         out({"error": "unsupported provider", "provider": a.provider,
              "supported": list(_MAIL_PROVIDERS)})
         sys.exit(1)
     name = f"{a.provider}:{a.address}"
+    existing = next((e for e in accounts.load_accounts()
+                     if e.get("name") == name), None) or {}
 
-    auth_mode = getattr(a, "auth_mode", "password")
+    auth_mode = (getattr(a, "auth_mode", None)
+                 or existing.get("auth_mode") or "password")
     if auth_mode == "xoauth2" and a.provider != "gmail":
         out({"error": "xoauth2 auth-mode is supported for the gmail provider only",
              "provider": a.provider})
         sys.exit(1)
-    send = bool(getattr(a, "send", False))
-    aliases = getattr(a, "alias", None) or []
+    send = bool(getattr(a, "send", False)) or bool(existing.get("send", False))
+    aliases = getattr(a, "alias", None) or list(existing.get("aliases") or [])
     endpoint_raw = getattr(a, "endpoint", None)
     # `None` (flag omitted) preserves any configured override; an explicit `{}`
     # CLEARS it — the only way to re-enable TLS verification on an account that was
@@ -1370,6 +1384,7 @@ def cmd_doctor(a):
 
     rows = []
     all_resolve = True
+    tls_disabled = []
     for entry in accounts.load_accounts():
         ref = entry.get("secret_ref", "")
         try:
@@ -1389,6 +1404,8 @@ def cmd_doctor(a):
         # — must never be invisible: without it here an account running unverified
         # TLS reads identically to a hardened one in every diagnostic.
         endpoint = entry.get("endpoint") or {}
+        if not bool(endpoint.get("tls_verify", True)):
+            tls_disabled.append((entry, endpoint))
         rows.append({"account": entry.get("name"), "provider": entry.get("provider"),
                      "auth_mode": entry.get("auth_mode", "password"),
                      "kind": kind, "resolves": resolves,
@@ -1416,15 +1433,22 @@ def cmd_doctor(a):
             f"prompt (or pipe it on stdin), or run `voa doctor --fix`.")
         remediation.append({"step": ma_step, "human_input": True})
         next_items.append(ma_step)
-    for r in rows:
-        if r["tls_verify"]:
-            continue
+    # The suggested command drops ONLY the `tls_verify` key — every other endpoint
+    # key (the emulator host/port an account may legitimately be pointed at) is
+    # re-sent verbatim — and passes the account's own `--secret-ref`, so the stored
+    # credential is never re-read from stdin. `cmd_mail_auth` carries `send` /
+    # `aliases` / `auth_mode` forward, so the step restores a verifying channel and
+    # changes nothing else; that is what makes it safe to run unattended.
+    for entry, endpoint in tls_disabled:
+        verifying = {k: v for k, v in endpoint.items() if k != "tls_verify"}
         tls_step = (
-            f"{r['account']} runs with TLS certificate/hostname verification "
+            f"{entry.get('name')} runs with TLS certificate/hostname verification "
             f"DISABLED (endpoint tls_verify=false) — intended only for the local "
-            f"emulator. Clear the override with `voa mail-auth --provider "
-            f"{r['provider']} --address {r['account'].split(':', 1)[-1]} "
-            f"--endpoint '{{}}'` to restore a verifying channel.")
+            f"emulator. Restore a verifying channel with `voa mail-auth --provider "
+            f"{entry.get('provider')} --address {entry.get('address')} "
+            f"--secret-ref {entry.get('secret_ref')} --endpoint "
+            f"'{json.dumps(verifying, sort_keys=True)}'`; it keeps the stored secret, "
+            f"send capability, aliases and auth-mode untouched.")
         remediation.append({"step": tls_step, "human_input": False})
         next_items.append(tls_step)
 
@@ -1556,9 +1580,10 @@ def main():
                      help="your mailbox address for this account, e.g. "
                           "you@fastmail.com (a sample format only; supply your own).")
     mau.add_argument("--auth-mode", dest="auth_mode",
-                     choices=["password", "xoauth2"], default="password",
+                     choices=["password", "xoauth2"], default=None,
                      help="gmail only: 'xoauth2' expects the secret to be a JSON blob "
-                          "{client_id, client_secret, refresh_token}; default 'password'.")
+                          "{client_id, client_secret, refresh_token}; default 'password' "
+                          "(on a re-registration, the account's existing auth-mode).")
     mau.add_argument("--secret-ref", dest="secret_ref", default=None,
                      help="credential reference (keyring/file). Omit to be prompted "
                           "(hidden) or to pipe the secret on stdin; it is stored under a "

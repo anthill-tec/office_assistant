@@ -245,10 +245,15 @@ class SmtpTlsVerificationTest(unittest.TestCase):
 class _JmapIdentityTransport:
     """Routes each JMAP call by method name; records every call so the test can
     prove an `Identity/get` was actually issued and inspect the exact
-    `EmailSubmission/set` create object posted."""
+    `EmailSubmission/set` create object posted.
 
-    def __init__(self, identity_get):
+    `draft_from` (when given) is the address the batched `Email/get` reports as the
+    draft's `From`, so a test can drive the identity SELECTION rather than only the
+    single-identity fallback."""
+
+    def __init__(self, identity_get, draft_from=None):
         self.identity_get = identity_get
+        self.draft_from = draft_from
         self.calls = []
 
     def __call__(self, method, url, headers, body):
@@ -257,7 +262,17 @@ class _JmapIdentityTransport:
             return 200, _SESSION
         call = body["methodCalls"][0]
         if call[0] == "Identity/get":
-            return 200, self.identity_get
+            if self.draft_from is None:
+                return 200, self.identity_get
+            responses = list(self.identity_get["methodResponses"])
+            draft_id = body["methodCalls"][1][1]["ids"][0]
+            responses.append(
+                ["Email/get",
+                 {"accountId": ACCOUNT_ID,
+                  "list": [{"id": draft_id,
+                            "from": [{"email": self.draft_from}]}]},
+                 "1"])
+            return 200, {"methodResponses": responses}
         if call[0] == "EmailSubmission/set":
             return 200, _SUBMISSION_OK
         return 200, {"methodResponses": []}
@@ -314,6 +329,55 @@ class JmapSendDraftIdentityTest(unittest.TestCase):
             f"(RFC 8621 sec7.1); got {create!r}")
         self.assertEqual(create.get("emailId"), "Md-draft-1",
                          "the emailId must still reference the submitted draft")
+
+
+class JmapIdentityMatchesTheDraftFromTest(unittest.TestCase):
+    """The resolved identity must AUTHORIZE the draft's own `From` — an
+    `EmailSubmission/set` whose identity does not is refused with `forbiddenFrom`
+    (RFC 8621 §7.5). `mail-auth --alias` makes an alias From a first-class flow, and
+    `Identity/get` returns identities in no guaranteed order, so "the first one" is
+    not good enough."""
+
+    _IDENTITIES = {
+        "methodResponses": [
+            ["Identity/get",
+             {"accountId": ACCOUNT_ID,
+              "list": [{"id": "I-alias", "email": "vendor.alias@fastmail.com"},
+                       {"id": "I-primary", "email": "me@fastmail.com"}]},
+             "0"],
+        ],
+    }
+
+    def _submitted_identity(self, draft_from):
+        transport = _JmapIdentityTransport(self._IDENTITIES, draft_from=draft_from)
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+
+        adapter.send_draft("Md-draft-1")
+
+        submissions = transport.api_calls("EmailSubmission/set")
+        self.assertEqual(len(submissions), 1)
+        return submissions[0][1]["create"]["submission"].get("identityId")
+
+    def test_alias_from_selects_the_alias_identity(self):
+        self.assertEqual(
+            self._submitted_identity("vendor.alias@fastmail.com"), "I-alias",
+            "a draft sent from a configured alias must submit under the identity "
+            "that authorizes THAT address")
+
+    def test_primary_from_selects_the_primary_identity_not_the_first_listed(self):
+        self.assertEqual(
+            self._submitted_identity("me@fastmail.com"), "I-primary",
+            "the identity must be matched on the draft's From, not taken as the "
+            "first entry of an unordered Identity/get list")
+
+    def test_unmatched_from_falls_back_to_the_first_identity(self):
+        self.assertEqual(
+            self._submitted_identity("stranger@example.com"), "I-alias",
+            "a From no identity claims must still submit (first-identity "
+            "fallback) rather than omitting identityId")
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +442,54 @@ class ImapAppendQuotesMailboxNamesWithSpacesTest(unittest.TestCase):
             f"a Drafts mailbox name containing a space must be double-quoted "
             f"per RFC 3501 before being passed to conn.append(); got "
             f"{mailbox_arg!r}")
+
+
+class ImapSelectQuotesMailboxNamesWithSpacesTest(unittest.TestCase):
+    """FIX3's other half: `imaplib.IMAP4.select` forwards its mailbox argument to
+    the wire verbatim exactly as `append` does, so quoting only the APPEND left
+    `SELECT Draft Items` reachable — the draft is created and can then never be
+    fetched back, sent, or retired."""
+
+    def _fake(self):
+        return FakeImapConn(
+            fetch_body=compose(from_addr="me@yahoo.com", to="support@example.com",
+                               subject="Return request", body="Requesting an RMA."),
+            list_response=[b'(\\HasNoChildren) "/" "INBOX"',
+                           b'(\\HasNoChildren \\Drafts) "/" "Draft Items"',
+                           b'(\\HasNoChildren \\Sent) "/" "Sent"'])
+
+    def _adapter(self, fake):
+        return YahooImapAdapter(
+            account="yahoo_main", source_tag="[YH]", host="imap.mail.yahoo.com",
+            user="me@yahoo.com", password="app-pw", conn_factory=_conn_factory(fake))
+
+    def test_send_draft_selects_a_spaced_drafts_mailbox_quoted(self):
+        fake = self._fake()
+        adapter = self._adapter(fake)
+        fake_smtp = MagicMock()
+        fake_smtp.sendmail.return_value = {}
+
+        with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=fake_smtp):
+            adapter.send_draft("901")
+
+        selected = [m for m in fake.select_calls if m != "INBOX"]
+        self.assertTrue(selected, f"no mailbox was selected: {fake.select_calls!r}")
+        self.assertEqual(
+            set(selected), {'"Draft Items"'},
+            f"every SELECT of a mailbox name containing a space must be "
+            f"double-quoted per RFC 3501 — conn.select forwards it to the wire "
+            f"verbatim, just like append; got {fake.select_calls!r}")
+
+    def test_fetch_html_body_selects_a_spaced_folder_quoted(self):
+        fake = self._fake()
+        adapter = self._adapter(fake)
+
+        adapter.fetch_html_body("901", folder="Draft Items")
+
+        self.assertIn(
+            '"Draft Items"', fake.select_calls,
+            f"fetch_html_body must quote a folder name containing a space before "
+            f"handing it to conn.select(); got {fake.select_calls!r}")
 
 
 if __name__ == "__main__":
