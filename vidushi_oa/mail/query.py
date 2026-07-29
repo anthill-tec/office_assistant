@@ -55,6 +55,20 @@ class QueryParseError(ValueError):
     the offending token."""
 
 
+class UnsupportedQualifierError(ValueError):
+    """Raised when a portable query carries a qualifier the target provider
+    cannot express (CR-OA-031 §S4/§S5).
+
+    It lives here, beside the grammar, because it is a property of the
+    provider-neutral model — every compiler (`jmap.compile_filter`,
+    `imap.compile_imap_query`) raises the SAME type, and `vidushi_oa.mail.imap`
+    re-exports it for existing importers. The message always names the
+    offending qualifier so the caller knows exactly what was refused. Refusing
+    beats dropping: a silently ignored qualifier returns a confidently wrong
+    result set.
+    """
+
+
 @dataclass
 class QueryNode:
     """One node of the provider-neutral query tree — a group or a leaf.
@@ -141,8 +155,13 @@ def parse(query: str, *, today: date | None = None) -> QueryModel:
     return model
 
 
-#: Token kinds produced by `_tokenize`.
+#: Token kinds produced by `_tokenize`. `_QUOTED` is a word token that OPENED
+#: with a quote (`"https://example.com/x"`) — the quotes are gone by the time
+#: `_leaf` sees the value, so the kind is what carries "this was quoted, treat
+#: it as a literal term". `subject:"re: invoice"` opens unquoted and so stays a
+#: plain `_WORD` whose qualifier prefix is still honoured.
 _WORD = "WORD"
+_QUOTED = "QUOTED"
 _PAREN = "PAREN"
 
 
@@ -157,16 +176,18 @@ def _tokenize(query: str) -> list[tuple[str, str]]:
     tokens: list[tuple[str, str]] = []
     buf: list[str] = []
     started = False
+    opened_quoted = False
     quote = None
     index = 0
     length = len(query)
 
     def flush():
-        nonlocal started
+        nonlocal started, opened_quoted
         if started:
-            tokens.append((_WORD, "".join(buf)))
+            tokens.append((_QUOTED if opened_quoted else _WORD, "".join(buf)))
             buf.clear()
             started = False
+            opened_quoted = False
 
     while index < length:
         char = query[index]
@@ -183,6 +204,8 @@ def _tokenize(query: str) -> list[tuple[str, str]]:
             continue
         if char in ('"', "'"):
             quote = char
+            if not started:
+                opened_quoted = True
             started = True
             index += 1
             continue
@@ -239,10 +262,10 @@ def _parse_group(tokens, index, query, reference, *, depth):
             return _group(operator, children), index + 1
 
         index += 1
-        if value == "OR":
+        if value == "OR" and kind == _WORD:
             operator = "OR"
             continue
-        children.append(_leaf(value, reference))
+        children.append(_leaf(value, reference, quoted=kind == _QUOTED))
 
     if depth > 0:
         raise QueryParseError(
@@ -263,13 +286,18 @@ def _group(operator: str, children: list[QueryNode]) -> QueryNode:
     return QueryNode(operator=operator, children=children)
 
 
-def _leaf(token: str, reference: date) -> QueryNode:
+def _leaf(token: str, reference: date, *, quoted: bool = False) -> QueryNode:
     """Build one leaf node from a single query token.
+
+    `quoted` marks a token that opened with a quote (`"https://example.com/x"`):
+    the quotes are stripped by `_tokenize`, so without the flag such a phrase
+    would be indistinguishable from a bare token and its colon would be
+    re-parsed as a qualifier prefix. A quoted token is ALWAYS a literal term.
 
     Raises `QueryParseError` naming the token for an unknown qualifier or an
     unknown/malformed `newer_than:` value.
     """
-    if ":" not in token:
+    if quoted or ":" not in token:
         return QueryNode(term=token)
 
     name, _, value = token.partition(":")
@@ -290,6 +318,7 @@ def _leaf(token: str, reference: date) -> QueryNode:
         f"unknown qualifier {token!r}: expected one of "
         + ", ".join(f"{q}:" for q in _VALUE_QUALIFIERS)
         + ", has:attachment"
+        + f'; quote the token ("{token}") to search for it literally'
     )
 
 

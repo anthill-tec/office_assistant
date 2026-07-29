@@ -16,7 +16,12 @@ import urllib.request
 
 from vidushi_oa.mail.base import MailAdapter, Message
 from vidushi_oa.mail.imap import ImapAdapter, imap_endpoint_kwargs
-from vidushi_oa.mail.query import QueryModel, QueryNode, parse
+from vidushi_oa.mail.query import (
+    QueryModel,
+    QueryNode,
+    UnsupportedQualifierError,
+    parse,
+)
 
 _MAIL_CAPABILITY = "urn:ietf:params:jmap:mail"
 _CORE_CAPABILITY = "urn:ietf:params:jmap:core"
@@ -217,9 +222,11 @@ def compile_filter(model: QueryModel) -> dict:
     cutoff date the parser already computed, so "newer than 7 days" includes the
     whole cutoff day — the intuitive reading of the parser's date-only model.
 
-    `category:` has no JMAP equivalent and is deliberately NOT compiled here:
-    the refusal contract that keeps it from being silently dropped is §S5's, and
-    building it in this cycle would pre-empt that step.
+    `category:` has no JMAP equivalent, so it is REFUSED with an
+    `UnsupportedQualifierError` naming the qualifier (§S5) rather than compiled
+    away: dropping it would leave an EMPTY filter matching every message in the
+    mailbox — a confidently wrong answer, the exact failure mode this CR
+    removes.
     """
     return _compile_node(model.root)
 
@@ -227,8 +234,10 @@ def compile_filter(model: QueryModel) -> dict:
 def _compile_node(node: QueryNode) -> dict:
     """Compile one query-tree node into a JMAP filter object.
 
-    A group recurses into its children (dropping any that compile to nothing,
-    such as `category:`); a bare/single condition is returned unwrapped.
+    A group recurses into its children; a bare/single condition is returned
+    unwrapped. `category:` raises `UnsupportedQualifierError` — JMAP has no
+    category concept, so there is nothing to compile it to and silently
+    dropping it would widen the search to everything.
     """
     if node.is_group:
         conditions = [c for c in (_compile_node(child) for child in node.children) if c]
@@ -250,6 +259,11 @@ def _compile_node(node: QueryNode) -> dict:
         return {"hasAttachment": True}
     if node.qualifier == "newer_than":
         return {"after": f"{node.value.isoformat()}T00:00:00Z"}
+    if node.qualifier == "category":
+        raise UnsupportedQualifierError(
+            "category: is not supported by this account: JMAP has no "
+            "server-side category search condition"
+        )
     return {}
 
 

@@ -19,7 +19,16 @@ import sys
 from datetime import date
 
 from vidushi_oa.mail.base import MailAdapter, Message
-from vidushi_oa.mail.query import QueryModel, QueryNode, parse
+# `UnsupportedQualifierError` now lives beside the grammar
+# (`vidushi_oa.mail.query`) so every provider compiler — JMAP included — raises
+# the SAME type without importing a sibling adapter; it stays importable from
+# here for the callers that have always reached for it in this module.
+from vidushi_oa.mail.query import (
+    QueryModel,
+    QueryNode,
+    UnsupportedQualifierError,
+    parse,
+)
 
 # Header fields requested from the server for every message.
 _HEADER_FIELDS = "SUBJECT FROM TO DATE MESSAGE-ID REFERENCES IN-REPLY-TO"
@@ -50,16 +59,6 @@ _IMAP_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
 # Portable-model qualifier -> its RFC 3501 SEARCH key. `category`/`has_attachment`
 # are deliberately absent: RFC 3501 cannot express them, so they are refused.
 _IMAP_KEYS = {"subject": "SUBJECT", "from_": "FROM", "to": "TO"}
-
-
-class UnsupportedQualifierError(ValueError):
-    """Raised when a portable query carries a qualifier the target provider
-    cannot express (CR-OA-031 §S4).
-
-    The message always names the offending qualifier so the caller knows
-    exactly what was refused. Refusing beats dropping: a silently ignored
-    qualifier returns a confidently wrong result set.
-    """
 
 
 def imap_endpoint_kwargs(endpoint, default_host):
