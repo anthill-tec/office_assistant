@@ -16,7 +16,7 @@ import urllib.request
 
 from vidushi_oa.mail.base import MailAdapter, Message
 from vidushi_oa.mail.imap import ImapAdapter, imap_endpoint_kwargs
-from vidushi_oa.mail.query import QueryModel, parse
+from vidushi_oa.mail.query import QueryModel, QueryNode, parse
 
 _MAIL_CAPABILITY = "urn:ietf:params:jmap:mail"
 _CORE_CAPABILITY = "urn:ietf:params:jmap:core"
@@ -206,7 +206,12 @@ def compile_filter(model: QueryModel) -> dict:
     one opaque `text` blob, which made every qualifier either match nothing
     (`subject:Amazon` as literal text) or silently do nothing (`newer_than:`).
 
-    A single condition is sent bare; two or more are wrapped in the model's
+    The compiler **recurses over the model's tree** (`QueryModel.root`), so a
+    parenthesised group becomes a NESTED `FilterOperator`:
+    `(a OR b) c` → `{"operator": "AND", "conditions": [{"operator": "OR",
+    "conditions": [{"text": "a"}, {"text": "b"}]}, {"text": "c"}]}`.
+
+    A single condition is sent bare; two or more are wrapped in the node's
     `FilterOperator` (`AND` — the implicit default — or `OR`). `newer_than:`
     resolves to the ISO-8601 `UTCDate` JMAP requires, at MIDNIGHT UTC of the
     cutoff date the parser already computed, so "newer than 7 days" includes the
@@ -216,23 +221,36 @@ def compile_filter(model: QueryModel) -> dict:
     the refusal contract that keeps it from being silently dropped is §S5's, and
     building it in this cycle would pre-empt that step.
     """
-    conditions = [{"text": term} for term in model.terms]
-    if model.subject is not None:
-        conditions.append({"subject": model.subject})
-    if model.from_ is not None:
-        conditions.append({"from": model.from_})
-    if model.to is not None:
-        conditions.append({"to": model.to})
-    if model.has_attachment:
-        conditions.append({"hasAttachment": True})
-    if model.newer_than is not None:
-        conditions.append({"after": f"{model.newer_than.isoformat()}T00:00:00Z"})
+    return _compile_node(model.root)
 
-    if not conditions:
-        return {}
-    if len(conditions) == 1:
-        return conditions[0]
-    return {"operator": model.operator, "conditions": conditions}
+
+def _compile_node(node: QueryNode) -> dict:
+    """Compile one query-tree node into a JMAP filter object.
+
+    A group recurses into its children (dropping any that compile to nothing,
+    such as `category:`); a bare/single condition is returned unwrapped.
+    """
+    if node.is_group:
+        conditions = [c for c in (_compile_node(child) for child in node.children) if c]
+        if not conditions:
+            return {}
+        if len(conditions) == 1:
+            return conditions[0]
+        return {"operator": node.operator, "conditions": conditions}
+
+    if node.term is not None:
+        return {"text": node.term}
+    if node.qualifier == "subject":
+        return {"subject": node.value}
+    if node.qualifier == "from_":
+        return {"from": node.value}
+    if node.qualifier == "to":
+        return {"to": node.value}
+    if node.qualifier == "has_attachment":
+        return {"hasAttachment": True}
+    if node.qualifier == "newer_than":
+        return {"after": f"{node.value.isoformat()}T00:00:00Z"}
+    return {}
 
 
 class JmapAdapter(MailAdapter):

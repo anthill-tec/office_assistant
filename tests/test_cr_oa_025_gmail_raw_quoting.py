@@ -146,8 +146,16 @@ class GmailRawQuotedPhraseSearchTest(unittest.TestCase):
 
 class GmailRawQuoteFreeRegressionTest(unittest.TestCase):
     """§S1 AC (regression): a quote-free compound query (qualifiers + no
-    quoted phrase) must not be over-escaped -- equivalent to today's
-    behaviour."""
+    quoted phrase) must not be over-escaped -- no stray backslashes are
+    introduced and the argument stays a well-formed IMAP quoted-string.
+
+    Reconciled for CR-OA-031 §S3: the ESCAPING contract this test exists to
+    pin is unchanged, but the query is no longer passed through raw -- it is
+    recompiled from the portable query model, so the portable
+    `newer_than:3m` (a calendar-free 30-day month) reaches the wire as
+    Gmail's own `newer_than:90d`. What is pinned here is therefore the
+    escaping of the COMPILED wire string, not raw round-trip equality (which
+    CR-OA-031 deliberately supersedes)."""
 
     def setUp(self):
         self.fake = FakeIMAP(search_response=("OK", [b""]))
@@ -171,12 +179,16 @@ class GmailRawQuoteFreeRegressionTest(unittest.TestCase):
         _, args = search_calls[0]
         captured_arg = args[1]
 
-        expected_arg = '"%s"' % query
+        # CR-OA-031 §S3: `newer_than:3m` is COMPILED to Gmail's own day unit
+        # (the portable grammar's calendar-free 30-day month -> 90 days), so
+        # the wire string is the compiled query, not the raw one.
+        compiled = "category:purchases newer_than:90d"
+        expected_arg = '"%s"' % compiled
         self.assertEqual(
             captured_arg,
             expected_arg,
-            "a quote-free query must produce the same well-formed quoted-string "
-            "as today -- no stray backslashes introduced",
+            "a quote-free query must produce a well-formed quoted-string "
+            "around the COMPILED query -- no stray backslashes introduced",
         )
         self.assertNotIn(
             "\\",
@@ -184,14 +196,22 @@ class GmailRawQuoteFreeRegressionTest(unittest.TestCase):
             "no backslash-escaping should be introduced for a query with no "
             "embedded '\"' or '\\\\'",
         )
-        self.assertEqual(_unescape_imap_quoted_string(captured_arg), query)
+        self.assertEqual(_unescape_imap_quoted_string(captured_arg), compiled)
 
 
 class GmailRawCompoundQuotedPhraseIntegrationTest(unittest.TestCase):
     """§S1 AC (integration, production path): a compound query mixing
     qualifiers, `OR`, parentheses, AND a quoted phrase must also translate to
     a well-formed `X-GM-RAW` argument via the public `search()` entry point --
-    not a private quoting helper exercised in isolation."""
+    not a private quoting helper exercised in isolation.
+
+    Reconciled for CR-OA-031 §S3: parentheses are now IN-grammar and are
+    re-emitted as Gmail's own native parentheses, so the group survives
+    compilation; `label:` is not advertised anywhere and stays a non-goal, so
+    the second alternative is a grammar-valid `subject:` qualifier. What is
+    pinned here is unchanged: the quoted phrase survives as a well-formed,
+    correctly escaped IMAP quoted-string over the public `search()` path, on
+    exactly one connection."""
 
     def setUp(self):
         self.fake = FakeIMAP(search_response=("OK", [b""]))
@@ -206,7 +226,7 @@ class GmailRawCompoundQuotedPhraseIntegrationTest(unittest.TestCase):
         )
 
     def test_compound_query_with_or_parentheses_and_quoted_phrase_round_trips(self):
-        query = '(category:purchases OR label:orders) "out for delivery"'
+        query = '(category:purchases OR subject:orders) "out for delivery"'
 
         self.adapter.search(query)
 
@@ -220,8 +240,10 @@ class GmailRawCompoundQuotedPhraseIntegrationTest(unittest.TestCase):
             _unescape_imap_quoted_string(captured_arg),
             query,
             "a compound query (qualifiers + OR + parentheses + quoted phrase) "
-            "driven through the public search() must round-trip back to the "
-            "exact original query once the escaped quoted-string is unescaped",
+            "driven through the public search() must come back, once the "
+            "escaped quoted-string is unescaped, as the compiled Gmail-native "
+            "query -- here identical to the input, since every element of it "
+            "is in-grammar and already single-spaced",
         )
         # exactly one connection was created through the injected factory --
         # confirms this exercised the real ImapAdapter._conn() production path.

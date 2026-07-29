@@ -19,7 +19,7 @@ import sys
 from datetime import date
 
 from vidushi_oa.mail.base import MailAdapter, Message
-from vidushi_oa.mail.query import QueryModel, parse
+from vidushi_oa.mail.query import QueryModel, QueryNode, parse
 
 # Header fields requested from the server for every message.
 _HEADER_FIELDS = "SUBJECT FROM TO DATE MESSAGE-ID REFERENCES IN-REPLY-TO"
@@ -490,6 +490,10 @@ def compile_gmail_query(model: QueryModel, *, today: date | None = None) -> str:
     as Gmail's own operators, bare terms and phrases keep their order (phrases
     re-quoted), implicit-AND is a single space and `OR` Gmail's own keyword.
 
+    Compilation **recurses over the model's tree** (`QueryModel.root`), so a
+    parenthesised group is re-emitted with Gmail's own native parentheses —
+    `(a OR b) c` → `(a OR b) c`.
+
     `newer_than:` is the reason the raw string cannot simply be passed through:
     the portable grammar accepts `d`/`w`/`m`/`y`, but Gmail's own `newer_than:`
     has no `w` at all (a literal `1w` reaches Gmail unrecognised and matches
@@ -502,23 +506,36 @@ def compile_gmail_query(model: QueryModel, *, today: date | None = None) -> str:
     same value the query was parsed with so the two cannot straddle midnight.
     """
     reference = today if today is not None else date.today()
-    parts = []
-    if model.subject is not None:
-        parts.append(f"subject:{_gmail_value(model.subject)}")
-    if model.from_ is not None:
-        parts.append(f"from:{_gmail_value(model.from_)}")
-    if model.to is not None:
-        parts.append(f"to:{_gmail_value(model.to)}")
-    if model.category is not None:
-        parts.append(f"category:{_gmail_value(model.category)}")
-    if model.has_attachment:
-        parts.append("has:attachment")
-    if model.newer_than is not None:
-        parts.append(f"newer_than:{(reference - model.newer_than).days}d")
-    parts.extend(_gmail_value(term) for term in model.terms)
+    return _render_node(model.root, reference, top=True)
 
-    joiner = " OR " if model.operator == "OR" else " "
-    return joiner.join(parts)
+
+def _render_node(node: QueryNode, reference: date, *, top: bool = False) -> str:
+    """Render one query-tree node as Gmail-native syntax.
+
+    A group joins its children with a single space (implicit-AND) or ` OR `,
+    and — unless it is the top level, where they would be redundant — wraps
+    them in Gmail's OWN parentheses, so `(a OR b) c` compiles back to
+    `(a OR b) c`.
+    """
+    if node.is_group:
+        joiner = " OR " if node.operator == "OR" else " "
+        rendered = [r for r in (_render_node(c, reference) for c in node.children) if r]
+        inner = joiner.join(rendered)
+        if top or not inner:
+            return inner
+        return f"({inner})"
+
+    if node.term is not None:
+        return _gmail_value(node.term)
+    if node.qualifier == "has_attachment":
+        return "has:attachment"
+    if node.qualifier == "newer_than":
+        return f"newer_than:{(reference - node.value).days}d"
+    if node.qualifier == "from_":
+        return f"from:{_gmail_value(node.value)}"
+    if node.qualifier is not None:
+        return f"{node.qualifier}:{_gmail_value(node.value)}"
+    return ""
 
 
 class GmailImapAdapter(ImapAdapter):
