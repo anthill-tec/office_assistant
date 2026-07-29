@@ -49,7 +49,6 @@ are the real embedded sqlite backend pointed at an isolated tmp sqlite file per 
 `accounts.json` is pointed at an isolated tmp path — never the real store.
 """
 import json
-import os
 from argparse import Namespace
 
 import pytest
