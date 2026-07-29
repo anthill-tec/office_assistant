@@ -24,6 +24,12 @@ _SUBMISSION_CAPABILITY = "urn:ietf:params:jmap:submission"
 _DRAFTS_ROLE = "drafts"
 _SENT_ROLE = "sent"
 
+# The conformant delivered-to projection: `deliveredTo` is NOT an RFC 8621
+# `Email` property, and a compliant server rejects the whole projection with a
+# method-level `invalidArguments` error. The masked-alias correlation key is
+# retained via this header projection instead (CR-OA-030 §S1).
+_DELIVERED_TO_HEADER = "header:Delivered-To:asText:all"
+
 # Bounded projection — headers/envelope only, never full body or attachments.
 _EMAIL_PROPERTIES = [
     "id",
@@ -33,7 +39,7 @@ _EMAIL_PROPERTIES = [
     "from",
     "to",
     "receivedAt",
-    "deliveredTo",
+    _DELIVERED_TO_HEADER,
 ]
 
 
@@ -428,7 +434,7 @@ class JmapAdapter(MailAdapter):
             date=item.get("receivedAt", ""),
             thread_id=item.get("threadId"),
         )
-        message.delivered_to = item.get("deliveredTo", "")
+        message.delivered_to = item.get(_DELIVERED_TO_HEADER) or ""
         return message
 
     def _email_get_list(self, payload) -> list:
