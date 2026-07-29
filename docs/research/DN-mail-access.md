@@ -59,6 +59,37 @@ extras a provider supports:
 Rationale: IMAP unifies all three (and the auth), keeps deps near zero, and — via `X-GM-RAW` — keeps
 Gmail's server-side power. JMAP is the one place a richer protocol earns its single small dependency.
 
+### Decision 2 — revision (2026-07-29): the masked-alias key is a HEADER projection, and the portable grammar needs a translation layer
+
+Two mechanism corrections, both established **empirically** against a compliant JMAP server (the
+Stalwart `fastmail` emulator profile, `tests/e2e/test_mail_read_e2e.py`) after field reports against the
+installed 1.1.1. The decision above stands; how it is *implemented* changes.
+
+- **The delivered-to correlation key must come from a header, not an `Email` property.** The
+  masked-alias trick was implemented by requesting **`deliveredTo`** in the `Email/get` projection —
+  **not an RFC 8621 `Email` property**. A compliant server rejects the whole projection
+  (`["error", {"type": "invalidArguments", "description": "Invalid property deliveredTo"}, …]`) *inside*
+  HTTP 200, so the paired `Email/get` never returns and every JMAP read — search **and** fetch — dies.
+  The key is retained via a conformant **header projection** (`header:Delivered-To:asText:all`), and
+  degrades to `""` where the header is absent. **A method-level JMAP error must surface as a structured
+  error**, never collapse to an empty result (it read as `count: 0` at exit 0 — an AXI #6 violation).
+  Implemented by [CR-OA-030](../changes/CR-OA-030-jmap-read-path-correctness.md).
+- **The portable query grammar requires per-provider translation.** Decision 5's token-saving verbs
+  advertise `subject:`/`from:`/`to:`/`category:`/`newer_than:`/`has:attachment`/`OR`/quoted phrases, but
+  the raw string was handed to each provider verbatim — one JMAP `text` filter, or straight into
+  `X-GM-RAW`. The qualifiers therefore did nothing on JMAP (`newer_than:` a **silent no-op**) and an
+  unsupported unit matched nothing on Gmail (`newer_than:1w`; Gmail takes `d`/`m`/`y`). The grammar is
+  parsed once into a provider-neutral query model and **compiled per adapter** (JMAP `FilterCondition`s /
+  Gmail operators / RFC 3501 keys), with relative dates normalised to absolute cutoffs and an
+  unsupported qualifier raising a structured error rather than returning an empty result. Implemented by
+  [CR-OA-031](../changes/CR-OA-031-portable-query-translation.md).
+
+**Testing consequence (why this was missed):** the CR-OA-020 fake transport returns canned payloads that
+already *contain* `deliveredTo`, proving the adapter can **parse** the field but never that a server
+**accepts** it in a request — and the E2E tier built for 1.1.1 covered send/draft only. Read-path E2E
+coverage against a real server is now part of the tier (see
+[DN-mail-e2e-emulator-testing.md](DN-mail-e2e-emulator-testing.md)).
+
 ## Decision 3 — auth: app passwords + a Fastmail read-only token
 
 - **Gmail** (consumer `@gmail.com`): IMAP **app password** (requires 2FA; the legacy "less secure apps"

@@ -52,6 +52,10 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-027](CR-OA-027-orders-order-date-nullable-validator.md) | `orders.order_date` validator rejects null despite documented `str\|null` | bugfix | COMPLETED (2026-07-28) | 015 | 10 |
 | [CR-OA-028](CR-OA-028-schema-org-email-extraction.md) | schema.org email-markup structured extraction (`voa mail-extract`) + in-engine body retrieval | feature | COMPLETED (2026-07-28) | 020, 024, 026 | 10 |
 | [CR-OA-029](CR-OA-029-purge-real-pii-from-public-surfaces.md) | Purge real personal identifiers from public surfaces (skill + tests) + enforce the no-personal-data invariant repo-wide | bugfix | COMPLETED (2026-07-28) | 023 | 10 |
+| [CR-OA-030](CR-OA-030-jmap-read-path-correctness.md) | JMAP read-path correctness (drop `deliveredTo`, surface method errors, expose `uid`) | bugfix | PENDING | 020, 026 | 11 · 1.1.2 |
+| [CR-OA-031](CR-OA-031-portable-query-translation.md) | Portable query translation layer (per-provider, validated, never silently empty) | bugfix | PENDING | 020, 030 | 11 · 1.1.2 |
+| [CR-OA-032](CR-OA-032-mail-get-full-message.md) | `mail-get` returns a full message (decoded body, `to`/`cc`, decoded subject) | feature | PENDING | 026, 030 | 11 · 1.1.2 |
+| [CR-OA-033](CR-OA-033-validator-drift-detection.md) | Detect deployed-validator drift after an upgrade (`voa doctor` + remediation) | maintenance | PENDING | 018 | 11 · 1.1.2 |
 
 ## v0.1.0 milestone — Wave 6
 
@@ -230,9 +234,33 @@ end-to-end. Both 006 and 004 depend only on the now-shipped 003.)
   (2026-07-27); it depends on 024 (JMAP fix) + 026 (search uid) and adds in-engine body retrieval. The
   **carrier-tracking aggregator** (DN-external-data-sources §Decision 3) is **deferred** — opt-in option, not
   in this release.
+- **Wave 11 → 1.1.2 (2026-07-29):** CR-030..033 authored from **two field bug reports against the installed
+  1.1.1** (received over Sandesh from the Vidushi OA usage workspace), then **empirically validated** by a new
+  read-path E2E against the Stalwart JMAP emulator (`tests/e2e/test_mail_read_e2e.py`) rather than accepted
+  from the reports. That pass overturned two of the reported diagnoses and found the real root cause: a single
+  non-conformant **`deliveredTo`** projection makes a compliant server error the paired `Email/get`, which
+  `_parse` swallowed to `count: 0` — one defect behind BOTH dead Fastmail search and dead `mail-get`
+  (**030**, blocking). The reported "query translation" cause was *disproved* for JMAP (the `text` filter
+  works); the genuine grammar gap is that **no translation layer exists at all**, making `newer_than:` a
+  silent no-op (**031**). It also surfaced an **unreported** bug — JMAP rows carry `uid: null`, so CR-026's
+  uid fix never reached JMAP (folded into 030). `mail-get` body/`to`/`cc`/RFC-2047 decoding is **032**. The
+  reported `orders.order_date` "schema bug" was **not** a code defect (CR-027's validator ships correct and
+  `provision` already `collMod`s); the real gap is that an upgraded install keeps **stale validators** with no
+  diagnostic — reframed as drift detection in **033**. Read-path E2E coverage was the missing guard: the tier
+  built for 1.1.1 covered send/draft only.
 
 ## Follow-up tasks
 Small items (no design surface → tasks, not CRs) surfaced during execution:
+- **Unpin the `toon-format` pre-release** (filed 2026-07-29, from the 1.1.1 field report) — `pyproject.toml`
+  pins `toon-format==0.9.0b1`, so `uv tool install vidushi-oa` fails to resolve without
+  `--prerelease=allow`. Move to a stable `toon-format` when one ships. Dep bump, no design surface.
+- **Document the `[mongo]` extra in the install path** (filed 2026-07-29, same report) — a bare
+  `uv tool install vidushi-oa` correctly omits `pymongo` (SQLite is the default; Mongo is opt-in), but the
+  field install read that as a packaging bug. Make the Mongo install line explicit in README/install docs.
+  (`keyring` is a **base** dependency and is never dropped — the report was mistaken on that point.)
+- **Re-verify Gmail quoted-phrase search (CR-OA-025)** (filed 2026-07-29, same report) — advertised in
+  `mail-search --help` but not re-tested against live Gmail since the fix; confirm before closing the
+  reporter's Bug 3.
 - **Coverage source path** (filed 2026-07-11, from CR-OA-002 regression gate) — `python-crucible
   regression --coverage` runs `coverage run --source app`, but this project's code is in `scripts/`,
   so no coverage is collected (`No data was collected`). Point coverage at `scripts/` (a `.coveragerc`
