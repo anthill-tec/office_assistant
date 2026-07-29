@@ -40,6 +40,17 @@ body retrieval.
 (~line 903); `vidushi_oa/mail/imap.py` `fetch_message`/`fetch_html_body` (~lines 165/387);
 `vidushi_oa/mail/jmap.py` `fetch_message` (~line 477).
 
+**Folded in from CR-OA-030's VERIFY (2026-07-29) — the fetch path must not misattribute a server error.**
+`vidushi_oa/mail/jmap.py` `_email_get_list` (~line 487), used by `fetch_message` and `fetch_html_body`,
+does **not** route through the shared `_raise_for_method_error` that CR-OA-030 introduced. A method-level
+`Email/get` error (auth/permission/invalid-argument) therefore returns `[]` → `fetch_message` returns
+`None` → `cmd_mail_get` reports `"message not found"`, losing the server's real `type`/`description`. It
+is not a false success (still exit 1, still structured) but it **misattributes the cause**, which is the
+same defect class CR-OA-030 removed from `search`. Since this CR rewrites `fetch_message` anyway, it
+routes that path through the shared check too. Also correct the stale docstring at `_cli.py` ~lines
+907–908, which still claims `JmapAdapter` raises `NotImplementedError` for `mail-get` (superseded by
+CR-OA-028's real `fetch_message`).
+
 ### §S2 Full recipient envelope + decoded headers
 The `mail-get` payload carries `to` and `cc` (currently absent), and every human-readable header —
 `subject`, and the display-name portions of `sender`/`to`/`cc` — is **RFC 2047-decoded** to UTF-8 before
@@ -69,6 +80,12 @@ principle is preserved by §S3's truncation + the search-path exclusion.
       bytes in the payload.
 - [ ] Both adapters satisfy the above: the assertions run against the E2E `fastmail` (JMAP) profile **and**
       an IMAP profile.
+- [ ] A method-level `Email/get` error on the fetch path (e.g. `["error", {"type": "forbidden",
+      "description": …}, …]`) makes `voa mail-get` report **that server error's `type`/`description`** in
+      its structured payload — **not** `"message not found"` — proving `_email_get_list`/`fetch_message`
+      route through CR-OA-030's shared `_raise_for_method_error`.
+- [ ] The `cmd_mail_get` docstring no longer claims `JmapAdapter` raises `NotImplementedError`
+      (grep finds no such claim).
 
 ### §S2
 - [ ] The `mail-get` payload contains `to` and `cc` fields populated from the message (empty list when
