@@ -163,7 +163,7 @@ def test_mail_draft_with_case_fk_persists_a_draft_link(monkeypatch, capsys, tmp_
     _isolate_backend(monkeypatch, tmp_path)
     _seed_contact("ven_acme", "verified@acme.com")
     _seed_case("case_x")
-    adapter = _make_client(monkeypatch)
+    _make_client(monkeypatch)
     cli._FMT = "json"
 
     cli.cmd_mail_draft(Namespace(**_draft_kwargs(case="case_x")))
@@ -189,7 +189,7 @@ def test_mail_send_of_linked_draft_records_a_document_with_the_message_id(monkey
     _seed_contact("ven_acme", "verified@acme.com")
     _seed_case("case_x", actions=[{"action": "raise-ticket", "status": "OPEN", "opened": "2026-07-20"}])
     accounts.add_account("gmail_main", "gmail", "me@gmail.com", "keyring:gmail-main", send=True)
-    adapter = _make_client(monkeypatch)
+    _make_client(monkeypatch)
     cli._FMT = "json"
 
     cli.cmd_mail_draft(Namespace(**_draft_kwargs(case="case_x")))
@@ -222,7 +222,7 @@ def test_mail_send_of_linked_draft_resolves_the_open_raise_ticket_action(monkeyp
     _seed_contact("ven_acme", "verified@acme.com")
     _seed_case("case_x", actions=[{"action": "raise-ticket", "status": "OPEN", "opened": "2026-07-20"}])
     accounts.add_account("gmail_main", "gmail", "me@gmail.com", "keyring:gmail-main", send=True)
-    adapter = _make_client(monkeypatch)
+    _make_client(monkeypatch)
     cli._FMT = "json"
 
     cli.cmd_mail_draft(Namespace(**_draft_kwargs(case="case_x")))
@@ -291,7 +291,7 @@ def test_mail_send_of_unlinked_draft_after_a_linked_send_does_not_touch_case_row
     _seed_contact("ven_acme", "verified@acme.com")
     _seed_case("case_x", actions=[{"action": "raise-ticket", "status": "OPEN", "opened": "2026-07-20"}])
     accounts.add_account("gmail_main", "gmail", "me@gmail.com", "keyring:gmail-main", send=True)
-    adapter = _make_client(monkeypatch)
+    _make_client(monkeypatch)
     cli._FMT = "json"
 
     # First: a LINKED draft+send actually links to case_x and records its document.
