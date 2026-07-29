@@ -1,4 +1,6 @@
-"""CR-OA-030 §S1 — drop the non-conformant `deliveredTo` JMAP projection (RED).
+"""CR-OA-030 §S1/§S2 — JMAP read-path correctness (RED).
+
+§S1 — drop the non-conformant `deliveredTo` JMAP projection.
 
 A compliant JMAP server rejects an `Email/get` projection that requests
 `deliveredTo` (not an RFC 8621 `Email` property) with a method-level
@@ -10,17 +12,38 @@ and makes `_build_message` read `Message.delivered_to` from that header key
 instead. See `docs/changes/CR-OA-030-jmap-read-path-correctness.md` §S1 and
 `docs/research/DN-mail-access.md` §"Decision 2 — revision (2026-07-29)".
 
-Every test here targets the current (defective) code and is expected to FAIL:
-`_EMAIL_PROPERTIES` still carries `deliveredTo` and lacks the header
-projection, and `_build_message` still reads `item.get("deliveredTo")`.
+The §S1 tests below are already GREEN on this branch (C1).
+
+§S2 — surface method-level JMAP errors instead of collapsing to an empty result.
+
+`search()` batches `["Email/query", ...]` with a back-referenced
+`["Email/get", ...]`. A method-level error answers INSIDE HTTP 200 as
+`["error", {"type": ..., "description": ...}, callId]` and the back-referenced
+`Email/get` never runs. `_parse()` today scans `methodResponses` for an
+`Email/get` response and returns `[]` when it finds none — silently reporting a
+server error as a legitimate empty result at exit 0 (the field-reported blocking
+bug: an agent reads `count: 0` as "no mail matched"). The §S2 tests below target
+the current (defective) `search()`/`_parse()`/`cmd_mail_search` and are expected
+to FAIL: a method-level error or a missing `Email/get` response is swallowed to
+`[]` instead of raised, and the pre-existing `["error", ...]` literal handling in
+`_created_id` is duplicated (not shared) across the module.
 
 No real network — a small in-file `FakeTransport` records every
 `(method, url, headers, body)` call and returns canned `(status, dict)`
 tuples, matching the seam `tests/test_cr_oa_020_jmap.py` already uses.
 """
+import inspect
+import json
+import re
 import unittest
+from argparse import Namespace
 
+import pytest
+
+import vidushi_oa._cli as cli
+from vidushi_oa import toon as oa_toon
 from vidushi_oa.mail import jmap
+from vidushi_oa.mail.client import MailClient
 from vidushi_oa.mail.jmap import JmapAdapter
 
 SESSION_URL = "https://api.fastmail.com/jmap/session"
@@ -269,6 +292,223 @@ class SearchRequestProjectionConformanceTest(unittest.TestCase):
         properties = get_call[1]["properties"]
         self.assertNotIn("deliveredTo", properties)
         self.assertIn("header:Delivered-To:asText:all", properties)
+
+
+# ─────────────────────────── §S2 canned method-level responses ───────────────────────────
+
+def _canned_method_error_response():
+    """A batched response where the `Email/get` half (`callId "1"`) never ran
+    because the server rejected the request with a method-level error — the
+    real-world shape §S2 targets: `Email/query` succeeds, but its back-referenced
+    `Email/get` answers `["error", {...}, "1"]` instead of an `Email/get` result."""
+    return {
+        "methodResponses": [
+            ["Email/query", {"accountId": ACCOUNT_ID, "ids": ["Ma1"]}, "0"],
+            [
+                "error",
+                {"type": "invalidArguments", "description": "Invalid property deliveredTo"},
+                "1",
+            ],
+        ],
+    }
+
+
+def _canned_missing_email_get_response():
+    """A batched response carrying only the `Email/query` result — no `Email/get`
+    response AND no `["error", ...]` entry at all (a malformed/truncated server
+    answer), so the only clue anything is wrong is the absent back-reference
+    result."""
+    return {
+        "methodResponses": [
+            ["Email/query", {"accountId": ACCOUNT_ID, "ids": ["Ma1"]}, "0"],
+        ],
+    }
+
+
+def _canned_legitimate_empty_response():
+    """A genuinely empty search: `Email/query` answers `ids: []` and the
+    back-referenced `Email/get` answers a matching empty `list`/`notFound` — no
+    error anywhere. This must stay a clean `[]`, never raise."""
+    return {
+        "methodResponses": [
+            ["Email/query", {"accountId": ACCOUNT_ID, "ids": []}, "0"],
+            [
+                "Email/get",
+                {"accountId": ACCOUNT_ID, "list": [], "notFound": []},
+                "1",
+            ],
+        ],
+    }
+
+
+class SearchRaisesOnMethodLevelErrorResponseTest(unittest.TestCase):
+    """§S2 AC1: given a response whose `methodResponses` carry
+    `["error", {"type": "invalidArguments", ...}, "1"]`, `JmapAdapter.search(...)`
+    raises (does NOT return `[]`), and the raised message contains BOTH the
+    server's `type` and its `description`. Fails today: `_parse()` finds no
+    `Email/get` response and silently returns `[]`."""
+
+    def test_search_raises_naming_both_the_servers_error_type_and_description(self):
+        transport = FakeTransport(post_response=_canned_method_error_response())
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.search("invoice")
+
+        message = str(ctx.exception)
+        self.assertIn("invalidArguments", message)
+        self.assertIn("Invalid property deliveredTo", message)
+
+
+class SearchRaisesWhenEmailGetResponseIsMissingTest(unittest.TestCase):
+    """§S2 AC2: given a response with a valid `Email/query` result but NO
+    `Email/get` response at all, `search()` raises naming the missing `Email/get`
+    — not `[]`. Fails today: `_parse()` returns `[]` when it finds no `Email/get`
+    response, with no raise and no mention of what's missing."""
+
+    def test_search_raises_naming_the_missing_email_get_response(self):
+        transport = FakeTransport(post_response=_canned_missing_email_get_response())
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.search("invoice")
+
+        self.assertIn("Email/get", str(ctx.exception))
+
+
+class SearchDistinguishesLegitimateEmptyFromFailureTest(unittest.TestCase):
+    """§S2 AC3: an `Email/query` answering `ids: []` with a matching empty
+    `Email/get` result must return `[]` WITHOUT raising — but that same `[]`
+    must NOT be what a genuinely FAILED search (a missing `Email/get`
+    response, AC2's shape) also returns; the two must be distinguishable.
+    Fails today: `_parse()` returns the identical `[]` for BOTH inputs — a
+    legitimate empty and a broken response collapse to the same result."""
+
+    def test_legitimate_empty_stays_clean_but_a_missing_response_raises(self):
+        clean_adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL,
+            transport=FakeTransport(post_response=_canned_legitimate_empty_response()),
+        )
+        self.assertEqual(clean_adapter.search("nonexistent-vendor-xyz"), [])
+
+        broken_adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL,
+            transport=FakeTransport(post_response=_canned_missing_email_get_response()),
+        )
+        with self.assertRaises(RuntimeError):
+            broken_adapter.search("invoice")
+
+
+@pytest.fixture(autouse=True)
+def _restore_cli_fmt_cr_oa_030():
+    """`cmd_mail_search` reads the module-global `cli._FMT`; these §S2 CLI tests
+    mutate it directly, so restore it afterwards (matches the fixture of the same
+    purpose in `tests/test_cr_oa_020_mail_verbs.py`)."""
+    original = getattr(cli, "_FMT", "toon")
+    yield
+    cli._FMT = original
+
+
+def test_mail_search_cli_distinguishes_a_legitimate_empty_result_from_a_rejected_request(
+        monkeypatch, capsys):
+    """§S2 AC3 (CLI half) + AC4: `voa mail-search` against a JMAP account whose
+    server legitimately matched nothing (`Email/query` -> `ids: []`, matching
+    empty `Email/get`) must print `count: 0` at exit 0 — but against a server
+    that REJECTED the request (a method-level error inside HTTP 200) must exit
+    NON-ZERO with a structured error payload and NO traceback (AXI #6), never
+    the same `count: 0`/exit-0 shape. Exercised through `cli.cmd_mail_search`
+    (the `cli.build_client` seam), matching `tests/test_cr_oa_020_mail_verbs.py`'s
+    conventions. Fails today: a rejected request also exits 0 printing
+    `count: 0`, indistinguishable from the genuinely empty case."""
+    clean_adapter = JmapAdapter(
+        account="fastmail_main", source_tag="[FM]", token="secret-token",
+        session_url=SESSION_URL,
+        transport=FakeTransport(post_response=_canned_legitimate_empty_response()),
+    )
+    monkeypatch.setattr(
+        cli, "build_client",
+        lambda **kw: MailClient({"fastmail_main": clean_adapter}))
+    cli._FMT = "toon"
+    cli.cmd_mail_search(Namespace(query="nonexistent-vendor-xyz", accounts=["fastmail_main"]))
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    clean_payload = oa_toon.from_toon(captured.out)
+    assert clean_payload["count"] == 0
+    assert clean_payload["results"] == []
+
+    rejecting_adapter = JmapAdapter(
+        account="fastmail_main", source_tag="[FM]", token="secret-token",
+        session_url=SESSION_URL,
+        transport=FakeTransport(post_response=_canned_method_error_response()),
+    )
+    monkeypatch.setattr(
+        cli, "build_client",
+        lambda **kw: MailClient({"fastmail_main": rejecting_adapter}))
+    cli._FMT = "json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_mail_search(Namespace(query="invoice", accounts=["fastmail_main"]))
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out and "Traceback" not in captured.err
+    rejected_payload = json.loads(captured.out.strip())
+    assert "error" in rejected_payload
+
+
+class SharedMethodErrorCheckIsNotDuplicatedTest(unittest.TestCase):
+    """§S2 AC5: a mechanically auditable check that ONE reusable method-level
+    error check backs both the search/`_parse` read path and the pre-existing
+    `_created_id` write path — no duplicated `["error", ...]` literal handling.
+
+    Fails today: `_created_id`, `_queried_ids`, and `_identity_id` each carry
+    their OWN separate `response[0] == "error"` comparison (three duplicated
+    literal sites), and `_parse`/`search` perform no such check at all."""
+
+    def _module_source(self):
+        return inspect.getsource(jmap)
+
+    def test_exactly_one_literal_error_tuple_comparison_site_in_the_module(self):
+        source = self._module_source()
+        literal_hits = re.findall(r'\[0\]\s*==\s*"error"', source)
+        self.assertEqual(
+            len(literal_hits), 1,
+            f"expected exactly one reusable `[0] == \"error\"` check in "
+            f"vidushi_oa/mail/jmap.py, found {len(literal_hits)} duplicated "
+            "literal sites")
+
+    def test_the_shared_check_is_called_from_both_created_id_and_the_search_path(self):
+        source = self._module_source()
+        match = re.search(r'\[0\]\s*==\s*"error"', source)
+        self.assertIsNotNone(match, "no method-level error check found at all")
+        preceding = source[:match.start()]
+        def_matches = list(re.finditer(r"^def (\w+)\(", preceding, re.MULTILINE))
+        self.assertTrue(def_matches, "the literal error check is not inside any function")
+        owner_name = def_matches[-1].group(1)
+        self.assertNotEqual(
+            owner_name, "_created_id",
+            "the error check must be factored OUT of _created_id into a shared "
+            "helper that _created_id AND the read path (search/_parse) both "
+            "call — not left inline inside _created_id itself")
+
+        created_id_source = inspect.getsource(jmap._created_id)
+        parse_source = inspect.getsource(JmapAdapter._parse)
+        search_source = inspect.getsource(JmapAdapter.search)
+
+        self.assertIn(
+            f"{owner_name}(", created_id_source,
+            f"shared check `{owner_name}` must be called from _created_id")
+        self.assertTrue(
+            f"{owner_name}(" in parse_source or f"{owner_name}(" in search_source,
+            f"shared check `{owner_name}` must be called from search()/_parse()")
 
 
 if __name__ == "__main__":
