@@ -42,6 +42,25 @@ _LIST_LINE_RE = re.compile(rb'^\s*\([^)]*\)\s+(?:"[^"]*"|NIL)\s+(?P<name>.+?)\s*
 # SMTP submission (STARTTLS) port for every provider's message-submission agent.
 _SMTP_SUBMISSION_PORT = 587
 
+# RFC 3501 spells SEARCH dates `dd-Mon-yyyy` with these fixed English
+# abbreviations — never the locale's month names.
+_IMAP_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+# Portable-model qualifier -> its RFC 3501 SEARCH key. `category`/`has_attachment`
+# are deliberately absent: RFC 3501 cannot express them, so they are refused.
+_IMAP_KEYS = {"subject": "SUBJECT", "from_": "FROM", "to": "TO"}
+
+
+class UnsupportedQualifierError(ValueError):
+    """Raised when a portable query carries a qualifier the target provider
+    cannot express (CR-OA-031 §S4).
+
+    The message always names the offending qualifier so the caller knows
+    exactly what was refused. Refusing beats dropping: a silently ignored
+    qualifier returns a confidently wrong result set.
+    """
+
 
 def imap_endpoint_kwargs(endpoint, default_host):
     """Resolve `(host, kwargs)` for an `ImapAdapter` from an optional `endpoint`.
@@ -157,8 +176,17 @@ class ImapAdapter(MailAdapter):
         return set()
 
     def search(self, query, folder=None, limit=None) -> list:
+        """Search with genuine RFC 3501 `SEARCH` keys compiled from the portable
+        query (CR-OA-031 §S4).
+
+        The raw portable query is never handed to the server: a plain IMAP
+        server has no `subject:`/`newer_than:` syntax, so passing it through as
+        one opaque key silently matched the wrong messages. `compile_imap_query`
+        refuses any qualifier RFC 3501 cannot express rather than dropping it.
+        """
         conn = self._conn()
-        typ, data = conn.uid("SEARCH", query)
+        keys = compile_imap_query(parse(query))
+        typ, data = conn.uid("SEARCH", *(keys or ["ALL"]))
         uids = _parse_uids(data)
         if limit is not None:
             uids = uids[:limit]
@@ -538,6 +566,77 @@ def _render_node(node: QueryNode, reference: date, *, top: bool = False) -> str:
     return ""
 
 
+def _imap_quote(value: str) -> str:
+    """Quote one RFC 3501 astring value, escaping `\\` and `"` so a phrase with
+    embedded spaces stays ONE search-key value."""
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _imap_date(value: date) -> str:
+    """Render `value` in RFC 3501's `SEARCH` date form (`dd-Mon-yyyy`), always
+    with the English month abbreviation so the wire format never follows the
+    process locale."""
+    return f"{value.day:02d}-{_IMAP_MONTHS[value.month - 1]}-{value.year}"
+
+
+def compile_imap_query(model: QueryModel) -> list:
+    """Compile a portable `QueryModel` into a list of RFC 3501 `SEARCH` keys
+    (CR-OA-031 §S4).
+
+    Each element is one complete key (`'SUBJECT "X"'`, `'SINCE 23-Jul-2026'`,
+    or the bare `'OR'` prefix), so the caller can hand them to
+    `conn.uid("SEARCH", *keys)` in order. An empty model compiles to an empty
+    list, which the caller renders as `ALL`.
+
+    Mapping: `subject:` → `SUBJECT`, `from:` → `FROM`, `to:` → `TO`, bare terms
+    and quoted phrases → `TEXT`, `newer_than:` → `SINCE <dd-Mon-yyyy>` (the
+    absolute cutoff the parser already resolved — no reference date is needed
+    here, unlike Gmail's relative `newer_than:`).
+
+    Groups compile to RFC 3501's **prefix** `OR`, which is strictly binary and
+    has no parentheses: a 3-way alternation nests as `OR k1 OR k2 k3`.
+    Implicit-AND is plain juxtaposition.
+
+    Raises `UnsupportedQualifierError` for `category:` and `has:attachment` —
+    RFC 3501 can express neither, and silently dropping them is what produced
+    the wrong answers this CR removes.
+    """
+    return _render_imap_node(model.root)
+
+
+def _render_imap_node(node: QueryNode) -> list:
+    """Render one query-tree node as an ordered list of RFC 3501 search keys."""
+    if node.is_group:
+        rendered = [keys for keys in (_render_imap_node(c) for c in node.children) if keys]
+        if not rendered:
+            return []
+        if node.operator != "OR":
+            return [key for keys in rendered for key in keys]
+        folded = rendered[-1]
+        for keys in reversed(rendered[:-1]):
+            folded = ["OR"] + keys + folded
+        return folded
+
+    if node.term is not None:
+        return [f"TEXT {_imap_quote(node.term)}"]
+    if node.qualifier == "newer_than":
+        return [f"SINCE {_imap_date(node.value)}"]
+    if node.qualifier in _IMAP_KEYS:
+        return [f"{_IMAP_KEYS[node.qualifier]} {_imap_quote(node.value)}"]
+    if node.qualifier == "has_attachment":
+        raise UnsupportedQualifierError(
+            "has:attachment is not supported by this account: RFC 3501 IMAP "
+            "has no attachment search key"
+        )
+    if node.qualifier == "category":
+        raise UnsupportedQualifierError(
+            "category: is not supported by this account: RFC 3501 IMAP has no "
+            "server-side category search key"
+        )
+    return []
+
+
 class GmailImapAdapter(ImapAdapter):
     """Gmail adapter — server-side `X-GM-RAW` search and `X-GM-THRID` threads."""
 
@@ -567,14 +666,6 @@ class YahooImapAdapter(ImapAdapter):
 
     def capabilities(self) -> set:
         return {"send"}
-
-    def search(self, query, folder=None, limit=None) -> list:
-        conn = self._conn()
-        typ, data = conn.uid("SEARCH", query)
-        uids = _parse_uids(data)
-        if limit is not None:
-            uids = uids[:limit]
-        return self._fetch(uids)
 
     def _post_process(self, messages) -> list:
         """Reconstruct `thread_id` from `References`/`In-Reply-To` roots."""
