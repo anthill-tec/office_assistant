@@ -72,7 +72,7 @@ def _canned_email_get_response(ids=("Ma1", "Ma2")):
             "from": [{"name": "Acme Billing", "email": "billing@acme.example"}],
             "to": [{"name": "Alex Doe", "email": "you@fastmail.com"}],
             "receivedAt": "2026-07-20T10:00:00Z",
-            "deliveredTo": "purchases-alias@fastmail.com",
+            "header:Delivered-To:asText:all": "purchases-alias@fastmail.com",
         },
         "Ma2": {
             "id": "Ma2",
@@ -82,7 +82,7 @@ def _canned_email_get_response(ids=("Ma1", "Ma2")):
             "from": [{"name": "Shop Receipts", "email": "receipts@shop.example"}],
             "to": [{"name": "Alex Doe", "email": "you@fastmail.com"}],
             "receivedAt": "2026-07-21T11:00:00Z",
-            "deliveredTo": "purchases-alias@fastmail.com",
+            "header:Delivered-To:asText:all": "purchases-alias@fastmail.com",
         },
     }
     return {

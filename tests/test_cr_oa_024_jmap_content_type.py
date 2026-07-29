@@ -146,7 +146,7 @@ _HEALTHY_POST_RESPONSE = {
                         "from": [{"name": "Sender", "email": "sender@fastmail.com"}],
                         "to": [{"email": "you@fastmail.com"}],
                         "receivedAt": "2026-07-20T10:00:00Z",
-                        "deliveredTo": "you@fastmail.com",
+                        "header:Delivered-To:asText:all": "you@fastmail.com",
                     },
                 ],
                 "notFound": [],
