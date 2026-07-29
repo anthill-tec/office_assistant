@@ -27,3 +27,7 @@ Each file is one note with YAML frontmatter (`name`, `description`, `metadata.ty
 - [external-data-sources-decisions](external-data-sources-decisions.md) — no consumer marketplace API exists;
   **schema.org email extraction → CR-028 in Wave 10 / 1.1.0** + **carrier-tracking aggregator** an opt-in
   option (inclusion **decision deferred**). See `DN-external-data-sources.md`.
+- [wave-11-resume-state](wave-11-resume-state.md) — **RESUME HERE for 1.1.2.** Wave 11 came from two field bug
+  reports against 1.1.1 (over Sandesh); CR-030 + CR-031 are merged, **CR-032 is mid-cycle** (RED done at
+  `e193cce`, GREEN for §S1 is the next action), CR-033 not started. Also records the process rules in force,
+  the open user decisions (yank 1.1.0; the Gmail-operator capability narrowing), and the owed Sandesh reply.
