@@ -110,9 +110,20 @@ _ESCAPE_CASES = [
     # embedded double-quotes -> each inner quote backslash-escaped, whole thing re-quoted.
     ('subject:"warranty registration"',
      b'"subject:\\"warranty registration\\""'),
-    # a backslash (and a space) -> the backslash is doubled, no quotes to escape.
-    ('rfc822msgid:a\\b plus',
-     b'"rfc822msgid:a\\\\b plus"'),
+    # a literal backslash AND a space -> the backslash is doubled on the wire and the
+    # phrase the compiler re-quotes around it has its quotes escaped.
+    #
+    # Reconciled for CR-OA-031: this case's operator used to be ``rfc822msgid:``, a
+    # Gmail-NATIVE operator that is an explicit CR-OA-031 non-goal (like ``label:`` /
+    # ``larger:`` / ``filename:``) and is now refused by ``parse()`` as an unknown
+    # qualifier — ``GmailImapAdapter.search`` parses before it compiles, so the query
+    # never reaches ``X-GM-RAW`` at all. The operator was only ever the VEHICLE; what
+    # this case pins is the ESCAPING, so it moves to a grammar-valid ``subject:``
+    # phrase carrying the SAME two escaping characters (one literal backslash, one
+    # space). The query below is literally ``subject:"a\\b plus"``: the grammar's
+    # tokenizer unescapes ``\\`` to the single backslash the value must carry.
+    ('subject:"a\\\\b plus"',
+     b'"subject:\\"a\\\\b plus\\""'),
 ]
 
 
@@ -122,7 +133,13 @@ def test_gmail_xgmraw_command_is_escaped_and_round_trips(
     """``GmailImapAdapter.search`` emits the exact escaped ``UID SEARCH X-GM-RAW "…"`` on a
     real connection to the live emulator, and surfaces the server's actual response as
     ``imaplib.IMAP4.error`` (Stalwart rejects the Gmail-proprietary extension with a tagged
-    ``BAD``) rather than an unhandled crash."""
+    ``BAD``) rather than an unhandled crash.
+
+    Both cases pin ESCAPING only — embedded quotes, and a literal backslash beside a
+    space. Their qualifiers are just the vehicle, so both use PORTABLE-grammar
+    qualifiers (CR-OA-031): the adapter now ``parse()``s before it compiles, and a
+    Gmail-native operator such as ``rfc822msgid:`` (a CR-OA-031 non-goal) is refused
+    before any ``X-GM-RAW`` command is built — see ``_ESCAPE_CASES``."""
     gm = stalwart_emulator.profiles["gmail"]
     _seed_inbox(gm, "Your warranty registration for AcmeWidget")
 

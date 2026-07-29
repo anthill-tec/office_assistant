@@ -16,6 +16,12 @@ import urllib.request
 
 from vidushi_oa.mail.base import MailAdapter, Message
 from vidushi_oa.mail.imap import ImapAdapter, imap_endpoint_kwargs
+from vidushi_oa.mail.query import (
+    QueryModel,
+    QueryNode,
+    UnsupportedQualifierError,
+    parse,
+)
 
 _MAIL_CAPABILITY = "urn:ietf:params:jmap:mail"
 _CORE_CAPABILITY = "urn:ietf:params:jmap:core"
@@ -192,6 +198,73 @@ def _header_all_to_str(value) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def compile_filter(model: QueryModel) -> dict:
+    """Compile a portable `QueryModel` into an RFC 8621 `Email/query` filter
+    (CR-OA-031 §S2).
+
+    Each element of the model becomes its own `FilterCondition` — bare terms
+    (and quoted phrases) map to `text`, `subject:`/`from:`/`to:` to the
+    same-named conditions, `has:attachment` to `hasAttachment: true`, and
+    `newer_than:` to `after` — instead of the whole query string being posted as
+    one opaque `text` blob, which made every qualifier either match nothing
+    (`subject:Amazon` as literal text) or silently do nothing (`newer_than:`).
+
+    The compiler **recurses over the model's tree** (`QueryModel.root`), so a
+    parenthesised group becomes a NESTED `FilterOperator`:
+    `(a OR b) c` → `{"operator": "AND", "conditions": [{"operator": "OR",
+    "conditions": [{"text": "a"}, {"text": "b"}]}, {"text": "c"}]}`.
+
+    A single condition is sent bare; two or more are wrapped in the node's
+    `FilterOperator` (`AND` — the implicit default — or `OR`). `newer_than:`
+    resolves to the ISO-8601 `UTCDate` JMAP requires, at MIDNIGHT UTC of the
+    cutoff date the parser already computed, so "newer than 7 days" includes the
+    whole cutoff day — the intuitive reading of the parser's date-only model.
+
+    `category:` has no JMAP equivalent, so it is REFUSED with an
+    `UnsupportedQualifierError` naming the qualifier (§S5) rather than compiled
+    away: dropping it would leave an EMPTY filter matching every message in the
+    mailbox — a confidently wrong answer, the exact failure mode this CR
+    removes.
+    """
+    return _compile_node(model.root)
+
+
+def _compile_node(node: QueryNode) -> dict:
+    """Compile one query-tree node into a JMAP filter object.
+
+    A group recurses into its children; a bare/single condition is returned
+    unwrapped. `category:` raises `UnsupportedQualifierError` — JMAP has no
+    category concept, so there is nothing to compile it to and silently
+    dropping it would widen the search to everything.
+    """
+    if node.is_group:
+        conditions = [c for c in (_compile_node(child) for child in node.children) if c]
+        if not conditions:
+            return {}
+        if len(conditions) == 1:
+            return conditions[0]
+        return {"operator": node.operator, "conditions": conditions}
+
+    if node.term is not None:
+        return {"text": node.term}
+    if node.qualifier == "subject":
+        return {"subject": node.value}
+    if node.qualifier == "from_":
+        return {"from": node.value}
+    if node.qualifier == "to":
+        return {"to": node.value}
+    if node.qualifier == "has_attachment":
+        return {"hasAttachment": True}
+    if node.qualifier == "newer_than":
+        return {"after": f"{node.value.isoformat()}T00:00:00Z"}
+    if node.qualifier == "category":
+        raise UnsupportedQualifierError(
+            "category: is not supported by this account: JMAP has no "
+            "server-side category search condition"
+        )
+    return {}
 
 
 class JmapAdapter(MailAdapter):
@@ -434,7 +507,8 @@ class JmapAdapter(MailAdapter):
             "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
             "methodCalls": [
                 ["Email/query",
-                 {"accountId": account_id, "filter": {"text": query}},
+                 {"accountId": account_id,
+                  "filter": compile_filter(parse(query))},
                  "0"],
                 ["Email/get",
                  {"accountId": account_id,

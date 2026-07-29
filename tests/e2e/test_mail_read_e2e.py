@@ -550,3 +550,60 @@ def test_mail_search_row_uid_resolves_via_mail_get(seeded_fastmail, tmp_path):
     fetched = json.loads(got.stdout)
     assert fetched["subject"] == expected["subject"], fetched
     assert fetched["uid"] == uid, fetched
+
+
+# ===========================================================================
+# CR-OA-031 §S2 — real JMAP FilterCondition compilation (the decisive E2E half).
+# ===========================================================================
+def test_mail_search_subject_qualifier_returns_exactly_the_seeded_message(
+        seeded_fastmail, tmp_path):
+    """CR-OA-031 §S2 (E2E AC): ``voa mail-search 'subject:Flipkart'`` must return
+    EXACTLY the one seeded message whose subject carries that fragment, once the
+    portable ``subject:`` qualifier compiles to a real JMAP `subject`
+    FilterCondition. Today `search()` sends the raw literal string
+    ``"subject:Flipkart"`` into the JMAP `text` filter (see
+    `test_portable_query_qualifiers_are_not_translated_for_jmap` above, which pins
+    the same defect against raw JMAP): that literal token matches nothing, so this
+    must FAIL now with a clean empty result, not a wrong-count success."""
+    env = _voa_env(tmp_path)
+    account = _register_read(env, seeded_fastmail.profile)
+    r = _voa(env, "mail-search", "subject:Flipkart", "--accounts", account)
+    assert r.returncode == 0, f"{r.stdout!r} {r.stderr!r}"
+    rows = json.loads(r.stdout)
+    assert len(rows) == 1, (
+        f"expected exactly the one seeded 'Flipkart delivery update' message, "
+        f"got {rows!r}"
+    )
+    assert rows[0]["subject"] == "Flipkart delivery update", rows
+
+
+def test_mail_search_newer_than_excludes_the_forty_day_old_amazon_message(
+        seeded_fastmail, tmp_path):
+    """CR-OA-031 §S2 (E2E AC, the decisive one): ``voa mail-search
+    'Amazon newer_than:7d'`` must return ONLY the recent (1-day-old) Amazon row --
+    the 40-day-old ``"Amazon invoice for your recent order"`` message must be
+    EXCLUDED once ``newer_than:`` compiles to a real ``after`` cutoff instead of
+    being a silent no-op. Today BOTH Amazon messages come back (raw-JMAP proof:
+    `test_portable_query_qualifiers_are_not_translated_for_jmap` above shows the
+    unfiltered `{"text": "Amazon newer_than:7d"}` query matches 2 ids), so this
+    assertion on the OLD message's absence is the one that actually discriminates
+    the fix from the defect -- a bare count check alone would not."""
+    env = _voa_env(tmp_path)
+    account = _register_read(env, seeded_fastmail.profile)
+    r = _voa(env, "mail-search", "Amazon newer_than:7d", "--accounts", account)
+    assert r.returncode == 0, f"{r.stdout!r} {r.stderr!r}"
+    rows = json.loads(r.stdout)
+    subjects = [row["subject"] for row in rows]
+    old_amazon = next(m for m in seeded_fastmail.messages
+                      if m["subject"] == "Amazon invoice for your recent order")
+    recent_amazon = next(m for m in seeded_fastmail.messages
+                         if m["subject"] == "Your Amazon.in order has shipped")
+
+    assert old_amazon["subject"] not in subjects, (
+        f"the 40-day-old Amazon message must be excluded by newer_than:7d, "
+        f"but it is present: {rows!r}"
+    )
+    assert old_amazon["jmap_id"] not in [row["uid"] for row in rows], rows
+    assert recent_amazon["subject"] in subjects, (
+        f"the recent Amazon message must still be included: {rows!r}"
+    )
