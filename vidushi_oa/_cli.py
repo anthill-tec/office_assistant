@@ -1231,7 +1231,7 @@ def _read_secret_no_argv(name):
 
 
 def _provision_account_secret(provider, address, auth_mode="password", send=False,
-                              aliases=None):
+                              aliases=None, endpoint=None):
     """Interactive secret-entry shared by ``cmd_mail_auth`` and ``doctor --fix``.
 
     Reads the secret via the hidden-input/stdin path ONLY (never a CLI arg), stores
@@ -1261,7 +1261,7 @@ def _provision_account_secret(provider, address, auth_mode="password", send=Fals
                 f"auto-selected '{primary.name}' backend.\n")
     accounts.add_account(name=name, provider=provider, address=address,
                          secret_ref=secret_ref, auth_mode=auth_mode, send=send,
-                         aliases=aliases or [])
+                         aliases=aliases or [], endpoint=endpoint)
     return secret_ref
 
 
@@ -1292,13 +1292,26 @@ def cmd_mail_auth(a):
         sys.exit(1)
     send = bool(getattr(a, "send", False))
     aliases = getattr(a, "alias", None) or []
+    endpoint_raw = getattr(a, "endpoint", None)
+    if endpoint_raw:
+        try:
+            endpoint = json.loads(endpoint_raw)
+        except json.JSONDecodeError as e:
+            out({"error": "invalid --endpoint JSON", "detail": str(e)})
+            sys.exit(1)
+        if not isinstance(endpoint, dict):
+            out({"error": "--endpoint must be a JSON object"})
+            sys.exit(1)
+    else:
+        endpoint = None
     if a.secret_ref:
         secret_ref = a.secret_ref
         accounts.add_account(name, a.provider, a.address, secret_ref,
-                             auth_mode=auth_mode, send=send, aliases=aliases)
+                             auth_mode=auth_mode, send=send, aliases=aliases,
+                             endpoint=endpoint)
     else:
         secret_ref = _provision_account_secret(
-            a.provider, a.address, auth_mode, send, aliases)
+            a.provider, a.address, auth_mode, send, aliases, endpoint)
 
     out({"status": "registered", "name": name, "provider": a.provider,
          "address": a.address, "secret_ref": secret_ref, "auth_mode": auth_mode,
@@ -1534,6 +1547,11 @@ def main():
                      help="an additional From identity for this account (a configured "
                           "Fastmail masked alias, etc.). Repeatable; the From-identity "
                           "guard accepts the account address plus every configured alias.")
+    mau.add_argument("--endpoint", dest="endpoint", default=None,
+                     help="OPTIONAL provider-endpoint override, a JSON object with any "
+                          "of {jmap_url, imap_host, imap_port, smtp_host, smtp_port}, "
+                          "pointing this account's adapter at a local emulator instead "
+                          "of the real provider. Omit for the real provider defaults.")
     read_json(mau); mau.set_defaults(func=cmd_mail_auth)
     # CR-OA-022 §S3: draft-then-confirm send verbs. `--from` -> dest `from_addr`
     # (``from`` is a Python keyword). `--attach`/`--case` parse now (attachment

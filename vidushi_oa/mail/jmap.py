@@ -406,15 +406,32 @@ class JmapAdapter(MailAdapter):
 
 
 def fastmail_adapter(account, source_tag, config, transport=None, conn_factory=None):
-    """Select a Fastmail adapter: JMAP when a token is present, else IMAP fallback."""
+    """Select a Fastmail adapter: JMAP when a token is present, else IMAP fallback.
+
+    An optional ``config["endpoint"]`` mapping (any of ``jmap_url`` / ``imap_host`` /
+    ``imap_port`` / ``smtp_host`` / ``smtp_port``) points the adapter at a local
+    emulator; every value defaults to the real Fastmail provider when absent, so a
+    real account behaves exactly as before."""
+    endpoint = config.get("endpoint") or {}
     token = config.get("jmap_token")
     if token:
+        session_url = endpoint.get("jmap_url")
+        if session_url:
+            return JmapAdapter(account, source_tag, token,
+                               session_url=session_url, transport=transport)
         return JmapAdapter(account, source_tag, token, transport=transport)
+    imap_kwargs = {}
+    if endpoint.get("smtp_host"):
+        imap_kwargs["smtp_host"] = endpoint["smtp_host"]
+    if endpoint.get("smtp_port"):
+        imap_kwargs["smtp_port"] = endpoint["smtp_port"]
     return ImapAdapter(
         account=account,
         source_tag=source_tag,
-        host="imap.fastmail.com",
+        host=endpoint.get("imap_host") or "imap.fastmail.com",
         user=config.get("username", account),
         password=config["app_password"],
+        port=endpoint.get("imap_port") or 993,
         conn_factory=conn_factory,
+        **imap_kwargs,
     )

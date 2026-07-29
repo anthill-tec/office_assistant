@@ -16,7 +16,7 @@ import json
 import os
 
 _ENTRY_KEYS = ("name", "provider", "address", "secret_ref", "auth_mode", "send",
-               "aliases")
+               "aliases", "endpoint")
 
 
 def _config_path(path=None) -> str:
@@ -42,7 +42,7 @@ def load_accounts(path=None) -> list[dict]:
 
 
 def add_account(name, provider, address, secret_ref, auth_mode="password",
-                send=False, aliases=None, path=None) -> dict:
+                send=False, aliases=None, endpoint=None, path=None) -> dict:
     """Upsert a reference-only account entry by name and persist it (mode `0600`).
 
     Returns the stored entry. An existing entry with the same `name` is replaced
@@ -53,6 +53,11 @@ def add_account(name, provider, address, secret_ref, auth_mode="password",
     stay read-only; entries written before it existed are treated as `False`).
     `aliases` is the configured list of additional From identities for this account
     (Fastmail masked aliases, etc.); it defaults to an empty list.
+
+    `endpoint` is an OPTIONAL per-account provider-endpoint override mapping (any of
+    `jmap_url` / `imap_host` / `imap_port` / `smtp_host` / `smtp_port`) pointing the
+    adapters at a local emulator instead of the hardcoded real providers. Absent /
+    `None` is stored as an empty mapping so a bare install behaves exactly as before.
     """
     target = _config_path(path)
     parent = os.path.dirname(target)
@@ -68,6 +73,10 @@ def add_account(name, provider, address, secret_ref, auth_mode="password",
         "send": bool(send),
         "aliases": list(aliases or []),
     }
+    # An endpoint override is stored ONLY when configured — an absent one is OMITTED,
+    # never fabricated, so a real account's schema is byte-for-byte as before.
+    if endpoint:
+        entry["endpoint"] = dict(endpoint)
     accounts = load_accounts(target)
     for i, existing in enumerate(accounts):
         if existing.get("name") == name:
