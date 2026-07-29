@@ -1,6 +1,6 @@
 # CR-OA-030 — JMAP read-path correctness (drop `deliveredTo`, surface method errors, expose `uid`)
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-29 on develop)
 **Type:** bugfix
 **Priority:** Critical
 **Depends on:** 020, 026
