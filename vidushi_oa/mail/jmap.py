@@ -157,6 +157,26 @@ def _format_address(addresses):
     return email or name
 
 
+def _header_all_to_str(value) -> str:
+    """Collapse an RFC 8621 `:all` header value to a single `str`.
+
+    Per RFC 8621 §4.1.4 the ``:all`` suffix returns a JSON **array** of strings —
+    one entry per header field of that name — while a server projecting a single
+    field (or a non-conformant one) may hand back a bare string. Accept both:
+    a list/tuple yields its first non-blank entry, a string yields itself, and
+    an absent/`null`/empty/all-blank value yields ``""``. The return is always a
+    `str`, never a list and never `None`."""
+    if isinstance(value, (list, tuple)):
+        for entry in value:
+            text = str(entry).strip() if entry is not None else ""
+            if text:
+                return text
+        return ""
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 class JmapAdapter(MailAdapter):
     """Concrete JMAP adapter — session cached once, one batched POST per search."""
 
@@ -434,7 +454,7 @@ class JmapAdapter(MailAdapter):
             date=item.get("receivedAt", ""),
             thread_id=item.get("threadId"),
         )
-        message.delivered_to = item.get(_DELIVERED_TO_HEADER) or ""
+        message.delivered_to = _header_all_to_str(item.get(_DELIVERED_TO_HEADER))
         return message
 
     def _email_get_list(self, payload) -> list:

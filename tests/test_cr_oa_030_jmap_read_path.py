@@ -167,6 +167,84 @@ class BuildMessageDeliveredToFromHeaderProjectionTest(unittest.TestCase):
         self.assertEqual(message.delivered_to, "")
 
 
+class BuildMessageDeliveredToArrayShapeTest(unittest.TestCase):
+    """§S1 AC2 (real-server shape): RFC 8621 §4.1.4 defines the `:all` suffix as
+    returning a JSON ARRAY of strings — every header field with that name — not
+    a scalar. Every fake in `tests/` hands `_build_message` a plain string, so
+    the unit tier cannot see that a real server's array value lands on
+    `Message.delivered_to` verbatim as a `list`. `delivered_to` must ALWAYS be a
+    `str`: a list/tuple collapses to its first non-empty (stripped) entry, a
+    plain string passes through, and absent/None/empty degrades to `""`."""
+
+    def setUp(self):
+        self.adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=FakeTransport(),
+        )
+
+    def _item(self, delivered_to_value):
+        item = {
+            "id": "Ma1",
+            "threadId": "Ta1",
+            "messageId": ["<msg1@example.com>"],
+            "subject": "Invoice from Acme",
+            "from": [{"name": "Acme Billing", "email": "billing@acme.example"}],
+            "to": [{"name": "Alex Doe", "email": "you@fastmail.com"}],
+            "receivedAt": "2026-07-20T10:00:00Z",
+        }
+        if delivered_to_value is not None:
+            item["header:Delivered-To:asText:all"] = delivered_to_value
+        return item
+
+    def test_single_element_array_yields_that_address_as_a_string(self):
+        message = self.adapter._build_message(self._item(["alias@example.com"]))
+
+        self.assertIsInstance(message.delivered_to, str)
+        self.assertEqual(message.delivered_to, "alias@example.com")
+
+    def test_multi_value_array_yields_the_first_address_as_a_string(self):
+        message = self.adapter._build_message(
+            self._item(["first@example.com", "second@example.com"]))
+
+        self.assertIsInstance(message.delivered_to, str)
+        self.assertEqual(message.delivered_to, "first@example.com")
+
+    def test_array_entries_are_stripped_and_empty_leading_entries_skipped(self):
+        # `asText` values carry the header's leading fold whitespace; an empty
+        # first field must not mask a real address behind it.
+        message = self.adapter._build_message(
+            self._item(["", "  alias@example.com  "]))
+
+        self.assertEqual(message.delivered_to, "alias@example.com")
+
+    def test_empty_array_yields_the_empty_string(self):
+        message = self.adapter._build_message(self._item([]))
+
+        self.assertIsInstance(message.delivered_to, str)
+        self.assertEqual(message.delivered_to, "")
+
+    def test_all_blank_array_yields_the_empty_string(self):
+        message = self.adapter._build_message(self._item(["", "   "]))
+
+        self.assertIsInstance(message.delivered_to, str)
+        self.assertEqual(message.delivered_to, "")
+
+    def test_none_value_yields_the_empty_string(self):
+        # A server that saw no Delivered-To field returns JSON `null`.
+        message = self.adapter._build_message(self._item(None))
+        self.assertEqual(message.delivered_to, "")
+
+        explicit_null = self._item(["placeholder"])
+        explicit_null["header:Delivered-To:asText:all"] = None
+        self.assertEqual(self.adapter._build_message(explicit_null).delivered_to, "")
+
+    def test_plain_string_still_passes_through_stripped(self):
+        message = self.adapter._build_message(self._item(" alias@example.com "))
+
+        self.assertIsInstance(message.delivered_to, str)
+        self.assertEqual(message.delivered_to, "alias@example.com")
+
+
 class SearchRequestProjectionConformanceTest(unittest.TestCase):
     """§S1 AC3 (request-shape guard): the `properties` list our adapter SENDS
     in the `Email/get` half of `search()`'s batched request is conformant — no
