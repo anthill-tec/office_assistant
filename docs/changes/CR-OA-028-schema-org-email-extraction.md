@@ -75,6 +75,7 @@ with embedded markup, driven through **fake adapters** (fake IMAP conn / fake JM
 ### §S4 / §S5
 - [ ] `voa mail-extract --account <a> --uid <u>` against a fake adapter returns the candidates in a `{count, results, next}` TOON envelope; `next[]` contains a runnable `voa add orders …` / `update` built from a candidate.
 - [ ] An email with **no** schema.org markup returns the definitive empty state (`count: 0`) — not an error — so heuristic fallback engages.
+- [ ] A body fetch that genuinely fails live (an IMAP/network error, a JMAP method-level rejection, an unparsable 2xx body) or an adapter that cannot fetch a body at all exits 1 with the structured `{"error", "account", "uid"}` payload — never a raw traceback.
 - [ ] **Caller-existence:** `voa --help` lists `mail-extract`, wired via a non-test `set_defaults` caller (grep ≥1).
 
 ## Estimated size

@@ -14,9 +14,12 @@ Each file is one note with YAML frontmatter (`name`, `description`, `metadata.ty
 ## Index
 
 - [cicd-release-convention](cicd-release-convention.md) — **1.0.0 SHIPPED**: automated PyPI publish from
-  `main` (git-flow + **hatch-vcs**, version from the tag), TestPyPI via **`workflow_dispatch`**; skill ships
+  `main` (git-flow + **hatch-vcs**, version from the tag; push `main` **and** the tag as one
+  `git push origin main --tags`), TestPyPI via **`workflow_dispatch`**; skill ships
   as a **public GitHub repo** (`npx skills add anthill-tec/office_assistant/skills/vidushi-oa`); no
-  manual-approval gate; GPL-3.0; no-mistakes + AXI on the release branch; `act` + `ci-monitor`.
+  manual-approval gate; GPL-3.0; no-mistakes + reconcile *before* the dry-run on the release branch;
+  gate pinned to the SQLite default vs the Mongo-pinned pytest suite; `act` + `ci-monitor`.
+  The short mandatory checklist itself lives in [`AGENTS.md`](../../AGENTS.md) → **Release process**.
 - [vercel-skills-bundle-packaging](vercel-skills-bundle-packaging.md) — **RESOLVED**: engine → PyPI, skill →
   public GitHub repo (`npx skills`); the ecosystem doesn't bundle a pip package into a skill.
 - [mongo-preexisting-data-migration](mongo-preexisting-data-migration.md) — this machine's OA keeps its store on

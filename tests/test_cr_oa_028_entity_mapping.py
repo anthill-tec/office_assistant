@@ -304,6 +304,55 @@ class OrderStatusVocabMappingTest(unittest.TestCase):
         self.assertEqual(self._mapped_status_stage(None), ("NEW", None))
 
 
+class OrderedItemSingleDictShapeTest(unittest.TestCase):
+    """§S3 AC gap (code review, release/1.1.1): schema.org MICRODATA (and a
+    valid single-object JSON-LD) yields an `Order`'s `orderedItem` as a
+    single dict -- not a list -- for exactly one line item. `_order_item_names`
+    in `extract_map.py` only iterates a list-valued `orderedItem`, so a
+    dict-valued one is silently dropped and the resulting `orders` candidate
+    ends up with NO `items` field at all, failing CR-028's "microdata
+    extracts equivalently -> an orders candidate with >=1 line item" AC at
+    the mapper tier (it only holds at the parser tier today)."""
+
+    def setUp(self):
+        self.extract_map = _import_extract_map()
+
+    def test_single_dict_ordered_item_maps_to_orders_candidate_items(self):
+        order_entity = {
+            "@type": "Order",
+            "orderNumber": "ORD-4004",
+            "orderedItem": {
+                "@type": "OrderItem",
+                "orderedItem": {"@type": "Product", "name": "Widget Deluxe"},
+            },
+            "orderStatus": "OrderProcessing",
+        }
+
+        result = self.extract_map.to_store_candidates([order_entity])
+
+        self.assertEqual(len(result), 1)
+        candidate = result[0]["candidate"]
+        self.assertIn("items", candidate)
+        self.assertEqual(candidate["items"], ["Widget Deluxe"])
+
+    def test_list_valued_ordered_item_still_maps_correctly(self):
+        # Guard: the pre-existing list-valued shape must keep working once
+        # the dict-valued shape above is also supported by GREEN.
+        order_entity = {
+            "@type": "Order",
+            "orderNumber": "ORD-5005",
+            "orderedItem": [
+                {"@type": "OrderItem", "orderedItem": {"@type": "Product", "name": "Widget A"}},
+            ],
+            "orderStatus": "OrderProcessing",
+        }
+
+        result = self.extract_map.to_store_candidates([order_entity])
+
+        candidate = result[0]["candidate"]
+        self.assertEqual(candidate["items"], ["Widget A"])
+
+
 class NoEntitiesYieldsNoCandidatesTest(unittest.TestCase):
     """§S3 AC: `to_store_candidates([])` returns `[]` — the definitive empty
     state, not None, not an error."""

@@ -19,6 +19,13 @@ import_check = "vidushi_oa"
 paths = ["skills/vidushi-oa"]
 
 [env]
+# Pin the shipped default backend so the gate is hermetic: an ambient
+# VIDUSHI_BACKEND=mongo would otherwise leak in (the runner env is inherited) and the
+# checks below would exercise Mongo instead of the SQLite path real users install on.
+# VIDUSHI_SQLITE_PATH keeps that store inside the throwaway tmp dir — unset, sqlite
+# falls back to $XDG_DATA_HOME/vidushi-oa/oa.db, i.e. the operator's real data.
+VIDUSHI_BACKEND = "sqlite"
+VIDUSHI_SQLITE_PATH = "$TMP/oa.db"
 VIDUSHI_MONGO_DB = "$THROWAWAY_DB"
 VIDUSHI_DATA_DIR = "$TMP/data"
 
