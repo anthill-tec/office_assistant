@@ -88,6 +88,15 @@ acceptable for the E2E harness so tests need not mutate the user's real registry
 for real accounts** — the override is absent by default. This is the first deliverable; the emulator
 tests depend on it.
 
+**As built (2026-07-29) — DELIVERED on `release/1.1.1`.** The optional `endpoint` object is on the account
+entry (`accounts.add_account`), stored **only when truthy** so a real account's persisted schema is
+byte-identical and carried forward across a re-registration; `mail-auth --endpoint '<json>'` sets it;
+`imap_endpoint_kwargs` (`mail/imap.py`) is the single mapping into the IMAP/SMTP adapters, `fastmail_adapter`
+maps `jmap_url` onto `JmapAdapter.session_url`, and `build_client` layers `VIDUSHI_MAIL_ENDPOINTS` (ignored
+with a warning when malformed) over the persisted value. The **no-real-account-regression** invariant is
+asserted across every adapter by `tests/test_mail_endpoint_override.py`. User-facing setup guidance lives in
+[`skills/vidushi-oa/references/mail-setup.md`](../../skills/vidushi-oa/references/mail-setup.md).
+
 ## Decision 4 — lifecycle: `testcontainers`, session-scoped
 
 Use **`testcontainers-python`** (an `[e2e]` extra) for container lifecycle: a **session-scoped pytest
@@ -131,7 +140,8 @@ Per path, driving the **real CLI verbs** end-to-end against the emulator:
 
 ## Components (deliverables)
 
-1. **Configurable endpoints** (Decision 3) — engine change; the blocking prerequisite.
+1. ~~**Configurable endpoints** (Decision 3) — engine change; the blocking prerequisite.~~ **DONE** — see
+   Decision 3 §As built.
 2. **`[e2e]` extra** — `testcontainers` (+ any client dep); no change to base/`[mongo]`/`[sqlite]`.
 3. **Emulator fixture + profiles** — a session-scoped `testcontainers` fixture for the single Stalwart
    image (readiness gating + teardown) that seeds the `fastmail` / `gmail` / `yahoo` provider profiles.
