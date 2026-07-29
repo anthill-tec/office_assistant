@@ -28,6 +28,10 @@ earlier notes during the release, so trust this version.
   `git merge-base --is-ancestor $SHA origin/main` — if there's **no tag it SKIPS (stays green)**, so ordinary
   main commits don't red-CI; only a tagged, on-main commit publishes. No version-literal compare (hatch-vcs =
   tag). No manual-reviewer gate — `main` + git-flow discipline IS the gate.
+- **Push `main` and the tag as ONE command — `git push origin main --tags`.** The workflow's `push` trigger
+  filters on `branches:` only (no `tags:`), so pushing `main` alone fires a run whose gate step finds no tag
+  at HEAD and **skips green**, and a later tag-only push triggers no run at all — the release silently never
+  publishes while CI still looks healthy.
 - **TestPyPI is a MANUAL `workflow_dispatch` dry-run** (NOT a `release/*` push trigger, per the sandesh
   model). Validate the deploy with `gh workflow run ci.yml --ref <branch>` before the real release; it
   uploads a dev version (`skip-existing: true` makes it idempotent).
@@ -44,6 +48,9 @@ earlier notes during the release, so trust this version.
   and **AXI conformance validation**. These are release-branch *process* steps, not CI jobs. NOTE: no-mistakes
   commits its fixes to its **gate remote** (`~/.no-mistakes/...`), NOT your local branch — after a run,
   reconcile your local to the gate ref (`git fetch no-mistakes <branch>` then rebase/reset) before continuing.
+  Because that reconcile **rewrites history**, run no-mistakes to green *first* and only then push
+  `release/X.Y.Z` + dispatch the TestPyPI dry-run; a later no-mistakes round invalidates the dry-run and
+  needs a `--force-with-lease` re-push plus a re-dispatch.
 
 ## Skill publishing — just a public GitHub repo (NOT an "AXI-catalog submission")
 
@@ -76,13 +83,26 @@ a `License ::` trove classifier** (PEP 639: the SPDX expression supersedes it). 
   `~/.claude/scripts/skill-release-gate.py`, since a runner has no `~/.claude`); CI runs
   `.venv/bin/python scripts/skill-release-gate.py --project-dir .`. Keep the copy in sync with the home
   source. The per-project config is **`.skill-release.toml`** (its stale `7`→`8` store count is fixed).
+- **The gate must exercise the shipped SQLite default, so `.skill-release.toml` `[env]` pins
+  `VIDUSHI_BACKEND = "sqlite"` + a throwaway `VIDUSHI_SQLITE_PATH = "$TMP/oa.db"`.** The gate inherits the
+  runner env, so this machine's ambient `VIDUSHI_BACKEND=mongo` ([[mongo-preexisting-data-migration]])
+  would otherwise make the checks validate Mongo, and an unset sqlite path would land on the operator's
+  real `$XDG_DATA_HOME/vidushi-oa/oa.db`. Run it locally as
+  `env -u VIDUSHI_BACKEND .venv/bin/python scripts/skill-release-gate.py --project-dir .` (belt-and-braces;
+  the shell is fish, where a bare `VAR=… cmd` prefix fails).
+- **The pytest suite is the OPPOSITE backend, by design — it needs a live `mongod` on
+  `127.0.0.1:27017` + the `[mongo]` extra.** `tests/conftest.py` pins `VIDUSHI_BACKEND=mongo` for every
+  test via an autouse fixture; without those prerequisites the suite errors on the missing dependency,
+  not on a regression. Gate = shipped SQLite default, suite = Mongo path.
 - **Test the CI workflow locally with `act`** — `act -l` for a fast parse-check (catches YAML errors, the
   Node-actions bump, etc.), a full `act push`/`act workflow_dispatch` to exercise jobs in Docker. (Caveat: a
   local mongod holding `27017` blocks act's own `mongo:7` service — stop it for a full act run.)
-- **Live mail-account verification (CR-OA-020) is a release-time test, not a CI gate** — the mail client
-  ships tested only against in-process fakes. Set up real Gmail/Fastmail/Yahoo accounts (secrets via the
-  vault/keyring resolver) to exercise the real adapters + the XOAUTH2 path end-to-end, as a release-branch
-  step. Keep it out of the pytest gate (no creds on runners).
+- **Mail verification against a real server is a release-time step, not a CI gate.** CI runs the
+  fakes-only suite. The **local E2E emulator tier** (`make e2e`, Docker + the `[e2e]` extra;
+  `DN-mail-e2e-emulator-testing.md`) is the release-branch pass that exercises the real adapters on the
+  wire — mandatory before `finish`, and excluded from the default population by `addopts = -m 'not e2e'`
+  so it can never leak into CI. A live **real-account** spot-check (Gmail/Fastmail/Yahoo secrets via the
+  keyring resolver) stays optional and equally out of the pytest gate — no creds on runners.
 - **Minor follow-up:** bump `actions/checkout@v4` → `@v5` and `setup-python@v5` → `@v6` (Node-20 deprecation
   warning; non-blocking).
 

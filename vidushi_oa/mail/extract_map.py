@@ -48,9 +48,13 @@ def _order_item_names(ordered_item) -> list[str]:
 
     Each element is either an ``OrderItem`` wrapping the product under its own
     nested ``orderedItem`` key, or a product-like dict carrying ``name``
-    directly.
+    directly. A single-item Order yields ``orderedItem`` as one dict (schema.org
+    microdata / single-object JSON-LD) rather than a list; normalise it to a
+    one-element list so it maps identically.
     """
     names: list[str] = []
+    if isinstance(ordered_item, dict):
+        ordered_item = [ordered_item]
     if not isinstance(ordered_item, list):
         return names
     for element in ordered_item:

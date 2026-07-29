@@ -14,6 +14,23 @@ using an ``example.com`` host, e.g.::
             subject="Re: order", body="Thanks.")
 """
 from email.message import EmailMessage
+from email.policy import SMTP as _SMTP_POLICY
+from email.utils import formatdate, make_msgid, parseaddr
+
+
+def _message_id_for(from_addr):
+    """Mint a Message-ID scoped to *from_addr*'s domain.
+
+    RFC 5322 §3.6.4 wants the right-hand side to be a domain the sender owns, and
+    the stdlib default (`socket.getfqdn()`) would additionally bake the user's
+    machine name into every outbound message. Falls back to the stdlib default
+    only when *from_addr* carries no parsable domain — an address with no ``@``
+    has no domain part at all, so it must not be reused as one (``rpartition``
+    would hand back the whole local-part).
+    """
+    address = parseaddr(from_addr)[1]
+    domain = address.rpartition("@")[2].strip() if "@" in address else ""
+    return make_msgid(domain=domain) if domain else make_msgid()
 
 
 def compose(
@@ -33,13 +50,26 @@ def compose(
     ``In-Reply-To`` from *in_reply_to*, and ``References`` from *references*
     (a list of Message-IDs is space-joined; a string is used as-is).
 
+    The RFC 5322 §3.6.4 originator headers ``Date`` and ``Message-ID`` are always
+    set — `EmailMessage` mints neither. Besides being mandatory, they keep two
+    identical calls from serializing to identical bytes, which a content-addressed
+    blob store (Fastmail/Cyrus JMAP) would otherwise collapse onto one message.
+
     *attachments* is an optional list of ``(filename, bytes)`` pairs; each is
     added as an ``application/octet-stream`` part.
+
+    The bytes are serialized under `email.policy.SMTP`, whose ``linesep`` is the
+    CRLF RFC 5322 §2.1 mandates (`EmailMessage`'s default policy would emit bare
+    LF). Both consumers transmit them verbatim — the JMAP blob upload POSTs them
+    as ``message/rfc822``, and the IMAP ``APPEND`` hands them over as a literal,
+    where RFC 3501 requires CRLF-terminated lines.
     """
     msg = EmailMessage()
     msg["From"] = from_addr
     msg["To"] = to
     msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = _message_id_for(from_addr)
     msg.set_content(body)
 
     if cc:
@@ -60,7 +90,7 @@ def compose(
             filename=filename,
         )
 
-    return msg.as_bytes()
+    return msg.as_bytes(policy=_SMTP_POLICY)
 
 
 def validate_from(from_addr, identities):

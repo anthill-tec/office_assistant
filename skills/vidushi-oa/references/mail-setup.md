@@ -10,9 +10,12 @@ Each account carries a source tag: `[FM]` Fastmail, `[GM]` Gmail, `[YH]` Yahoo.
 
 ## Step 1 — generate the credential (per provider)
 
-- **Fastmail `[FM]`** — a **read-only JMAP API token**. In Fastmail: **Settings → Privacy &
-  Security → API tokens → New token**, scope it **read-only**, and copy the **token**. (JMAP is
-  Fastmail's native API; the token is what `voa mail-search` uses for JMAP filter queries.)
+- **Fastmail `[FM]`** — a **JMAP API token**. In Fastmail: **Settings → Privacy &
+  Security → API tokens → New token**, and copy the **token**. (JMAP is Fastmail's native API; the
+  token is what `voa mail-search` uses for JMAP filter queries.) Scope it **read-only** *unless* you
+  opt this account into sending (Step 2) — the send path uploads a blob, `Email/import`s a draft and
+  submits it, so a send-capable account needs a **write + submission** token; a read-only one leaves
+  reads working while every draft/send fails.
 - **Gmail personal `[GM]`** — an **IMAP app password** (an "app-password"). Requires **2FA
   (2-Step Verification) enabled**: Google Account → Security → 2-Step Verification → **App
   passwords** → generate one for "Mail". Copy the 16-character **app password**.
@@ -21,7 +24,10 @@ Each account carries a source tag: `[FM]` Fastmail, `[GM]` Gmail, `[YH]` Yahoo.
 - **Gmail Workspace (app passwords disabled by admin)** — use the **XOAUTH2** path instead: create
   an **OAuth client** in Google Cloud, authorise the Gmail scope, and obtain a **refresh token**.
   `voa mail-auth` stores the OAuth client id/secret + refresh token; the XOAUTH2 access token is
-  minted at query time. Use this only when app passwords are unavailable.
+  minted at query time. Use this only when app passwords are unavailable. If the account is also
+  opted into sending (`--send`), authorise the **full** `https://mail.google.com/` scope — the same
+  access token authenticates SMTP submission, and a read-only scope leaves reads working while every
+  send fails at `AUTH`.
 
 ## Step 2 — hand the secret to `voa` (agent never touches it)
 
@@ -38,9 +44,52 @@ XOAUTH2, `voa mail-auth --provider gmail --address you@workspace.com` prompts fo
 details + refresh token the same hidden way. An optional `--secret-ref <ref>` points `voa` at a
 secret already in a keyring/secret store instead of prompting.
 
+**Sending is opt-in per account.** Accounts are **read-only by default** — `voa mail-send` refuses an
+account that was not registered with **`--send`**, so grant it only where the user wants outbound mail,
+and add every extra From identity (a Fastmail masked alias, …) with a repeatable **`--alias`** (the
+From-identity guard accepts the account address plus every configured alias):
+
+```bash
+voa mail-auth --provider fastmail --address you@fastmail.com --send --alias vendor.alias@fastmail.com
+```
+
+Re-registering an account (rotating the secret, clearing an override) is **non-destructive**: any of
+`--send` / `--alias` / `--auth-mode` / `--endpoint` you omit keeps the value already stored, so a
+one-field change never silently strips the rest. Revoking send capability is therefore explicit —
+**`--no-send`** returns the account to read-only:
+
+```bash
+voa mail-auth --provider fastmail --address you@fastmail.com --secret-ref <ref> --no-send
+```
+
 **Non-interactive / CI escape:** pipe the secret to `voa mail-auth` on **stdin** (e.g.
 `voa mail-auth --provider yahoo --address you@yahoo.com < secret.txt`) — still never pasted into the
 conversation.
+
+**`--endpoint` — advanced, not part of normal setup.** Every account talks to its real provider by
+default. `--endpoint '<json>'` overrides that for **one** account, pointing it at a non-default server —
+in practice a local test emulator, not anything a user needs for their own mailbox. The JSON object takes
+any of `jmap_url` / `imap_host` / `imap_port` / `smtp_host` / `smtp_port` / `tls_verify`; whatever it omits
+keeps the real provider default, and an account registered without it is byte-for-byte unchanged. A re-run
+of `mail-auth` (or `voa doctor --fix`) that omits the flag keeps the override already configured; pass
+`--endpoint '{}'` to clear it outright.
+
+`tls_verify: false` turns OFF certificate/hostname verification for that account's IMAP/SMTP channels and
+exists **only** for a local emulator's self-signed cert — never point a real mailbox at it. `voa doctor`
+reports each account's `endpoint` and `tls_verify` (alongside its `send` grant) and emits a remediation
+step naming the exact command that restores a verifying channel.
+
+```bash
+voa mail-auth --provider gmail --address you@example.test \
+  --endpoint '{"imap_host":"127.0.0.1","imap_port":1143,"smtp_host":"127.0.0.1","smtp_port":1587}'
+```
+
+The `VIDUSHI_MAIL_ENDPOINTS` env var (a JSON object keyed by account *name*, mapping to the same shape)
+layers the same override on at run time without touching the registry; unset — the normal case — every
+account keeps its own configuration, and a malformed value is ignored with a warning. `voa doctor` reports
+the **effective** endpoint — stored plus that env layer, exactly as the adapters are built — and names the
+env-supplied keys in `endpoint_env_override`; an env-disabled `tls_verify` is remediated by editing the
+variable, since `mail-auth --endpoint` cannot reach it.
 
 ## Step 3 — verify
 

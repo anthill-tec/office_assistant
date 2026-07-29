@@ -31,6 +31,7 @@ Tracking-state framework (see schema.md "Tracking state framework"):
 Fields support dotted paths (e.g. source.email_id). Output is compact JSON on stdout; warnings to stderr.
 """
 import argparse, json, os, sys, datetime, re, getpass, imaplib, urllib.error
+import email.utils
 
 # Module-level seam: tests monkeypatch `vidushi_oa._cli.build_client`; the
 # `cmd_mail_*` handlers call it (no args) to obtain a wired `MailClient`.
@@ -881,6 +882,24 @@ def cmd_mail_accounts(a):
         out(envelope)
 
 
+# Every exception a real mail adapter raises on a LIVE failure: a JMAP non-200 or
+# method-level rejection (`RuntimeError`), a missing key/uid (`LookupError`), the
+# IMAP/network surface (`imaplib.IMAP4.error` / `OSError`, which `urllib.error.URLError`
+# subclasses), and a 2xx whose body the JMAP transport cannot parse — a captive-portal
+# or proxy interception page makes its `json.loads` raise `json.JSONDecodeError` or
+# `UnicodeDecodeError`, both of which `ValueError` already covers. Rendered
+# structurally by `_mail_failure_exit` — never as a traceback.
+_MAIL_LIVE_ERRORS = (LookupError, RuntimeError, imaplib.IMAP4.error, OSError,
+                     urllib.error.URLError, ValueError)
+
+
+def _mail_failure_exit(e, **context):
+    """Render a live mail-adapter failure as the structured `{"error", ...}` payload
+    + exit 1 (AXI #6: no traceback) — the shared seam every mail verb uses."""
+    out({"error": str(e) or e.__class__.__name__, **context})
+    sys.exit(1)
+
+
 def cmd_mail_get(a):
     """Fetch one message by `--account` + `--uid` via that account's adapter. An
     unknown account or uid — or an adapter that cannot fetch by uid (JMAP) — is a
@@ -906,13 +925,8 @@ def cmd_mail_get(a):
         out({"error": "mail-get is not supported for this account",
              "account": a.account, "uid": a.uid})
         sys.exit(1)
-    except LookupError as e:
-        out({"error": str(e), "account": a.account, "uid": a.uid})
-        sys.exit(1)
-    except (imaplib.IMAP4.error, OSError, urllib.error.URLError) as e:
-        out({"error": str(e) or e.__class__.__name__,
-             "account": a.account, "uid": a.uid})
-        sys.exit(1)
+    except _MAIL_LIVE_ERRORS as e:
+        _mail_failure_exit(e, account=a.account, uid=a.uid)
     if msg is None:
         out({"error": "message not found", "account": a.account, "uid": a.uid})
         sys.exit(1)
@@ -940,7 +954,14 @@ def cmd_mail_extract(a):
     `cmd_mail_get`."""
     client = _mail_client_or_exit()
     adapter = _mail_adapter_or_exit(client, a.account, uid=a.uid)
-    html = adapter.fetch_html_body(a.uid)
+    try:
+        html = adapter.fetch_html_body(a.uid)
+    except NotImplementedError:
+        out({"error": "mail-extract is not supported for this account",
+             "account": a.account, "uid": a.uid})
+        sys.exit(1)
+    except _MAIL_LIVE_ERRORS as e:
+        _mail_failure_exit(e, account=a.account, uid=a.uid)
     entities = extract_schema_org(html or "")
     candidates = to_store_candidates(entities)
     if _FMT == "json":
@@ -958,8 +979,12 @@ def cmd_mail_extract(a):
 
 def _mail_adapter_or_exit(client, account, **extra):
     """Resolve `account`'s adapter via the same `client._adapters` seam `cmd_mail_get`
-    uses, or render an unknown-account structured error + exit 1 (no traceback). The
-    shared draft-then-confirm resolution for `mail-draft`/`mail-send`/`mail-reply`."""
+    uses, or render an unknown-account structured error + exit 1 (no traceback).
+
+    Shared by every account-scoped verb — the draft-then-confirm trio
+    (`mail-draft`/`mail-send`/`mail-reply`) AND read-only `mail-extract` — so it
+    resolves an account and nothing more: send-gating belongs in the send verbs,
+    not here, where it would also gate a read."""
     adapter = client._adapters.get(account)
     if adapter is None:
         build_failure = next(
@@ -970,21 +995,38 @@ def _mail_adapter_or_exit(client, account, **extra):
     return adapter
 
 
+def _recipient_addresses(value):
+    """Every bare address carried by a recipient header value (`To`/`Cc`), which may
+    hold a comma-separated list and display names. Falls back to the raw value when
+    nothing parses, so an unparsable recipient is still checked (and refused) rather
+    than silently skipped."""
+    if not value:
+        return []
+    addresses = [addr for _name, addr in email.utils.getaddresses([value]) if addr]
+    return addresses or [str(value).strip()]
+
+
 def _verified_recipient_or_exit(recipient, force, **extra):
-    """Verified-recipient guard (§S4): the outbound `recipient` must match a
-    `contact`'s `support_email` (the verified-address allow-list) unless `force` is
-    set. A non-matching recipient is a structured error naming it + exit 1 (no
-    traceback); `--force` bypasses the check entirely."""
+    """Verified-recipient guard (§S4): EVERY address in the outbound `recipient`
+    header value must match a `contact`'s `support_email` (the verified-address
+    allow-list) unless `force` is set. A non-matching address is a structured error
+    naming it + exit 1 (no traceback); `--force` bypasses the check entirely.
+
+    The value is parsed rather than compared whole because a single `To`/`Cc` carries
+    a LIST: checking only the raw string would let every address after the first
+    reach the transport unverified (`send_draft` builds its RCPT list from all of
+    `To` + `Cc`)."""
     if force:
         return
     from vidushi_oa.backends import get_backend, query as Q
-    match = get_backend().store("contacts").find_one(
-        Q.cond("support_email", "eq", recipient))
-    if match is None:
-        out({"error": f"recipient {recipient} is not a verified contact "
-                      f"(no matching support_email); pass --force to override",
-             **extra})
-        sys.exit(1)
+    store = get_backend().store("contacts")
+    for address in _recipient_addresses(recipient):
+        match = store.find_one(Q.cond("support_email", "eq", address))
+        if match is None:
+            out({"error": f"recipient {address} is not a verified contact "
+                          f"(no matching support_email); pass --force to override",
+                 **extra})
+            sys.exit(1)
 
 
 def _validate_from_or_exit(account, from_addr, **extra):
@@ -1010,6 +1052,17 @@ def _validate_from_or_exit(account, from_addr, **extra):
 _MAIL_FK_STORES = {"case": "cases", "invoice": "invoices",
                    "warranty": "warranties", "order": "orders"}
 _CORRESPONDENCE_ACTION = {"cases": "raise-ticket"}
+
+
+def _drafted_status(account, draft_id):
+    """The flat status a saved draft emits, carrying the AXI #9 `next[]` whose single
+    entry is the runnable confirm-and-send step for THIS draft (`mail-send --account
+    <a> --draft <id>`). The hint is TOON-only — `--json` stays the bare object the
+    CR-OA-010 decision-B contract pins."""
+    status = {"status": "drafted", "draft": draft_id, "account": account}
+    if _FMT == "toon":
+        status["next"] = [f"mail-send --account {account} --draft {draft_id}"]
+    return status
 
 
 def _save_draft_link(a, draft_id):
@@ -1042,13 +1095,15 @@ def _attachments_or_exit(path):
 
 def cmd_mail_draft(a):
     """Compose (§S2) and save a REAL draft via the account adapter's
-    `create_draft(raw)`; emit a flat TOON/JSON status carrying the `draft` id.
+    `create_draft(raw)`; emit a flat TOON/JSON status carrying the `draft` id (and,
+    in TOON, the AXI #9 `next[]` holding the runnable `mail-send` for that draft).
     Performs ZERO network send — draft-then-confirm requires `mail-send` be the only
     code path that can dispatch a message."""
     client = _mail_client_or_exit()
     adapter = _mail_adapter_or_exit(client, a.account)
-    _verified_recipient_or_exit(a.to, getattr(a, "force", False),
-                                account=a.account, to=a.to)
+    force = getattr(a, "force", False)
+    _verified_recipient_or_exit(a.to, force, account=a.account, to=a.to)
+    _verified_recipient_or_exit(a.cc, force, account=a.account, cc=a.cc)
     _validate_from_or_exit(a.account, a.from_addr, to=a.to)
     attachments = _attachments_or_exit(getattr(a, "attach", None))
     if attachments is None:
@@ -1056,17 +1111,22 @@ def cmd_mail_draft(a):
     else:
         raw = compose(a.from_addr, a.to, a.subject, a.body, cc=a.cc,
                       attachments=attachments)
-    draft_id = adapter.create_draft(raw)
+    try:
+        draft_id = adapter.create_draft(raw)
+    except _MAIL_LIVE_ERRORS as e:
+        _mail_failure_exit(e, account=a.account, to=a.to)
     _save_draft_link(a, draft_id)
-    out({"status": "drafted", "draft": draft_id, "account": a.account})
+    out(_drafted_status(a.account, draft_id))
 
 
 def cmd_mail_send(a):
     """Dispatch ONLY the identified draft via the adapter's `send_draft(draft_id)`,
     gated on `send_gate.ensure_send_capable(entry)` (a non-send-capable account is a
     structured error + exit 1 whose message names "send"). Emits the sent
-    `message_id`. This is the ONLY function in this module that may call a send-path
-    token."""
+    `message_id`, plus — for a draft that was FK-linked (§S5), in TOON only — an AXI #9
+    `next[]` pointing at the row the correspondence was recorded on (`get <type> <id>`);
+    an unlinked send has no follow-up step, so it omits `next`. This is the ONLY
+    function in this module that may call a send-path token."""
     client = _mail_client_or_exit()
     entry = next((e for e in accounts.load_accounts()
                   if e.get("name") == a.account), None)
@@ -1079,12 +1139,17 @@ def cmd_mail_send(a):
         out({"error": str(e), "account": a.account})
         sys.exit(1)
     adapter = _mail_adapter_or_exit(client, a.account, draft=a.draft)
-    message_id = adapter.send_draft(a.draft)
+    try:
+        message_id = adapter.send_draft(a.draft)
+    except _MAIL_LIVE_ERRORS as e:
+        _mail_failure_exit(e, account=a.account, draft=a.draft)
     linked = _record_sent_correspondence(a.draft, message_id)
     status = {"status": "sent", "message_id": message_id,
               "draft": a.draft, "account": a.account}
     if linked:
         status["linked"] = linked
+        if _FMT == "toon":
+            status["next"] = [f"get {linked['type']} {linked['id']}"]
     out(status)
 
 
@@ -1128,6 +1193,8 @@ def cmd_mail_reply(a):
         source = adapter.fetch_message(a.uid)
     except KeyError:
         source = None
+    except _MAIL_LIVE_ERRORS as e:
+        _mail_failure_exit(e, account=a.account, uid=a.uid)
     if source is None:
         out({"error": "message not found", "account": a.account, "uid": a.uid})
         sys.exit(1)
@@ -1146,9 +1213,12 @@ def cmd_mail_reply(a):
         raw = compose(a.from_addr, to, subject, a.body,
                       in_reply_to=source.id, references=references,
                       attachments=attachments)
-    draft_id = adapter.create_draft(raw)
+    try:
+        draft_id = adapter.create_draft(raw)
+    except _MAIL_LIVE_ERRORS as e:
+        _mail_failure_exit(e, account=a.account, to=to)
     _save_draft_link(a, draft_id)
-    out({"status": "drafted", "draft": draft_id, "account": a.account})
+    out(_drafted_status(a.account, draft_id))
 
 
 def _read_secret_no_argv(name):
@@ -1161,7 +1231,7 @@ def _read_secret_no_argv(name):
 
 
 def _provision_account_secret(provider, address, auth_mode="password", send=False,
-                              aliases=None):
+                              aliases=None, endpoint=None):
     """Interactive secret-entry shared by ``cmd_mail_auth`` and ``doctor --fix``.
 
     Reads the secret via the hidden-input/stdin path ONLY (never a CLI arg), stores
@@ -1191,7 +1261,7 @@ def _provision_account_secret(provider, address, auth_mode="password", send=Fals
                 f"auto-selected '{primary.name}' backend.\n")
     accounts.add_account(name=name, provider=provider, address=address,
                          secret_ref=secret_ref, auth_mode=auth_mode, send=send,
-                         aliases=aliases or [])
+                         aliases=aliases or [], endpoint=endpoint)
     return secret_ref
 
 
@@ -1207,28 +1277,64 @@ def cmd_mail_auth(a):
 
     ``--auth-mode xoauth2`` (Gmail only) records that the secret is a JSON blob
     ``{client_id, client_secret, refresh_token}`` driving the XOAUTH2 refresh-token
-    flow; it too is entered via the hidden prompt / stdin, never as a CLI arg."""
+    flow; it too is entered via the hidden prompt / stdin, never as a CLI arg.
+
+    RE-REGISTRATION IS ADDITIVE, NEVER DESTRUCTIVE. ``add_account`` replaces the
+    matched entry wholesale, so every field the CLI does not re-specify is read off
+    the existing entry first — ``send``, ``aliases`` and ``auth_mode`` alongside the
+    ``endpoint`` the registry itself already carries forward. Without that, a
+    re-register aimed at ONE field (rotating the secret, or clearing a
+    ``tls_verify: false`` override on `doctor`'s advice) silently revoked send
+    capability, wiped every configured alias, and reset an XOAUTH2 Gmail account to
+    ``password`` — which then builds a plain `GmailImapAdapter`.
+
+    Send capability is therefore three-valued, never two: ``--send`` grants it,
+    ``--no-send`` REVOKES it, and neither preserves whatever the account already
+    had. An omitted flag cannot mean "revoke" — that is precisely the silent
+    degradation above — so revoking is spelled explicitly, and the outbound gate
+    (`send_gate.ensure_send_capable`) stays reachable from the CLI in both
+    directions rather than needing a hand-edit of the registry."""
     from vidushi_oa.mail import accounts
     if a.provider not in _MAIL_PROVIDERS:
         out({"error": "unsupported provider", "provider": a.provider,
              "supported": list(_MAIL_PROVIDERS)})
         sys.exit(1)
     name = f"{a.provider}:{a.address}"
+    existing = next((e for e in accounts.load_accounts()
+                     if e.get("name") == name), None) or {}
 
-    auth_mode = getattr(a, "auth_mode", "password")
+    auth_mode = (getattr(a, "auth_mode", None)
+                 or existing.get("auth_mode") or "password")
     if auth_mode == "xoauth2" and a.provider != "gmail":
         out({"error": "xoauth2 auth-mode is supported for the gmail provider only",
              "provider": a.provider})
         sys.exit(1)
-    send = bool(getattr(a, "send", False))
-    aliases = getattr(a, "alias", None) or []
+    send_flag = getattr(a, "send", None)
+    send = bool(existing.get("send", False)) if send_flag is None else bool(send_flag)
+    aliases = getattr(a, "alias", None) or list(existing.get("aliases") or [])
+    endpoint_raw = getattr(a, "endpoint", None)
+    # `None` (flag omitted) preserves any configured override; an explicit `{}`
+    # CLEARS it — the only way to re-enable TLS verification on an account that was
+    # registered with `tls_verify: false` without hand-editing the accounts file.
+    if endpoint_raw is not None:
+        try:
+            endpoint = json.loads(endpoint_raw)
+        except json.JSONDecodeError as e:
+            out({"error": "invalid --endpoint JSON", "detail": str(e)})
+            sys.exit(1)
+        if not isinstance(endpoint, dict):
+            out({"error": "--endpoint must be a JSON object"})
+            sys.exit(1)
+    else:
+        endpoint = None
     if a.secret_ref:
         secret_ref = a.secret_ref
         accounts.add_account(name, a.provider, a.address, secret_ref,
-                             auth_mode=auth_mode, send=send, aliases=aliases)
+                             auth_mode=auth_mode, send=send, aliases=aliases,
+                             endpoint=endpoint)
     else:
         secret_ref = _provision_account_secret(
-            a.provider, a.address, auth_mode, send, aliases)
+            a.provider, a.address, auth_mode, send, aliases, endpoint)
 
     out({"status": "registered", "name": name, "provider": a.provider,
          "address": a.address, "secret_ref": secret_ref, "auth_mode": auth_mode,
@@ -1243,6 +1349,8 @@ def cmd_doctor(a):
     unreachable or any account fails to resolve — after emitting the payload."""
     from vidushi_oa.backends import get_backend
     from vidushi_oa.mail import accounts
+    from vidushi_oa.mail.factory import (ENDPOINTS_ENV, effective_endpoint,
+                                         env_endpoints)
     from vidushi_oa.mail.secrets import (SecretResolver, KeyringBackend, preflight,
                                          detect_desktop, keyring_guidance, BACKEND_ENV)
     from vidushi_oa import __version__
@@ -1284,6 +1392,8 @@ def cmd_doctor(a):
 
     rows = []
     all_resolve = True
+    tls_disabled = []
+    overrides = env_endpoints()
     for entry in accounts.load_accounts():
         ref = entry.get("secret_ref", "")
         try:
@@ -1298,9 +1408,28 @@ def cmd_doctor(a):
             f"secret_ref {ref} did not resolve; re-run "
             f"`voa mail-auth --provider {entry.get('provider')} "
             f"--address {entry.get('address')}` to store it")
+        # An endpoint override — above all its `tls_verify: false` key, which turns
+        # certificate/hostname verification OFF for this account's IMAP/SMTP channels
+        # — must never be invisible: without it here an account running unverified
+        # TLS reads identically to a hardened one in every diagnostic. It is the
+        # EFFECTIVE endpoint that is reported — the stored one with the process-level
+        # VIDUSHI_MAIL_ENDPOINTS map layered on exactly as `build_client` does — so
+        # an env-repointed host or an env-disabled `tls_verify` cannot hide here
+        # either; `env_override` records which keys the environment supplied, because
+        # `mail-auth --endpoint` cannot clear those.
+        env_override = overrides.get(entry.get("name")) or {}
+        endpoint = effective_endpoint(entry, overrides)
+        if not bool(endpoint.get("tls_verify", True)):
+            tls_disabled.append((entry, endpoint, env_override))
         rows.append({"account": entry.get("name"), "provider": entry.get("provider"),
                      "auth_mode": entry.get("auth_mode", "password"),
-                     "kind": kind, "resolves": resolves, "hint": hint})
+                     "kind": kind, "resolves": resolves,
+                     "send": bool(entry.get("send", False)),
+                     "endpoint": ", ".join(f"{k}={endpoint[k]}"
+                                           for k in sorted(endpoint)),
+                     "endpoint_env_override": ", ".join(sorted(env_override)),
+                     "tls_verify": bool(endpoint.get("tls_verify", True)),
+                     "hint": hint})
 
     # Ordered, machine-readable remediation plan — one step per detected gap, each
     # carrying a boolean human_input flag. Fix the backend BEFORE re-authing accounts:
@@ -1321,6 +1450,43 @@ def cmd_doctor(a):
             f"prompt (or pipe it on stdin), or run `voa doctor --fix`.")
         remediation.append({"step": ma_step, "human_input": True})
         next_items.append(ma_step)
+    # The suggested command drops ONLY the `tls_verify` key — every other STORED
+    # endpoint key (the emulator host/port an account may legitimately be pointed at)
+    # is re-sent verbatim — and passes the account's own `--secret-ref`, so the stored
+    # credential is never re-read from stdin. `cmd_mail_auth` carries `send` /
+    # `aliases` / `auth_mode` forward, so the step restores a verifying channel and
+    # changes nothing else; that is what makes it safe to run unattended. It is built
+    # from the STORED endpoint, never the effective one — re-sending an env-supplied
+    # host would PERSIST a debug override the environment only meant for this process.
+    #
+    # When it is the environment that turned verification off, `mail-auth` cannot
+    # reach it at all (the env layer wins over whatever is stored), so the step names
+    # the variable instead and asks a human to change it.
+    for entry, endpoint, env_override in tls_disabled:
+        name = entry.get("name")
+        if "tls_verify" in env_override:
+            tls_step = (
+                f"{name} runs with TLS certificate/hostname verification DISABLED by "
+                f"the {ENDPOINTS_ENV} environment override (not by its stored "
+                f"endpoint) — intended only for the local emulator. `voa mail-auth "
+                f"--endpoint` CANNOT clear it: the environment layer wins. Drop the "
+                f"\"tls_verify\" key from {ENDPOINTS_ENV}[{name!r}] (or unset "
+                f"{ENDPOINTS_ENV}) to restore a verifying channel.")
+            remediation.append({"step": tls_step, "human_input": True})
+            next_items.append(tls_step)
+            continue
+        stored = entry.get("endpoint") or {}
+        verifying = {k: v for k, v in stored.items() if k != "tls_verify"}
+        tls_step = (
+            f"{name} runs with TLS certificate/hostname verification "
+            f"DISABLED (endpoint tls_verify=false) — intended only for the local "
+            f"emulator. Restore a verifying channel with `voa mail-auth --provider "
+            f"{entry.get('provider')} --address {entry.get('address')} "
+            f"--secret-ref {entry.get('secret_ref')} --endpoint "
+            f"'{json.dumps(verifying, sort_keys=True)}'`; it keeps the stored secret, "
+            f"send capability, aliases and auth-mode untouched.")
+        remediation.append({"step": tls_step, "human_input": False})
+        next_items.append(tls_step)
 
     out({"engine": __version__,
          "store_backend": {"name": backend.name, "ok": bool(store_ok)},
@@ -1450,20 +1616,36 @@ def main():
                      help="your mailbox address for this account, e.g. "
                           "you@fastmail.com (a sample format only; supply your own).")
     mau.add_argument("--auth-mode", dest="auth_mode",
-                     choices=["password", "xoauth2"], default="password",
+                     choices=["password", "xoauth2"], default=None,
                      help="gmail only: 'xoauth2' expects the secret to be a JSON blob "
-                          "{client_id, client_secret, refresh_token}; default 'password'.")
+                          "{client_id, client_secret, refresh_token}; default 'password' "
+                          "(on a re-registration, the account's existing auth-mode).")
     mau.add_argument("--secret-ref", dest="secret_ref", default=None,
                      help="credential reference (keyring/file). Omit to be prompted "
                           "(hidden) or to pipe the secret on stdin; it is stored under a "
                           "derived reference and never accepted as a CLI arg.")
-    mau.add_argument("--send", action="store_true", dest="send",
-                     help="grant this account SEND capability (opt-in; read-only by "
-                          "default). The send verbs refuse a non-send-capable account.")
+    send_grant = mau.add_mutually_exclusive_group()
+    send_grant.add_argument("--send", action="store_true", dest="send", default=None,
+                            help="grant this account SEND capability (opt-in; read-only "
+                                 "by default). The send verbs refuse a non-send-capable "
+                                 "account.")
+    send_grant.add_argument("--no-send", action="store_false", dest="send",
+                            help="REVOKE this account's send capability, returning it to "
+                                 "read-only. Omitting both flags on a re-registration "
+                                 "keeps whatever the account already had.")
     mau.add_argument("--alias", action="append", dest="alias", default=None,
                      help="an additional From identity for this account (a configured "
                           "Fastmail masked alias, etc.). Repeatable; the From-identity "
                           "guard accepts the account address plus every configured alias.")
+    mau.add_argument("--endpoint", dest="endpoint", default=None,
+                     help="OPTIONAL provider-endpoint override, a JSON object with any "
+                          "of {jmap_url, imap_host, imap_port, smtp_host, smtp_port, "
+                          "tls_verify}, pointing this account's adapter at a local "
+                          "emulator instead of the real provider. Omit to keep the real "
+                          "provider defaults (or whatever override is already "
+                          "configured); pass '{}' to CLEAR a configured override — "
+                          "including a tls_verify:false opt-out. 'voa doctor' reports "
+                          "the override and the TLS-verification state per account.")
     read_json(mau); mau.set_defaults(func=cmd_mail_auth)
     # CR-OA-022 §S3: draft-then-confirm send verbs. `--from` -> dest `from_addr`
     # (``from`` is a Python keyword). `--attach`/`--case` parse now (attachment

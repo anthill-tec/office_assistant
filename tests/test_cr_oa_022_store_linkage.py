@@ -49,7 +49,6 @@ are the real embedded sqlite backend pointed at an isolated tmp sqlite file per 
 `accounts.json` is pointed at an isolated tmp path — never the real store.
 """
 import json
-import os
 from argparse import Namespace
 
 import pytest
@@ -164,7 +163,7 @@ def test_mail_draft_with_case_fk_persists_a_draft_link(monkeypatch, capsys, tmp_
     _isolate_backend(monkeypatch, tmp_path)
     _seed_contact("ven_acme", "verified@acme.com")
     _seed_case("case_x")
-    adapter = _make_client(monkeypatch)
+    _make_client(monkeypatch)
     cli._FMT = "json"
 
     cli.cmd_mail_draft(Namespace(**_draft_kwargs(case="case_x")))
@@ -190,7 +189,7 @@ def test_mail_send_of_linked_draft_records_a_document_with_the_message_id(monkey
     _seed_contact("ven_acme", "verified@acme.com")
     _seed_case("case_x", actions=[{"action": "raise-ticket", "status": "OPEN", "opened": "2026-07-20"}])
     accounts.add_account("gmail_main", "gmail", "me@gmail.com", "keyring:gmail-main", send=True)
-    adapter = _make_client(monkeypatch)
+    _make_client(monkeypatch)
     cli._FMT = "json"
 
     cli.cmd_mail_draft(Namespace(**_draft_kwargs(case="case_x")))
@@ -223,7 +222,7 @@ def test_mail_send_of_linked_draft_resolves_the_open_raise_ticket_action(monkeyp
     _seed_contact("ven_acme", "verified@acme.com")
     _seed_case("case_x", actions=[{"action": "raise-ticket", "status": "OPEN", "opened": "2026-07-20"}])
     accounts.add_account("gmail_main", "gmail", "me@gmail.com", "keyring:gmail-main", send=True)
-    adapter = _make_client(monkeypatch)
+    _make_client(monkeypatch)
     cli._FMT = "json"
 
     cli.cmd_mail_draft(Namespace(**_draft_kwargs(case="case_x")))
@@ -251,6 +250,35 @@ def test_mail_send_of_linked_draft_resolves_the_open_raise_ticket_action(monkeyp
     )
 
 
+# 3b. AXI #9 chain across the linked flow: the draft's TOON `next[]` is the runnable
+#     confirm-and-send step (what SKILL.md tells the agent to copy verbatim), and the
+#     linked send's `next[]` hands the agent back to the row the correspondence landed on.
+
+def test_linked_draft_then_send_toon_next_chain_is_runnable(monkeypatch, capsys, tmp_path):
+    from vidushi_oa import toon as oa_toon
+
+    _isolate_backend(monkeypatch, tmp_path)
+    _seed_contact("ven_acme", "verified@acme.com")
+    _seed_case("case_x", actions=[{"action": "raise-ticket", "status": "OPEN", "opened": "2026-07-20"}])
+    accounts.add_account("gmail_main", "gmail", "me@gmail.com", "keyring:gmail-main", send=True)
+    _make_client(monkeypatch)
+    cli._FMT = "toon"
+
+    cli.cmd_mail_draft(Namespace(**_draft_kwargs(case="case_x")))
+    draft_payload = oa_toon.from_toon(capsys.readouterr().out)
+    draft_id = draft_payload["draft"]
+    assert draft_payload["next"] == [f"mail-send --account gmail_main --draft {draft_id}"], (
+        f"the draft's next[] must be the runnable confirm-and-send step; got {draft_payload!r}"
+    )
+
+    cli.cmd_mail_send(Namespace(account="gmail_main", draft=draft_id))
+    send_payload = oa_toon.from_toon(capsys.readouterr().out)
+    assert send_payload["next"] == ["get cases case_x"], (
+        "a FK-linked send must point the agent at the row the correspondence was "
+        f"recorded on; got {send_payload!r}"
+    )
+
+
 # 4. Unlinked send is inert: after a LINKED send has already recorded its document on
 #    case_x (proving the linkage mechanism is actually wired — this is what makes the
 #    test genuinely fail today, not vacuously pass), a SUBSEQUENT `mail-send` of a
@@ -263,7 +291,7 @@ def test_mail_send_of_unlinked_draft_after_a_linked_send_does_not_touch_case_row
     _seed_contact("ven_acme", "verified@acme.com")
     _seed_case("case_x", actions=[{"action": "raise-ticket", "status": "OPEN", "opened": "2026-07-20"}])
     accounts.add_account("gmail_main", "gmail", "me@gmail.com", "keyring:gmail-main", send=True)
-    adapter = _make_client(monkeypatch)
+    _make_client(monkeypatch)
     cli._FMT = "json"
 
     # First: a LINKED draft+send actually links to case_x and records its document.

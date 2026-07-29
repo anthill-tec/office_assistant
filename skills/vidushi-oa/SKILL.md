@@ -1,11 +1,12 @@
 ---
 name: vidushi-oa
-description: Cross-harness personal office-assistant skill — reads the user's mail (Fastmail + Gmail) and runs the whole post-purchase / personal-admin lifecycle (subscriptions, purchases & deliveries incl. customs, invoices, warranties, product catalogue, support cases) over the local vidushi-oa store, driven exclusively through the `voa` CLI. Portable and harness-agnostic; a read-only deep-sweep mode does heavy cross-mailbox triage.
+description: Cross-harness personal office-assistant skill — reads the user's mail (Fastmail + Gmail), sends outbound mail draft-then-confirm, and runs the whole post-purchase / personal-admin lifecycle (subscriptions, purchases & deliveries incl. customs, invoices, warranties, product catalogue, support cases) over the local vidushi-oa store, driven exclusively through the `voa` CLI. Portable and harness-agnostic; a read-only deep-sweep mode does heavy cross-mailbox triage.
 ---
 
 # Vidushi OA — Unified Personal Office Assistant
 
-A single, portable skill that reads the user's two mailboxes and runs the full
+A single, portable skill that reads the user's two mailboxes (and sends from them
+draft-then-confirm) and runs the full
 post-purchase / personal-admin lifecycle over a shared local store. It consolidates
 six role-domains — **subscription** watch, **purchase**/delivery tracking, **invoice**
 capture, **warranty** tracking, **product** catalogue, and **support** case management —
@@ -61,6 +62,24 @@ token-saving payoff):
   a search returns nothing or errors (it replaces the old "re-authenticate the connector" step); see
   [`references/mail-setup.md`](references/mail-setup.md) to add or re-auth an account.
 
+**Sending is draft-then-confirm, enforced in the engine** — there is no path that sends without an
+explicit `mail-send` on an identified draft (dispatch is opt-in per account: an account is registered
+send-capable at `mail-auth` time, and `mail-send` refuses one that is not — see
+[`references/mail-setup.md`](references/mail-setup.md) to grant it):
+
+- **`voa mail-draft --account <a> --from <identity> --to <addr> --subject <s> --body <b>` [`--cc` `--attach <path>` `--case/--invoice <id>`]** —
+  composes a valid RFC 5322 message and **saves a real draft** into the account's Drafts (reviewable in
+  the user's own mail client); returns the **draft id** and an AXI `next[]` carrying the ready-to-run
+  `mail-send` command; performs **no network send**. `--from` must be a
+  validated account identity/alias; every recipient (To **and** Cc) must be a **verified `contact`** (or `--force`).
+- **`voa mail-reply --account <a> --uid <src-uid> --from <identity> --body <b>` [`…`]** — the same, as a
+  **threaded** reply to a `mail-get`-fetched message.
+- **`voa mail-send`** — dispatches **only that identified draft** and files it to Sent. **Take the exact
+  command from the draft's `next[]`** (the CLI returns `mail-send --account <a> --draft <id>` — don't
+  hand-assemble the flags), and run it **only after the user explicitly says to send.** A send the server
+  accepted for only *some* recipients **fails** (non-zero, a structured error naming each refused address)
+  and leaves the draft in Drafts — never report it as sent; fix or drop those addresses and send again.
+
 The user files mail into folders (`Subscriptions`, `Shipping`, `Purchases`, `Electronics/*`) and
 uses **per-merchant masked aliases** on Fastmail, so the recipient alias is a reliable provider key;
 Gmail (`you@gmail.com`) items key on sender + `category:` instead.
@@ -82,8 +101,9 @@ Gmail (`you@gmail.com`) items key on sender + `category:` instead.
   REAL and time-sensitive (a missed one can get a parcel returned/abandoned) — never dismiss them;
   but fake versions are the top import scam. Resolve by verifying (AWB matches a real expected
   shipment; sender is the true carrier / India Post FPO / ICEGATE domain), not guessing.
-- **Draft-then-confirm:** outbound support mail is **draft-then-confirm** — draft it, show the user,
-  and send only on an explicit "send it". **Never auto-send.**
+- **Draft-then-confirm:** outbound support mail is **draft-then-confirm** — draft it with `voa mail-draft`/
+  `mail-reply`, show the user, and on an explicit "send it" run the `mail-send` command the draft returns in
+  its `next[]`. The engine has **no other send path**. **Never auto-send.**
 - **Verified contacts only:** mail a support address only if it is a **verified** `contact` in the
   store (from `contacts` or the user) — never a support address scraped from an unverified email.
 - **Never invent warranty terms** — record `term_months: null` + a note when a term is unstated;
@@ -180,9 +200,13 @@ The RMA/service **stages live in `actions[]`, never in the status**: the case ac
 `raise-ticket · rma-issue · ship-back · repair · replace · resolution-confirm`, each running
 OPEN → RESOLVED — drive them with `voa action-add` / `voa action-resolve`, and move the coarse state
 with `voa set-status`. Cite the linked `invoice_id` (proof) and `warranty_id` (coverage) and pull the
-support address from `contacts`. **DRAFT** correspondence to the vendor's **verified** support address
-(reply from the buying alias the vendor knows), including order/invoice number, product, model/serial,
-purchase date, warranty coverage, and a clear ask. **Draft-then-confirm — never auto-send.** Minimise
+support address from `contacts`. Draft the correspondence with **`voa mail-draft`** (or **`voa mail-reply`**
+to thread an existing vendor message) — `--from` the buying alias the vendor knows, `--to` the vendor's
+**verified** support `contact`, `--case <id>` to link the correspondence trail — including order/invoice
+number, product, model/serial, purchase date, warranty coverage, and a clear ask. **Show the user the draft,
+then run the `mail-send` step from the draft's `next[]` only on their explicit "send it" — never
+auto-send.**
+Minimise
 PII; let the user supply anything sensitive. Log each exchange with `--append-log`, and surface stalled
 cases (awaiting-you, support gone silent, warranty-window risk). An RMA parcel in transit hands to the
 purchase domain (reverse delivery).

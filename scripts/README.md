@@ -7,8 +7,8 @@ rows/fields needed.
 
 ## Installing the skill bundle
 
-From the **repo root**, install the skill + engine together (full detail — incl. the public
-`uv tool install vidushi-oa` path, gated on the OSS-license/PyPI decision — in `../README.md` → **Install**):
+From the **repo root**, install the skill + engine together (full detail — incl. the published
+`uv tool install vidushi-oa` path — in `../README.md` → **Install**):
 ```bash
 npx skills add ./skills/vidushi-oa      # the vidushi-oa skill (flat-layout vercel/skills bundle)
 uv tool install --editable .            # the voa engine
@@ -55,10 +55,21 @@ validators); `validate` reports violations; `import` / `snapshot` move data betw
 active backend; `doctor` is a diagnostic health read (engine version, store + secret backend, per-account
 resolution — absorbs `setup --check`).
 
-**Embedded mail client (read-only):** `mail-search '<query>' [--accounts a,b]` searches the configured
+**Embedded mail client — read:** `mail-search '<query>' [--accounts a,b]` searches the configured
 accounts server-side and merges + de-dupes by `Message-ID` (fail-soft per account); `mail-accounts` lists
-them; `mail-get --account <name> --uid <uid>` fetches one message; `mail-auth --provider <p> --address <a>`
-registers a credential *reference* (never the secret) with `--auth-mode password|xoauth2`.
+them; `mail-get --account <name> --uid <uid>` fetches one message; `mail-extract --account <name> --uid <uid>`
+parses that message's schema.org markup into store candidates (it only *suggests* the `voa add`);
+`mail-auth --provider <p> --address <a>` registers a credential *reference* (never the secret) with
+`--auth-mode password|xoauth2`, and `--send` opts that account into send capability (read-only otherwise).
+Its `--endpoint '<json>'` is an **advanced** override that points *that one account* at a non-default server
+(a local test emulator) instead of the real provider — see `skills/vidushi-oa/references/mail-setup.md`.
+
+**Embedded mail client — outbound (draft-then-confirm):** `mail-draft` and `mail-reply` compose and save a
+**real draft** — never a send — to **verified** contact addresses (every `--to`/`--cc` recipient) from one of
+the account's own identities; `mail-send --account <n> --draft <draft-id>` is the only verb that dispatches,
+and it sends that one saved draft, refuses a non-send-capable account, and files the copy in `Sent`.
+Full contract: `docs/research/DN-mail-access.md` Decision 7 (+ its as-built refinement — `docs/changes/CR-OA-022-embedded-mail-sending.md`
+is the completed, time-bound CR record, not the shipped mechanics).
 
 **Backend selection:** `VIDUSHI_BACKEND` picks **`sqlite`** (default, at `$XDG_DATA_HOME/vidushi-oa/oa.db`,
 override `VIDUSHI_SQLITE_PATH`) or **`mongo`** (needs the `[mongo]` extra) on `127.0.0.1:27017` db
@@ -69,13 +80,19 @@ snapshot/import dir).
 
 The pre-finish gate validates the **shipped artifacts**, not the source tree, so it catches what the
 unit suite can't. It's the **generic, cross-project** ecosystem tool
-`~/.claude/scripts/skill-release-gate.py`; this repo just declares its specifics in a standalone
-`.skill-release.toml`. Run it on the release branch — a non-zero exit means
+`~/.claude/scripts/skill-release-gate.py`, **vendored here as `scripts/skill-release-gate.py`** (so CI
+runners, which have no `~/.claude`, can run it — keep the copy in sync); this repo just declares its
+specifics in a standalone `.skill-release.toml`. Run it on the release branch — a non-zero exit means
 **do not finish the release**.
 
 ```bash
-python3 ~/.claude/scripts/skill-release-gate.py --project-dir .
+env -u VIDUSHI_BACKEND .venv/bin/python scripts/skill-release-gate.py --project-dir .
 ```
+
+The gate is **one step of the mandatory release checklist** — the full ordered process (and every other
+step it does *not* cover, including the local E2E mail smoke run) is in
+[`../AGENTS.md`](../AGENTS.md) → **Release process**, with the CI/release model in
+[`../docs/memory/cicd-release-convention.md`](../docs/memory/cicd-release-convention.md).
 
 Phases (each auto-skips when its config is absent):
 1. **Skill-bundle conformance** — wraps the official **`agentskills validate`** (`pip install
@@ -87,12 +104,20 @@ Phases (each auto-skips when its config is absent):
 3. **Clean-install smoke** — installs the wheel into a fresh venv; confirms `voa` runs and imports
    from site-packages (neutral cwd).
 4. **Lifecycle + AXI conformance** — declarative `[[check]]` steps (in `.skill-release.toml`) run
-   against the installed `voa` over a **throwaway** Mongo DB (`setup → add → due-sweep → attention → validate`),
+   against the installed `voa` over a **throwaway** store (`setup → add → due-sweep → attention → validate`),
    plus the 10 [axi.md](https://axi.md) principles + the decision-B `--json` contract.
 
-Nothing touches the live `vidushi_oa` store (throwaway DB + venv, cleaned up on exit). Self-test the
-gate with `SKILLGATE_SOON=2999-01-01 python3 ~/.claude/scripts/skill-release-gate.py --project-dir .`
-— the out-of-window renewal makes `due-sweep` skip, so the gate must FAIL (exit 1).
+The checks must exercise the **shipped SQLite default**, so `.skill-release.toml` `[env]` pins
+`VIDUSHI_BACKEND = "sqlite"` + a throwaway `VIDUSHI_SQLITE_PATH = "$TMP/oa.db"`. Without the pin an
+ambient `VIDUSHI_BACKEND=mongo` (this machine's local setting) leaks into the inherited runner env and
+the gate would validate Mongo instead; without the path override sqlite would fall back to the
+operator's real `$XDG_DATA_HOME/vidushi-oa/oa.db`. The `env -u VIDUSHI_BACKEND` prefix above is
+belt-and-braces (and the shell here is **fish**, where a bare `VAR=… cmd` prefix fails — use `env`).
+
+Nothing touches the live store (throwaway sqlite path + venv, plus the throwaway Mongo DB `[teardown]`
+still drops — all cleaned up on exit).
+Self-test the gate with `env SKILLGATE_SOON=2999-01-01 .venv/bin/python scripts/skill-release-gate.py
+--project-dir .` — the out-of-window renewal makes `due-sweep` skip, so the gate must FAIL (exit 1).
 
 **Authoring a new skill** (the init counterpart to this gate): use the **skill-creator** skill
 (anthropics/skills) to scaffold it — conformant frontmatter, progressive-disclosure layout

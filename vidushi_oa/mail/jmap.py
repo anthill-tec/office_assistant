@@ -15,11 +15,14 @@ import json
 import urllib.request
 
 from vidushi_oa.mail.base import MailAdapter, Message
-from vidushi_oa.mail.imap import ImapAdapter
+from vidushi_oa.mail.imap import ImapAdapter, imap_endpoint_kwargs
 
 _MAIL_CAPABILITY = "urn:ietf:params:jmap:mail"
 _CORE_CAPABILITY = "urn:ietf:params:jmap:core"
 _SUBMISSION_CAPABILITY = "urn:ietf:params:jmap:submission"
+
+_DRAFTS_ROLE = "drafts"
+_SENT_ROLE = "sent"
 
 # Bounded projection — headers/envelope only, never full body or attachments.
 _EMAIL_PROPERTIES = [
@@ -35,8 +38,16 @@ _EMAIL_PROPERTIES = [
 
 
 def _urllib_transport(method, url, headers, body):
-    """Default stdlib-`urllib` transport (never exercised in tests)."""
-    data = json.dumps(body).encode("utf-8") if body is not None else None
+    """Default stdlib-`urllib` transport (never exercised in tests).
+
+    A `bytes`/`bytearray` body is sent verbatim (the JMAP blob upload posts the
+    literal RFC822 bytes); any other non-None body is JSON-encoded."""
+    if body is None:
+        data = None
+    elif isinstance(body, (bytes, bytearray)):
+        data = bytes(body)
+    else:
+        data = json.dumps(body).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     with urllib.request.urlopen(request) as response:
         status = response.getcode()
@@ -46,13 +57,86 @@ def _urllib_transport(method, url, headers, body):
 
 def _created_id(payload, method_name) -> str:
     """Return the id of the single object created by `method_name` in a JMAP
-    `methodResponses` payload."""
+    `methodResponses` payload.
+
+    JMAP reports method-level failures INSIDE an HTTP 200 response — either a
+    per-object `notCreated` SetError or a whole-call `["error", {...}, callId]`
+    response — so every one of those is raised as a structured `RuntimeError`
+    rather than degrading into an empty id a caller would report as success."""
     for response in payload.get("methodResponses", []):
+        if response[0] == "error":
+            raise RuntimeError(
+                f"JMAP {method_name} failed: {json.dumps(response[1])}")
         if response[0] == method_name:
-            created = response[1].get("created", {})
-            for obj in created.values():
-                return obj.get("id", "")
+            not_created = response[1].get("notCreated") or {}
+            if not_created:
+                raise RuntimeError(
+                    f"JMAP {method_name} rejected: {json.dumps(not_created)}")
+            for obj in (response[1].get("created") or {}).values():
+                created_id = obj.get("id", "")
+                if created_id:
+                    return created_id
+            raise RuntimeError(f"JMAP {method_name} returned no created id")
+    raise RuntimeError(f"JMAP {method_name} returned no {method_name} response")
+
+
+def _queried_ids(payload, method_name) -> list:
+    """Return the `ids` list `method_name` answered with in a JMAP `methodResponses`
+    payload.
+
+    Same HTTP-200-carries-the-failure hazard as `_created_id`: a whole-call
+    `["error", {...}, callId]` — or a payload carrying no `method_name` response at
+    all — is raised structurally, so a server/auth failure is never mistaken for a
+    query that legitimately matched nothing."""
+    for response in payload.get("methodResponses", []):
+        if response[0] == "error":
+            raise RuntimeError(
+                f"JMAP {method_name} failed: {json.dumps(response[1])}")
+        if response[0] == method_name:
+            return response[1].get("ids") or []
+    raise RuntimeError(f"JMAP {method_name} returned no {method_name} response")
+
+
+def _call_id(response) -> str:
+    """The client-supplied call id of one JMAP `methodResponses` entry.
+
+    RFC 8620 §3.2 makes it the third element; a server that answers a malformed
+    two-element response yields `""`, which matches no call and so is never
+    mistaken for a specific method's failure."""
+    return response[2] if len(response) > 2 else ""
+
+
+def _first_from_address(emails) -> str:
+    """The `From` address of the first email in an `Email/get` result list."""
+    for item in emails or []:
+        for address in item.get("from") or []:
+            email = (address.get("email") or "").strip()
+            if email:
+                return email
     return ""
+
+
+def _authorized_identity_id(identities, from_address) -> str:
+    """The id of the identity authorized to send from `from_address` (RFC 8621 §6).
+
+    An exact address match wins. A wildcard identity (`*@domain` — the form a
+    provider advertises for a catch-all/masked-alias domain) matches any local
+    part in its own domain. Anything else — no match, or a `From` that could not
+    be read back — falls back to the first identity, which is what a
+    single-identity account resolves to either way."""
+    if not identities:
+        return ""
+    wanted = (from_address or "").strip().lower()
+    if wanted:
+        for identity in identities:
+            if (identity.get("email") or "").strip().lower() == wanted:
+                return identity["id"]
+        domain = wanted.rpartition("@")[2]
+        for identity in identities:
+            email = (identity.get("email") or "").strip().lower()
+            if domain and email.startswith("*@") and email[2:] == domain:
+                return identity["id"]
+    return identities[0]["id"]
 
 
 def _format_address(addresses):
@@ -79,6 +163,8 @@ class JmapAdapter(MailAdapter):
         self._transport = transport or _urllib_transport
         self._api_url = None
         self._account_id = None
+        self._upload_url = None
+        self._mailbox_ids = {}
 
     def _auth_headers(self):
         return {
@@ -95,42 +181,204 @@ class JmapAdapter(MailAdapter):
                 raise RuntimeError(f"JMAP session fetch failed: HTTP {status}")
             self._api_url = payload["apiUrl"]
             self._account_id = payload["primaryAccounts"][_MAIL_CAPABILITY]
+            upload_url = payload.get("uploadUrl")
+            if upload_url and "{accountId}" in upload_url:
+                upload_url = upload_url.replace("{accountId}", self._account_id)
+            self._upload_url = upload_url
         return self._api_url, self._account_id
 
     def capabilities(self) -> set:
         return {"server_threads", "server_side_search", "projection", "send"}
 
-    def create_draft(self, raw_rfc822, folder="Drafts") -> str:
-        """Create a draft via a single `Email/set` carrying the `$draft` keyword;
-        return the created email's id.
+    def create_draft(self, raw_rfc822) -> str:
+        """Create a draft from the composed `raw_rfc822` message; return the
+        created email's id.
 
-        §S1 wires the JMAP draft-creation call; §S2's `compose()` supplies the
-        structured message fields the real draft carries."""
+        Takes no `folder`, unlike the IMAP contract: JMAP resolves the target
+        mailbox by its `drafts` role (`_import_draft`), so a folder NAME has
+        nothing to bind to and would be silently discarded.
+
+        The literal RFC822 bytes are uploaded as a JMAP blob and then imported
+        into the Drafts mailbox with the `$draft` keyword — so the composed
+        content actually reaches the server. `uploadUrl` is a mandatory Session
+        property (RFC 8620 §2); a session without one offers no way to transmit
+        the content, so it is a structured failure rather than a silent
+        content-less draft."""
         api_url, account_id = self._session()
+        if not self._upload_url:
+            raise RuntimeError(
+                "JMAP session advertises no uploadUrl — cannot create a draft "
+                "carrying the composed message")
+        blob_id = self._upload_blob(self._upload_url, raw_rfc822)
+        return self._import_draft(api_url, account_id, blob_id)
+
+    def _upload_blob(self, upload_url, raw_rfc822) -> str:
+        """Upload the literal `raw_rfc822` bytes to the session `uploadUrl` and
+        return the resulting `blobId`.
+
+        Any 2xx is a successful upload — RFC 8620 §6.1 does not mandate 200, and
+        Fastmail/Cyrus answers `201 Created`. The message is encoded first: a
+        transport sends only a `bytes` body verbatim, so a `str` would go up
+        JSON-quoted and produce a corrupt draft nothing downstream can detect."""
+        if isinstance(raw_rfc822, str):
+            raw_rfc822 = raw_rfc822.encode("utf-8")
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "message/rfc822",
+        }
+        status, payload = self._transport("POST", upload_url, headers, raw_rfc822)
+        if not 200 <= status < 300:
+            raise RuntimeError(f"JMAP blob upload failed: HTTP {status}")
+        blob_id = payload.get("blobId", "")
+        if not blob_id:
+            raise RuntimeError("JMAP blob upload returned no blobId")
+        return blob_id
+
+    def _import_draft(self, api_url, account_id, blob_id) -> str:
+        """Import an uploaded blob into the Drafts mailbox as a `$draft` message
+        via one `Email/import`; return the created email's id.
+
+        RFC 8621 §4.8 requires at least one mailbox on an `EmailImport`, so an
+        unresolvable Drafts mailbox fails fast instead of posting a
+        guaranteed-invalid `mailboxIds: {}` the user would see as a saved draft.
+
+        Every `Email/import` creates a new draft: `compose()` stamps a fresh
+        `Message-ID` and `Date` on each call, so a redraft never serialises to the
+        same bytes and never collides with the content-addressed blob of an earlier
+        one. Re-running `mail-draft` therefore yields a second draft rather than
+        resolving back to the first."""
+        drafts_id = self._mailbox_id(api_url, account_id, _DRAFTS_ROLE)
+        if not drafts_id:
+            raise RuntimeError(
+                "JMAP account has no Drafts mailbox — refusing to import a draft "
+                "with no mailbox")
+        mailbox_ids = {drafts_id: True}
         body = {
             "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
             "methodCalls": [
-                ["Email/set",
+                ["Email/import",
                  {"accountId": account_id,
-                  "create": {"draft": {"keywords": {"$draft": True}}}},
+                  "emails": {"draft": {"blobId": blob_id,
+                                       "mailboxIds": mailbox_ids,
+                                       "keywords": {"$draft": True}}}},
                  "0"],
             ],
         }
         status, payload = self._transport("POST", api_url, self._auth_headers(), body)
         if status != 200:
-            raise RuntimeError(f"JMAP Email/set failed: HTTP {status}")
-        return _created_id(payload, "Email/set")
+            raise RuntimeError(f"JMAP Email/import failed: HTTP {status}")
+        return _created_id(payload, "Email/import")
+
+    def _mailbox_id(self, api_url, account_id, role) -> str:
+        """Resolve (and cache) the id of the mailbox carrying `role` via one
+        `Mailbox/query`; empty string when the account genuinely has no such mailbox.
+
+        A method-level failure arrives inside an HTTP 200, so the query's own outcome
+        is inspected and raised verbatim — otherwise an auth/account error degrades
+        into the flatly wrong "your account has no Drafts mailbox" diagnosis. Only a
+        query that actually answered is cached, so a failed one is retried rather than
+        repeating the same wrong verdict for the life of the process."""
+        if role not in self._mailbox_ids:
+            body = {
+                "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY],
+                "methodCalls": [
+                    ["Mailbox/query",
+                     {"accountId": account_id, "filter": {"role": role}},
+                     "0"],
+                ],
+            }
+            status, payload = self._transport(
+                "POST", api_url, self._auth_headers(), body)
+            if status != 200:
+                raise RuntimeError(f"JMAP Mailbox/query failed: HTTP {status}")
+            ids = _queried_ids(payload, "Mailbox/query")
+            self._mailbox_ids[role] = ids[0] if ids else ""
+        return self._mailbox_ids[role]
+
+    def _identity_id(self, api_url, account_id, draft_id) -> str:
+        """Resolve the sending identity id AUTHORIZED for `draft_id`'s own `From`
+        address; empty string when the account advertises no identity at all.
+
+        `EmailSubmission/set` requires `identityId` (RFC 8621 §7.1): a
+        spec-compliant server (Stalwart) rejects a submission that carries only
+        `emailId` with `invalidProperties [emailId, identityId]`. Fastmail is
+        lenient and assigns a default identity, which is why the fakes-based suite
+        never caught the omission.
+
+        The identity must also AUTHORIZE the message's `From` or the submission is
+        refused with `forbiddenFrom` (RFC 8621 §7.5), so "the first identity in the
+        list" is not good enough: `mail-draft --from <alias>` is a first-class
+        supported flow (`mail-auth --alias`) and `Identity/get` returns identities
+        in no guaranteed order, so even a plain primary-address send could pick an
+        alias identity. `ids: null` returns every identity and the draft's own
+        `From` is read back in the SAME round trip (one batched
+        `Identity/get` + `Email/get`), then matched by `_authorized_identity_id`.
+
+        Only the `Identity/get` call's own outcome is fatal: an `Email/get` that
+        errors leaves the `From` unknown, which degrades to the first identity —
+        the pre-existing behaviour — rather than blocking a send that a
+        single-identity account would have completed."""
+        body = {
+            "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY, _SUBMISSION_CAPABILITY],
+            "methodCalls": [
+                ["Identity/get", {"accountId": account_id, "ids": None}, "0"],
+                ["Email/get",
+                 {"accountId": account_id, "ids": [draft_id],
+                  "properties": ["from"]},
+                 "1"],
+            ],
+        }
+        status, payload = self._transport("POST", api_url, self._auth_headers(), body)
+        if status != 200:
+            raise RuntimeError(f"JMAP Identity/get failed: HTTP {status}")
+        identities = []
+        for response in payload.get("methodResponses", []):
+            if response[0] == "error" and _call_id(response) == "0":
+                raise RuntimeError(
+                    f"JMAP Identity/get failed: {json.dumps(response[1])}")
+            if response[0] == "Identity/get":
+                identities = [item for item in (response[1].get("list") or [])
+                              if item.get("id")]
+        return _authorized_identity_id(
+            identities, _first_from_address(self._email_get_list(payload)))
 
     def send_draft(self, draft_id) -> str:
         """Submit an existing draft via exactly one `EmailSubmission/set` whose
-        `create` object references the draft's email id; return the submission id."""
+        `create` object references the draft's email id and the `identityId`
+        authorized for the draft's own `From` (RFC 8621 §7.1 — `_identity_id` runs
+        first); return the submission id.
+
+        The submission carries an `onSuccessUpdateEmail` patch so a sent message
+        stops being a draft: the `$draft` keyword is cleared and, when the account
+        has a `sent`-role mailbox, the email is moved into it. Without the patch the
+        message would sit in Drafts flagged `$draft` forever and Sent would hold no
+        record of the correspondence. A submission needs no mailbox, so nothing about
+        the Sent lookup is fatal here: an account with no Sent mailbox — or one whose
+        `Mailbox/query` fails outright — still sends, and only the move is skipped.
+        That guard spans the lookup's WHOLE live failure surface, not just the
+        method-level `RuntimeError`: `urlopen` raises `HTTPError` (an `OSError`) on
+        every 4xx/5xx, and a 2xx carrying a captive-portal page raises `ValueError`
+        from the transport's `json.loads`. `_session()` is already resolved by then,
+        so nothing beyond the Sent lookup itself is swallowed."""
         api_url, account_id = self._session()
+        identity_id = self._identity_id(api_url, account_id, draft_id)
+        update = {"keywords/$draft": None}
+        try:
+            sent_id = self._mailbox_id(api_url, account_id, _SENT_ROLE)
+        except (RuntimeError, OSError, ValueError):
+            sent_id = ""
+        if sent_id:
+            update["mailboxIds"] = {sent_id: True}
+        create = {"emailId": draft_id}
+        if identity_id:
+            create["identityId"] = identity_id
         body = {
             "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY, _SUBMISSION_CAPABILITY],
             "methodCalls": [
                 ["EmailSubmission/set",
                  {"accountId": account_id,
-                  "create": {"submission": {"emailId": draft_id}}},
+                  "create": {"submission": create},
+                  "onSuccessUpdateEmail": {"#submission": update}},
                  "0"],
             ],
         }
@@ -253,15 +501,28 @@ class JmapAdapter(MailAdapter):
 
 
 def fastmail_adapter(account, source_tag, config, transport=None, conn_factory=None):
-    """Select a Fastmail adapter: JMAP when a token is present, else IMAP fallback."""
+    """Select a Fastmail adapter: JMAP when a token is present, else IMAP fallback.
+
+    An optional ``config["endpoint"]`` mapping (any of ``jmap_url`` / ``imap_host`` /
+    ``imap_port`` / ``smtp_host`` / ``smtp_port``) points the adapter at a local
+    emulator; every value defaults to the real Fastmail provider when absent, so a
+    real account behaves exactly as before."""
+    endpoint = config.get("endpoint") or {}
     token = config.get("jmap_token")
     if token:
-        return JmapAdapter(account, source_tag, token, transport=transport)
+        # `session_url` is supplied only when overridden, so the absent case keeps
+        # JmapAdapter's real Fastmail session default.
+        jmap_kwargs = {"session_url": endpoint["jmap_url"]} if endpoint.get(
+            "jmap_url") else {}
+        return JmapAdapter(account, source_tag, token, transport=transport,
+                           **jmap_kwargs)
+    host, imap_kwargs = imap_endpoint_kwargs(endpoint, "imap.fastmail.com")
     return ImapAdapter(
         account=account,
         source_tag=source_tag,
-        host="imap.fastmail.com",
+        host=host,
         user=config.get("username", account),
         password=config["app_password"],
         conn_factory=conn_factory,
+        **imap_kwargs,
     )

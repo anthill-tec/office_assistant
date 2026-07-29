@@ -65,8 +65,10 @@ CRs **011–014** constitute the **v0.1.0 release** (design contract:
 done: the release tag/version bump landed, and both parked data ops are resolved (the old
 `office_assistant` backup DB was dropped post-v0.1.0 — see **Follow-up tasks** below — and the refreshed
 snapshots were chezmoi-committed). Future releases are now guarded by a standing pre-`git flow release
-finish` gate (`~/.claude/scripts/skill-release-gate.py`, declared in `.skill-release.toml`; see
-[`../../scripts/README.md`](../../scripts/README.md)).
+finish` gate (vendored `scripts/skill-release-gate.py`, declared in `.skill-release.toml`; see
+[`../../scripts/README.md`](../../scripts/README.md)) — itself one step of the **mandatory release
+process** in [`../../AGENTS.md`](../../AGENTS.md) → **Release process** (no-mistakes + reconcile →
+TestPyPI dry-run → gate + full suite → irreversible-publish confirm).
 
 - **Pending decision — license (DN §6):** OSS-vs-private gates CI/CD *and* a public PyPI publish. v0.1.0 can
   ship **privately** (git-install) and go public later.
@@ -177,6 +179,23 @@ split for every interactive step.
 uid) are the blocking pair, then **025** (Gmail quotes) + **027** (order_date) → then features **023**
 (secret store; 022's creds ride on it) → **022** (sending) → **028** (schema.org extraction; rides 024's JMAP
 fix + 026's uid). Each via RED/GREEN/VERIFY → no-mistakes → a combined **1.1.0** `git flow release`.
+
+**Release note (2026-07-28):** the wave shipped as **1.1.0**, but that release skipped the pre-`finish`
+validations (no-mistakes on the release branch + the TestPyPI dry-run). That is why the checklist is now
+written down as a **mandatory, ordered** process in [`../../AGENTS.md`](../../AGENTS.md) → **Release
+process** — and why **1.1.1** re-releases the Wave-10 engine through it. Running the skipped validations is
+what surfaced 1.1.1's own fixes, so it is **not** a no-change re-release: the release-qualification review
+hardened the CR-022 send/draft path (JMAP blob-upload + `Email/import` so a draft carries its composed
+content, CRLF-serialized bytes, sent mail filed in Sent with the de-draft gated on a confirmed Sent copy,
+Sent/Drafts resolved by RFC 6154 special-use, SMTP submission authenticated over `XOAUTH2` for Workspace
+accounts that carry no password — and closed on every path, the verified-recipient guard extended to `--cc`
+and to every address of a recipient list, a partially refused SMTP submission raised as the failure it is
+instead of reported as sent, and the draft-then-confirm chain carried by the AXI #9 `next[]` hint) plus
+CR-028's live-failure errors and mapper fix and CR-029's repo-wide personal-Gmail purge. The same run also
+added the LOCAL-ONLY **E2E emulator tier** and the per-account endpoint override it needs
+([`../research/DN-mail-e2e-emulator-testing.md`](../research/DN-mail-e2e-emulator-testing.md)) — design-note
+driven, no CR — which caught three further defects the fakes could not, including **unverified IMAP/SMTP TLS**
+shipped in 1.1.0.
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
