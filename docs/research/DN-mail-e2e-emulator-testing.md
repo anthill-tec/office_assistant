@@ -44,12 +44,13 @@ Rationale: an emulator exercises the actual on-the-wire protocol (blob upload, `
 `EmailSubmission`, IMAP `APPEND`/`STORE`/`UID EXPUNGE`, SMTP submission) that in-process fakes only
 imitate — the one class of defect fakes structurally cannot catch.
 
-## Decision 2 — one Stalwart instance, per-provider profiles
+## Decision 2 — a Stalwart instance for the password profiles, Dovecot for XOAUTH2
 
-**Decided 2026-07-29.** A **single Stalwart container** (`stalwartlabs/mail-server`) hosts the whole tier.
-Stalwart speaks **JMAP + IMAP + SMTP**, so one instance can host multiple accounts, each configured as a
-**provider profile** that mimics that provider's observable behaviour — one container, differentiated by
-config:
+**Decided 2026-07-29 (revised for the XOAUTH2 profile).** A **single Stalwart container**
+(`stalwartlabs/mail-server`) hosts the password/JMAP profiles: Stalwart speaks **JMAP + IMAP + SMTP**, so one
+instance can host multiple accounts, each configured as a **provider profile** that mimics that provider's
+observable behaviour — one container, differentiated by config. The XOAUTH2 profile needs a **second**
+emulator (see "Capability split" below):
 
 - **`fastmail` profile** — a **JMAP** account (blob upload + `Email/import` + `EmailSubmission`) with a
   Fastmail-style layout (drafts/sent resolved by role). Validates the JMAP send/draft path.
@@ -191,10 +192,14 @@ Per path, driving the **real CLI verbs** end-to-end against the emulator:
 3. ~~**Emulator fixture + profiles** — a session-scoped `testcontainers` fixture for the single Stalwart
    image (readiness gating + teardown) that seeds the `fastmail` / `gmail` / `yahoo` provider profiles.~~
    **DONE** — `tests/e2e/conftest.py` (`stalwartlabs/mail-server:v0.11.8-alpine`; the `gmail` profile's
-   `[Gmail]/Drafts` special-use rename + its ManageSieve `fileinto "Sent"` script are seeded there).
+   `[Gmail]/Drafts` special-use rename + its ManageSieve `fileinto "Sent"` script are seeded there). A
+   **second** session-scoped fixture in the same file brings up the `gmail-xoauth2` Dovecot stack
+   (`dovecot/dovecot:2.3-latest` + an RFC 7662 introspection stub + an SMTP sink on a throwaway network;
+   it needs the **`openssl` CLI** for its self-signed cert and skips without it) — see Decision 2.
 4. ~~**E2E test module** — `tests/e2e/test_mail_send_draft_e2e.py`, `@pytest.mark.e2e`, the Decision-5 cases
-   for both paths.~~ **DONE** — plus `tests/e2e/test_emulator_profiles.py` (profile shape) and
-   `tests/e2e/test_gmail_xgmraw_e2e.py` (task #68, see Fidelity above).
+   for both paths.~~ **DONE** — plus `tests/e2e/test_emulator_profiles.py` (profile shape),
+   `tests/e2e/test_gmail_xgmraw_e2e.py` (task #68) and `tests/e2e/test_gmail_xoauth2_e2e.py` (task #71) —
+   see Fidelity above for both.
 5. ~~**Marker + skip wiring** — register `e2e`, auto-skip without Docker/the extra; a `make e2e` /
    documented invocation.~~ **DONE** — the `e2e` marker is registered in `pyproject.toml`, which also pins
    `addopts = -m 'not e2e'` so the default population **excludes the tier by construction**; the
@@ -223,9 +228,10 @@ provider profiles (sources in Research provenance).
 - **Fallback — GreenMail** (`greenmail/standalone:2.0.1`, SMTP `3025` / IMAP `3143`, auto-creates accounts
   on first login) only if a real Stalwart IMAP proves heavy locally; it is a mock, so not the default.
 
-`testcontainers-python` (Decision 4) wraps the single Stalwart image (tag + pruned ports + a readiness
-wait), and the fixture seeds the three profiles — the whole "compose" surface is a few lines in a fixture,
-not a checked-in stack.
+`testcontainers-python` (Decision 4) wraps the Stalwart image (tag + pruned ports + a readiness
+wait), and the fixture seeds the three password/JMAP profiles — the whole "compose" surface is a few lines in
+a fixture, not a checked-in stack. The `gmail-xoauth2` Dovecot stack (Decision 2) is wrapped the same way,
+by its own fixture.
 
 ## Relationship to the 1.1.1 release
 

@@ -37,10 +37,12 @@ sqlite = ["jsonschema>=4"]
 # CI/dev test backend: a real, storable keyring so the keyring-fallback test exercises an
 # actual keyring (pointed at a hermetic temp file), not a no-op backend.
 test = ["keyrings.alt>=5"]
-# LOCAL-ONLY E2E mail tier (DN-mail-e2e-emulator-testing.md): a session-scoped
-# testcontainers fixture spins up ONE throwaway Stalwart mail server and seeds the
-# fastmail/gmail/yahoo provider profiles. Never installed in CI; the seeding uses only
-# the stdlib (imaplib/smtplib/urllib/socket), so testcontainers is the sole dependency.
+# LOCAL-ONLY E2E mail tier (DN-mail-e2e-emulator-testing.md): session-scoped
+# testcontainers fixtures spin up a throwaway Stalwart mail server seeded with the
+# fastmail/gmail/yahoo provider profiles, plus a Dovecot stack for the gmail-xoauth2
+# profile. Never installed in CI; the seeding uses only the stdlib
+# (imaplib/smtplib/urllib/socket), so testcontainers is the sole Python dependency
+# (the Dovecot fixture also shells out to the `openssl` CLI, and skips without it).
 e2e = ["testcontainers>=4"]
 
 [project.urls]
@@ -65,7 +67,7 @@ artifacts = ["vidushi_oa/schema/*.json"]
 
 [tool.pytest.ini_options]
 # The `e2e` tier (tests/e2e/, DN-mail-e2e-emulator-testing.md) is a LOCAL, pre-release-only
-# smoke pass against a Dockerized Stalwart emulator — it must NEVER be part of the normal
+# smoke pass against Dockerized mail emulators — it must NEVER be part of the normal
 # test population (CI, regression, the release checklist's `pytest tests/ -q` full-suite run).
 # `addopts = -m "not e2e"` FILTERS IT OUT BY CONSTRUCTION: the default `pytest tests/` never
 # collects an e2e test. Running it is an explicit opt-in that overrides the default —

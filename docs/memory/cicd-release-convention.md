@@ -102,8 +102,7 @@ a `License ::` trove classifier** (PEP 639: the SPDX expression supersedes it). 
   `DN-mail-e2e-emulator-testing.md`) is the release-branch pass that exercises the real adapters on the
   wire — mandatory before `finish`, and excluded from the default population by `addopts = -m 'not e2e'`
   so it can never leak into CI. A live **real-account** spot-check (Gmail/Fastmail/Yahoo secrets via the
-  keyring resolver, the only way to cover the XOAUTH2 SMTP path) stays optional and equally out of the
-  pytest gate — no creds on runners.
+  keyring resolver) stays optional and equally out of the pytest gate — no creds on runners.
 - **Minor follow-up:** bump `actions/checkout@v4` → `@v5` and `setup-python@v5` → `@v6` (Node-20 deprecation
   warning; non-blocking).
 
