@@ -69,10 +69,8 @@ def _created_id(payload, method_name) -> str:
     per-object `notCreated` SetError or a whole-call `["error", {...}, callId]`
     response — so every one of those is raised as a structured `RuntimeError`
     rather than degrading into an empty id a caller would report as success."""
+    _raise_for_method_error(payload, method_name)
     for response in payload.get("methodResponses", []):
-        if response[0] == "error":
-            raise RuntimeError(
-                f"JMAP {method_name} failed: {json.dumps(response[1])}")
         if response[0] == method_name:
             not_created = response[1].get("notCreated") or {}
             if not_created:
@@ -94,10 +92,8 @@ def _queried_ids(payload, method_name) -> list:
     `["error", {...}, callId]` — or a payload carrying no `method_name` response at
     all — is raised structurally, so a server/auth failure is never mistaken for a
     query that legitimately matched nothing."""
+    _raise_for_method_error(payload, method_name)
     for response in payload.get("methodResponses", []):
-        if response[0] == "error":
-            raise RuntimeError(
-                f"JMAP {method_name} failed: {json.dumps(response[1])}")
         if response[0] == method_name:
             return response[1].get("ids") or []
     raise RuntimeError(f"JMAP {method_name} returned no {method_name} response")
@@ -110,6 +106,27 @@ def _call_id(response) -> str:
     two-element response yields `""`, which matches no call and so is never
     mistaken for a specific method's failure."""
     return response[2] if len(response) > 2 else ""
+
+
+def _raise_for_method_error(payload, context, call_id=None) -> None:
+    """Raise for the first method-level error in a JMAP `methodResponses` payload.
+
+    THE single method-level error check of this module (CR-OA-030 §S2). JMAP
+    reports a whole-call failure INSIDE an HTTP 200 as
+    ``["error", {"type": ..., "description": ...}, callId]`` — and when that call
+    was the target of a back-reference, the referring call never runs at all. Every
+    read and write path routes through here so no path can degrade a server error
+    into an empty-but-successful-looking result.
+
+    `context` names the failing operation in the message; the server's whole error
+    object (its `type` AND `description`) is rendered verbatim so the caller sees
+    what the server actually said. `call_id` restricts the check to one call of a
+    batched request — the callers for which only one half of the batch is fatal."""
+    for response in payload.get("methodResponses", []):
+        if response[0] == "error" and (
+                call_id is None or _call_id(response) == call_id):
+            detail = response[1] if len(response) > 1 else {}
+            raise RuntimeError(f"JMAP {context} failed: {json.dumps(detail)}")
 
 
 def _first_from_address(emails) -> str:
@@ -357,11 +374,9 @@ class JmapAdapter(MailAdapter):
         status, payload = self._transport("POST", api_url, self._auth_headers(), body)
         if status != 200:
             raise RuntimeError(f"JMAP Identity/get failed: HTTP {status}")
+        _raise_for_method_error(payload, "Identity/get", call_id="0")
         identities = []
         for response in payload.get("methodResponses", []):
-            if response[0] == "error" and _call_id(response) == "0":
-                raise RuntimeError(
-                    f"JMAP Identity/get failed: {json.dumps(response[1])}")
             if response[0] == "Identity/get":
                 identities = [item for item in (response[1].get("list") or [])
                               if item.get("id")]
@@ -434,13 +449,24 @@ class JmapAdapter(MailAdapter):
         return self._parse(payload)
 
     def _parse(self, payload) -> list:
-        """Pull the `Email/get` result list out of `methodResponses` into Messages."""
-        emails = []
+        """Pull the `Email/get` result list out of `methodResponses` into Messages.
+
+        A search result is only trustworthy when the server actually answered the
+        back-referenced `Email/get` (CR-OA-030 §S2). A method-level
+        ``["error", ...]`` — which also stops the back-reference from ever running
+        — is raised by the shared `_raise_for_method_error`, and a payload with no
+        `Email/get` response at all is raised naming what is missing. Only a real
+        `Email/get` result yields a list, so a genuinely empty search (`ids: []`
+        with a matching empty `Email/get`) stays a clean `[]` and is no longer
+        indistinguishable from a failure."""
+        _raise_for_method_error(payload, "search")
         for response in payload.get("methodResponses", []):
             if response[0] == "Email/get":
-                emails = response[1].get("list", [])
-                break
-        return [self._build_message(item) for item in emails]
+                return [self._build_message(item)
+                        for item in response[1].get("list", [])]
+        raise RuntimeError(
+            "JMAP search returned no Email/get response — the back-referenced "
+            "Email/get never ran, so the result is unknown, not empty")
 
     def _build_message(self, item) -> Message:
         message_ids = item.get("messageId") or []
