@@ -97,6 +97,48 @@ def _queried_ids(payload, method_name) -> list:
     raise RuntimeError(f"JMAP {method_name} returned no {method_name} response")
 
 
+def _call_id(response) -> str:
+    """The client-supplied call id of one JMAP `methodResponses` entry.
+
+    RFC 8620 §3.2 makes it the third element; a server that answers a malformed
+    two-element response yields `""`, which matches no call and so is never
+    mistaken for a specific method's failure."""
+    return response[2] if len(response) > 2 else ""
+
+
+def _first_from_address(emails) -> str:
+    """The `From` address of the first email in an `Email/get` result list."""
+    for item in emails or []:
+        for address in item.get("from") or []:
+            email = (address.get("email") or "").strip()
+            if email:
+                return email
+    return ""
+
+
+def _authorized_identity_id(identities, from_address) -> str:
+    """The id of the identity authorized to send from `from_address` (RFC 8621 §6).
+
+    An exact address match wins. A wildcard identity (`*@domain` — the form a
+    provider advertises for a catch-all/masked-alias domain) matches any local
+    part in its own domain. Anything else — no match, or a `From` that could not
+    be read back — falls back to the first identity, which is what a
+    single-identity account resolves to either way."""
+    if not identities:
+        return ""
+    wanted = (from_address or "").strip().lower()
+    if wanted:
+        for identity in identities:
+            if (identity.get("email") or "").strip().lower() == wanted:
+                return identity["id"]
+        domain = wanted.rpartition("@")[2]
+        for identity in identities:
+            email = (identity.get("email") or "").strip().lower()
+            if domain and email.startswith("*@") and email[2:] == domain:
+                return identity["id"]
+    return identities[0]["id"]
+
+
 def _format_address(addresses):
     """Render the first JMAP `EmailAddress` as ``Name <email>`` (or ``email``)."""
     if not addresses:
@@ -253,41 +295,58 @@ class JmapAdapter(MailAdapter):
             self._mailbox_ids[role] = ids[0] if ids else ""
         return self._mailbox_ids[role]
 
-    def _identity_id(self, api_url, account_id) -> str:
-        """Resolve the account's sending identity id via one `Identity/get`
-        (RFC 8621 §6); empty string when the account advertises none.
+    def _identity_id(self, api_url, account_id, draft_id) -> str:
+        """Resolve the sending identity id AUTHORIZED for `draft_id`'s own `From`
+        address; empty string when the account advertises no identity at all.
 
         `EmailSubmission/set` requires `identityId` (RFC 8621 §7.1): a
         spec-compliant server (Stalwart) rejects a submission that carries only
         `emailId` with `invalidProperties [emailId, identityId]`. Fastmail is
         lenient and assigns a default identity, which is why the fakes-based suite
-        never caught the omission. Passing `ids: null` returns every identity and
-        the first (the account's primary From) is used."""
+        never caught the omission.
+
+        The identity must also AUTHORIZE the message's `From` or the submission is
+        refused with `forbiddenFrom` (RFC 8621 §7.5), so "the first identity in the
+        list" is not good enough: `mail-draft --from <alias>` is a first-class
+        supported flow (`mail-auth --alias`) and `Identity/get` returns identities
+        in no guaranteed order, so even a plain primary-address send could pick an
+        alias identity. `ids: null` returns every identity and the draft's own
+        `From` is read back in the SAME round trip (one batched
+        `Identity/get` + `Email/get`), then matched by `_authorized_identity_id`.
+
+        Only the `Identity/get` call's own outcome is fatal: an `Email/get` that
+        errors leaves the `From` unknown, which degrades to the first identity —
+        the pre-existing behaviour — rather than blocking a send that a
+        single-identity account would have completed."""
         body = {
-            "using": [_CORE_CAPABILITY, _SUBMISSION_CAPABILITY],
+            "using": [_CORE_CAPABILITY, _MAIL_CAPABILITY, _SUBMISSION_CAPABILITY],
             "methodCalls": [
                 ["Identity/get", {"accountId": account_id, "ids": None}, "0"],
+                ["Email/get",
+                 {"accountId": account_id, "ids": [draft_id],
+                  "properties": ["from"]},
+                 "1"],
             ],
         }
         status, payload = self._transport("POST", api_url, self._auth_headers(), body)
         if status != 200:
             raise RuntimeError(f"JMAP Identity/get failed: HTTP {status}")
+        identities = []
         for response in payload.get("methodResponses", []):
-            if response[0] == "error":
+            if response[0] == "error" and _call_id(response) == "0":
                 raise RuntimeError(
                     f"JMAP Identity/get failed: {json.dumps(response[1])}")
             if response[0] == "Identity/get":
-                for identity in response[1].get("list") or []:
-                    identity_id = identity.get("id", "")
-                    if identity_id:
-                        return identity_id
-        return ""
+                identities = [item for item in (response[1].get("list") or [])
+                              if item.get("id")]
+        return _authorized_identity_id(
+            identities, _first_from_address(self._email_get_list(payload)))
 
     def send_draft(self, draft_id) -> str:
         """Submit an existing draft via exactly one `EmailSubmission/set` whose
-        `create` object references the draft's email id and the account's resolved
-        `identityId` (RFC 8621 §7.1 — an `Identity/get` runs first); return the
-        submission id.
+        `create` object references the draft's email id and the `identityId`
+        authorized for the draft's own `From` (RFC 8621 §7.1 — `_identity_id` runs
+        first); return the submission id.
 
         The submission carries an `onSuccessUpdateEmail` patch so a sent message
         stops being a draft: the `$draft` keyword is cleared and, when the account
@@ -302,7 +361,7 @@ class JmapAdapter(MailAdapter):
         from the transport's `json.loads`. `_session()` is already resolved by then,
         so nothing beyond the Sent lookup itself is swallowed."""
         api_url, account_id = self._session()
-        identity_id = self._identity_id(api_url, account_id)
+        identity_id = self._identity_id(api_url, account_id, draft_id)
         update = {"keywords/$draft": None}
         try:
             sent_id = self._mailbox_id(api_url, account_id, _SENT_ROLE)

@@ -1293,7 +1293,10 @@ def cmd_mail_auth(a):
     send = bool(getattr(a, "send", False))
     aliases = getattr(a, "alias", None) or []
     endpoint_raw = getattr(a, "endpoint", None)
-    if endpoint_raw:
+    # `None` (flag omitted) preserves any configured override; an explicit `{}`
+    # CLEARS it — the only way to re-enable TLS verification on an account that was
+    # registered with `tls_verify: false` without hand-editing the accounts file.
+    if endpoint_raw is not None:
         try:
             endpoint = json.loads(endpoint_raw)
         except json.JSONDecodeError as e:
@@ -1381,9 +1384,18 @@ def cmd_doctor(a):
             f"secret_ref {ref} did not resolve; re-run "
             f"`voa mail-auth --provider {entry.get('provider')} "
             f"--address {entry.get('address')}` to store it")
+        # An endpoint override — above all its `tls_verify: false` key, which turns
+        # certificate/hostname verification OFF for this account's IMAP/SMTP channels
+        # — must never be invisible: without it here an account running unverified
+        # TLS reads identically to a hardened one in every diagnostic.
+        endpoint = entry.get("endpoint") or {}
         rows.append({"account": entry.get("name"), "provider": entry.get("provider"),
                      "auth_mode": entry.get("auth_mode", "password"),
-                     "kind": kind, "resolves": resolves, "hint": hint})
+                     "kind": kind, "resolves": resolves,
+                     "endpoint": ", ".join(f"{k}={endpoint[k]}"
+                                           for k in sorted(endpoint)),
+                     "tls_verify": bool(endpoint.get("tls_verify", True)),
+                     "hint": hint})
 
     # Ordered, machine-readable remediation plan — one step per detected gap, each
     # carrying a boolean human_input flag. Fix the backend BEFORE re-authing accounts:
@@ -1404,6 +1416,17 @@ def cmd_doctor(a):
             f"prompt (or pipe it on stdin), or run `voa doctor --fix`.")
         remediation.append({"step": ma_step, "human_input": True})
         next_items.append(ma_step)
+    for r in rows:
+        if r["tls_verify"]:
+            continue
+        tls_step = (
+            f"{r['account']} runs with TLS certificate/hostname verification "
+            f"DISABLED (endpoint tls_verify=false) — intended only for the local "
+            f"emulator. Clear the override with `voa mail-auth --provider "
+            f"{r['provider']} --address {r['account'].split(':', 1)[-1]} "
+            f"--endpoint '{{}}'` to restore a verifying channel.")
+        remediation.append({"step": tls_step, "human_input": False})
+        next_items.append(tls_step)
 
     out({"engine": __version__,
          "store_backend": {"name": backend.name, "ok": bool(store_ok)},
@@ -1549,9 +1572,13 @@ def main():
                           "guard accepts the account address plus every configured alias.")
     mau.add_argument("--endpoint", dest="endpoint", default=None,
                      help="OPTIONAL provider-endpoint override, a JSON object with any "
-                          "of {jmap_url, imap_host, imap_port, smtp_host, smtp_port}, "
-                          "pointing this account's adapter at a local emulator instead "
-                          "of the real provider. Omit for the real provider defaults.")
+                          "of {jmap_url, imap_host, imap_port, smtp_host, smtp_port, "
+                          "tls_verify}, pointing this account's adapter at a local "
+                          "emulator instead of the real provider. Omit to keep the real "
+                          "provider defaults (or whatever override is already "
+                          "configured); pass '{}' to CLEAR a configured override — "
+                          "including a tls_verify:false opt-out. 'voa doctor' reports "
+                          "the override and the TLS-verification state per account.")
     read_json(mau); mau.set_defaults(func=cmd_mail_auth)
     # CR-OA-022 §S3: draft-then-confirm send verbs. `--from` -> dest `from_addr`
     # (``from`` is a Python keyword). `--attach`/`--case` parse now (attachment

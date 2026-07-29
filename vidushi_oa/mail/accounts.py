@@ -55,13 +55,19 @@ def add_account(name, provider, address, secret_ref, auth_mode="password",
     (Fastmail masked aliases, etc.); it defaults to an empty list.
 
     `endpoint` is an OPTIONAL per-account provider-endpoint override mapping (any of
-    `jmap_url` / `imap_host` / `imap_port` / `smtp_host` / `smtp_port`) pointing the
-    adapters at a local emulator instead of the hardcoded real providers. An absent /
-    `None` override is OMITTED from the entry entirely — never stored as an empty
-    mapping — so a bare install's persisted schema is byte-for-byte as before. On a
-    re-registration (a secret rotation via `mail-auth`, or `doctor --fix`) an absent
+    `jmap_url` / `imap_host` / `imap_port` / `smtp_host` / `smtp_port` / `tls_verify`)
+    pointing the adapters at a local emulator instead of the hardcoded real providers.
+    An absent / `None` override is OMITTED from the entry entirely — never stored as an
+    empty mapping — so a bare install's persisted schema is byte-for-byte as before. On
+    a re-registration (a secret rotation via `mail-auth`, or `doctor --fix`) an absent
     override does not clear a previously configured one: since the matched entry is
     replaced wholesale, the prior `endpoint` is carried forward.
+
+    `None` (not supplied) and `{}` (supplied empty) are therefore DISTINCT: an empty
+    mapping is an explicit CLEAR, dropping any previously configured override. Without
+    that distinction `tls_verify: false` — a persisted, per-account disabling of
+    certificate/hostname verification — would be unremovable except by hand-editing the
+    accounts file, which the project's cardinal rules forbid.
     """
     target = _config_path(path)
     parent = os.path.dirname(target)
@@ -72,8 +78,9 @@ def add_account(name, provider, address, secret_ref, auth_mode="password",
     index = next((i for i, e in enumerate(accounts) if e.get("name") == name), None)
     # The matched entry is replaced WHOLESALE, so an absent override would silently
     # drop a configured one on every re-registration (a secret rotation, `doctor
-    # --fix`) — carry the prior one forward instead.
-    if not endpoint and index is not None:
+    # --fix`) — carry the prior one forward instead. An explicitly EMPTY mapping is
+    # the deliberate clear, so only `None` carries forward.
+    if endpoint is None and index is not None:
         endpoint = accounts[index].get("endpoint")
 
     entry = {

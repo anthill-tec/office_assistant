@@ -49,15 +49,18 @@ EMU_DOMAIN = "emumail.org"
 # submission / IMAP / JMAP-HTTP-admin+API + ManageSieve (the last is needed ONLY to seed the
 # gmail per-account Sieve script). Seeding + test assertions use PLAINTEXT IMAP 143; the
 # real `voa` IMAP round-trip uses IMAPS 993 (implicit TLS) because `ImapAdapter` dials
-# `imaplib.IMAP4_SSL` — a NON-verifying stdlib context (CERT_NONE), so Stalwart's
-# self-signed cert is accepted with no CA/trust-store setup. SMTP 587 carries STARTTLS.
+# `imaplib.IMAP4_SSL`. That channel now VERIFIES the certificate/hostname by default, and
+# Stalwart presents a self-signed cert — so the profiles carry the explicit
+# `tls_verify: false` opt-out (see `Profile.endpoint`) rather than any CA/trust-store
+# setup. SMTP 587 carries STARTTLS, under the same policy.
 PORT_HTTP = 8080
 PORT_IMAP = 143
 PORT_IMAPS = 993
 PORT_SMTP = 587
 PORT_SIEVE = 4190
 
-# Seeded accounts: name -> (provider, local password). Addresses are <name-stem>@emu.test.
+# Seeded accounts: name -> (provider, local password). Addresses are
+# <name-stem>@EMU_DOMAIN.
 _ACCOUNTS = {
     "fastmail": ("fastmail", "fastmailpass"),
     "gmail": ("gmail", "gmailpass"),
@@ -77,7 +80,7 @@ class Profile:
     """Everything a test needs to point ``voa`` at one emulator account: build the
     ``VIDUSHI_MAIL_ENDPOINTS`` override + register via ``voa mail-auth --send --endpoint``."""
 
-    name: str            # account name registered with voa, e.g. "fastmail@emu.test"
+    name: str            # account name registered with voa, e.g. "fastmail@emumail.org"
     provider: str        # "fastmail" | "gmail" | "yahoo"
     host: str
     address: str
@@ -320,15 +323,24 @@ def _warm_bearer(jmap_url, token, retries=10):
     it as an OAuth access token). A SUCCESSFUL Basic request with the same base64 credential
     populates the credential cache, after which the identical blob is honoured as a Bearer
     token persistently — which is exactly the scheme ``JmapAdapter`` emits. So we prime with
-    Basic, then confirm the Bearer path is live."""
+    Basic, then confirm the Bearer path is live.
+
+    Exhausting the retries RAISES, like every other seeding step here (``_wait_for_admin``,
+    ``_ok``, ``_ManageSieve``): giving up silently would let ``_seed`` complete as if the
+    credential were warm, and the failure would resurface much later as an opaque
+    ``HTTPError: 401`` from whichever fastmail JMAP test ran first — pointing at the adapter
+    rather than at fixture setup."""
+    last = None
     for _ in range(retries):
         basic = urllib.request.Request(jmap_url, headers={"Authorization": f"Basic {token}"})
         try:
             with urllib.request.urlopen(basic, timeout=15) as r:
                 if r.status != 200:
+                    last = f"Basic HTTP {r.status}"
                     time.sleep(0.5)
                     continue
-        except (urllib.error.HTTPError, OSError):
+        except (urllib.error.HTTPError, OSError) as e:
+            last = f"Basic {e!r}"
             time.sleep(0.5)
             continue
         bearer = urllib.request.Request(
@@ -337,9 +349,13 @@ def _warm_bearer(jmap_url, token, retries=10):
             with urllib.request.urlopen(bearer, timeout=15) as r:
                 if r.status == 200:
                     return
-        except (urllib.error.HTTPError, OSError):
-            pass
+                last = f"Bearer HTTP {r.status}"
+        except (urllib.error.HTTPError, OSError) as e:
+            last = f"Bearer {e!r}"
         time.sleep(0.5)
+    raise RuntimeError(
+        f"the JMAP Bearer credential never primed after {retries} attempts "
+        f"(last={last})")
 
 
 def _basic(user, password):

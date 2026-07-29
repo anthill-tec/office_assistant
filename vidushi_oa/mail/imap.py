@@ -71,11 +71,13 @@ def _quote_mailbox_if_needed(name) -> str:
     """Double-quote a mailbox name for the wire when it contains a space (RFC 3501
     astring).
 
-    Real `imaplib.IMAP4.append` forwards the mailbox argument to the wire verbatim,
-    doing no quoting of its own, so a name carrying a space (Yahoo's `Sent Items`,
-    a `Draft Items`) breaks the `APPEND` command unquoted. Names that are already
-    valid atoms (`Sent`, `Drafts`, `[Gmail]/Drafts`) are passed through unchanged so
-    their wire form is exactly as before."""
+    Real `imaplib` forwards a mailbox argument to the wire verbatim, doing no
+    quoting of its own — `IMAP4.append` and `IMAP4.select` alike, both being plain
+    `_simple_command` calls — so a name carrying a space (Yahoo's `Sent Items`, a
+    `Draft Items`) breaks the command unquoted. Names that are already valid atoms
+    (`Sent`, `Drafts`, `[Gmail]/Drafts`) are passed through unchanged so their wire
+    form is exactly as before, and an already-quoted name is left alone so the
+    helper is idempotent."""
     if " " in name and not (name.startswith('"') and name.endswith('"')):
         return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
     return name
@@ -136,6 +138,18 @@ class ImapAdapter(MailAdapter):
             conn.select("INBOX")
             self._connection = conn
         return self._connection
+
+    def _select(self, mailbox):
+        """SELECT `mailbox` on the shared connection, quoted for the wire.
+
+        The single boundary every mailbox NAME crosses on its way to a `SELECT`.
+        `imaplib.IMAP4.select` forwards its argument verbatim exactly as `append`
+        does, so a resolved special-use name carrying a space (`Sent Items`,
+        `Draft Items`) is as broken here as it was in the `APPEND` — the server
+        parses the first word as the mailbox and rejects the rest. Routing every
+        `SELECT` through one quoting helper is what stops the next call site from
+        reintroducing it."""
+        return self._conn().select(_quote_mailbox_if_needed(mailbox))
 
     def capabilities(self) -> set:
         return set()
@@ -298,7 +312,7 @@ class ImapAdapter(MailAdapter):
                     _warn(f"APPEND to {sent!r} rejected ({typ} {_response_text(data)}); "
                           f"the sent message stays in {folder!r}")
                     return
-            conn.select(folder)
+            self._select(folder)
             typ, data = conn.uid("STORE", str(draft_id), "+FLAGS", r"(\Deleted)")
             if typ != "OK":
                 _warn(f"could not retire the {folder!r} copy of draft {draft_id} "
@@ -364,7 +378,7 @@ class ImapAdapter(MailAdapter):
         a plain-text-only message); the body is consumed in-engine only and is
         never surfaced in `Message`/the AXI mail row."""
         conn = self._conn()
-        conn.select(folder or "INBOX")
+        self._select(folder or "INBOX")
         typ, data = conn.uid("FETCH", str(uid), "(BODY[])")
         raw = None
         for item in data or []:
@@ -389,7 +403,7 @@ class ImapAdapter(MailAdapter):
         (the account's `\\Drafts` special-use mailbox when not given)."""
         conn = self._conn()
         mailbox = folder or self._drafts_mailbox_name()
-        conn.select(mailbox)
+        self._select(mailbox)
         typ, data = conn.uid("FETCH", str(draft_id), "(BODY[])")
         for item in data or []:
             if isinstance(item, tuple) and len(item) == 2:
