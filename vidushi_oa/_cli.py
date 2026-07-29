@@ -1286,9 +1286,14 @@ def cmd_mail_auth(a):
     re-register aimed at ONE field (rotating the secret, or clearing a
     ``tls_verify: false`` override on `doctor`'s advice) silently revoked send
     capability, wiped every configured alias, and reset an XOAUTH2 Gmail account to
-    ``password`` — which then builds a plain `GmailImapAdapter`. ``--send`` is
-    `store_true`, so an omitted flag cannot mean "revoke"; it only ever ADDS the
-    capability, and dropping it is a deliberate edit of the registry."""
+    ``password`` — which then builds a plain `GmailImapAdapter`.
+
+    Send capability is therefore three-valued, never two: ``--send`` grants it,
+    ``--no-send`` REVOKES it, and neither preserves whatever the account already
+    had. An omitted flag cannot mean "revoke" — that is precisely the silent
+    degradation above — so revoking is spelled explicitly, and the outbound gate
+    (`send_gate.ensure_send_capable`) stays reachable from the CLI in both
+    directions rather than needing a hand-edit of the registry."""
     from vidushi_oa.mail import accounts
     if a.provider not in _MAIL_PROVIDERS:
         out({"error": "unsupported provider", "provider": a.provider,
@@ -1304,7 +1309,8 @@ def cmd_mail_auth(a):
         out({"error": "xoauth2 auth-mode is supported for the gmail provider only",
              "provider": a.provider})
         sys.exit(1)
-    send = bool(getattr(a, "send", False)) or bool(existing.get("send", False))
+    send_flag = getattr(a, "send", None)
+    send = bool(existing.get("send", False)) if send_flag is None else bool(send_flag)
     aliases = getattr(a, "alias", None) or list(existing.get("aliases") or [])
     endpoint_raw = getattr(a, "endpoint", None)
     # `None` (flag omitted) preserves any configured override; an explicit `{}`
@@ -1409,6 +1415,7 @@ def cmd_doctor(a):
         rows.append({"account": entry.get("name"), "provider": entry.get("provider"),
                      "auth_mode": entry.get("auth_mode", "password"),
                      "kind": kind, "resolves": resolves,
+                     "send": bool(entry.get("send", False)),
                      "endpoint": ", ".join(f"{k}={endpoint[k]}"
                                            for k in sorted(endpoint)),
                      "tls_verify": bool(endpoint.get("tls_verify", True)),
@@ -1588,9 +1595,15 @@ def main():
                      help="credential reference (keyring/file). Omit to be prompted "
                           "(hidden) or to pipe the secret on stdin; it is stored under a "
                           "derived reference and never accepted as a CLI arg.")
-    mau.add_argument("--send", action="store_true", dest="send",
-                     help="grant this account SEND capability (opt-in; read-only by "
-                          "default). The send verbs refuse a non-send-capable account.")
+    send_grant = mau.add_mutually_exclusive_group()
+    send_grant.add_argument("--send", action="store_true", dest="send", default=None,
+                            help="grant this account SEND capability (opt-in; read-only "
+                                 "by default). The send verbs refuse a non-send-capable "
+                                 "account.")
+    send_grant.add_argument("--no-send", action="store_false", dest="send",
+                            help="REVOKE this account's send capability, returning it to "
+                                 "read-only. Omitting both flags on a re-registration "
+                                 "keeps whatever the account already had.")
     mau.add_argument("--alias", action="append", dest="alias", default=None,
                      help="an additional From identity for this account (a configured "
                           "Fastmail masked alias, etc.). Repeatable; the From-identity "

@@ -53,6 +53,15 @@ From-identity guard accepts the account address plus every configured alias):
 voa mail-auth --provider fastmail --address you@fastmail.com --send --alias vendor.alias@fastmail.com
 ```
 
+Re-registering an account (rotating the secret, clearing an override) is **non-destructive**: any of
+`--send` / `--alias` / `--auth-mode` / `--endpoint` you omit keeps the value already stored, so a
+one-field change never silently strips the rest. Revoking send capability is therefore explicit —
+**`--no-send`** returns the account to read-only:
+
+```bash
+voa mail-auth --provider fastmail --address you@fastmail.com --secret-ref <ref> --no-send
+```
+
 **Non-interactive / CI escape:** pipe the secret to `voa mail-auth` on **stdin** (e.g.
 `voa mail-auth --provider yahoo --address you@yahoo.com < secret.txt`) — still never pasted into the
 conversation.
@@ -60,9 +69,15 @@ conversation.
 **`--endpoint` — advanced, not part of normal setup.** Every account talks to its real provider by
 default. `--endpoint '<json>'` overrides that for **one** account, pointing it at a non-default server —
 in practice a local test emulator, not anything a user needs for their own mailbox. The JSON object takes
-any of `jmap_url` / `imap_host` / `imap_port` / `smtp_host` / `smtp_port`; whatever it omits keeps the real
-provider default, and an account registered without it is byte-for-byte unchanged. A re-run of
-`mail-auth` (or `voa doctor --fix`) that omits the flag keeps the override already configured.
+any of `jmap_url` / `imap_host` / `imap_port` / `smtp_host` / `smtp_port` / `tls_verify`; whatever it omits
+keeps the real provider default, and an account registered without it is byte-for-byte unchanged. A re-run
+of `mail-auth` (or `voa doctor --fix`) that omits the flag keeps the override already configured; pass
+`--endpoint '{}'` to clear it outright.
+
+`tls_verify: false` turns OFF certificate/hostname verification for that account's IMAP/SMTP channels and
+exists **only** for a local emulator's self-signed cert — never point a real mailbox at it. `voa doctor`
+reports each account's `endpoint` and `tls_verify` (alongside its `send` grant) and emits a remediation
+step naming the exact command that restores a verifying channel.
 
 ```bash
 voa mail-auth --provider gmail --address you@example.test \

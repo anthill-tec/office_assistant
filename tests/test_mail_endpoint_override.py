@@ -440,6 +440,62 @@ class MailAuthEndpointFlagTest(unittest.TestCase):
         self.assertEqual(entry.get("auth_mode"), "xoauth2",
                          f"re-registration must not reset the auth-mode: {entry!r}")
 
+    def test_send_capability_is_revocable_with_no_send_and_preserved_without_it(self):
+        """Carrying `send` forward must not make the grant monotonic:
+        `send_gate.ensure_send_capable` is the ONLY outbound-dispatch guard, so a
+        capability the CLI can grant but never take back would leave revoking to a
+        hand-edit of the registry. `--no-send` is the explicit counterpart; omitting
+        both flags still preserves whatever the account had."""
+        args = ("--provider", "gmail", "--address", "me@emu.test",
+                "--secret-ref", "vidushi-oa/gmail:me@emu.test",
+                "--alias", "vendor.alias@emu.test")
+        r = self._mail_auth(*args, "--send")
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+        self.assertTrue(self._entry().get("send"))
+
+        r = self._mail_auth(*args)
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+        self.assertTrue(
+            self._entry().get("send"),
+            "a re-registration naming neither flag must preserve the send grant")
+
+        r = self._mail_auth(*args, "--no-send")
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+        entry = self._entry()
+        self.assertFalse(
+            entry.get("send"),
+            f"--no-send must revoke send capability from the CLI: {entry!r}")
+        self.assertEqual(
+            entry.get("aliases"), ["vendor.alias@emu.test"],
+            f"revoking send must not disturb the rest of the account: {entry!r}")
+
+        r = self._mail_auth(*args)
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+        self.assertFalse(
+            self._entry().get("send"),
+            "a re-registration naming neither flag must preserve the revocation too")
+
+    def test_send_and_no_send_are_mutually_exclusive(self):
+        r = self._mail_auth(
+            "--provider", "gmail", "--address", "me@emu.test",
+            "--secret-ref", "vidushi-oa/gmail:me@emu.test", "--send", "--no-send")
+        self.assertNotEqual(r.returncode, 0,
+                            "--send and --no-send must not be accepted together")
+
+    def test_doctor_reports_the_per_account_send_grant(self):
+        r = self._mail_auth(
+            "--provider", "gmail", "--address", "me@emu.test",
+            "--secret-ref", "vidushi-oa/gmail:me@emu.test", "--send")
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+
+        r = subprocess.run([sys.executable, STORE, "doctor"],
+                           capture_output=True, text=True, env=self.env)
+        row = json.loads(r.stdout)["accounts"][0]
+        self.assertTrue(
+            row.get("send"),
+            f"doctor must surface the per-account send grant — `mail-accounts` only "
+            f"reports the adapter class's static capability set; got {row!r}")
+
     def test_doctor_tls_remediation_names_a_command_that_preserves_the_account(self):
         r = self._mail_auth(
             "--provider", "gmail", "--address", "me@emu.test",
