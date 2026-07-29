@@ -37,6 +37,11 @@ sqlite = ["jsonschema>=4"]
 # CI/dev test backend: a real, storable keyring so the keyring-fallback test exercises an
 # actual keyring (pointed at a hermetic temp file), not a no-op backend.
 test = ["keyrings.alt>=5"]
+# LOCAL-ONLY E2E mail tier (DN-mail-e2e-emulator-testing.md): a session-scoped
+# testcontainers fixture spins up ONE throwaway Stalwart mail server and seeds the
+# fastmail/gmail/yahoo provider profiles. Never installed in CI; the seeding uses only
+# the stdlib (imaplib/smtplib/urllib/socket), so testcontainers is the sole dependency.
+e2e = ["testcontainers>=4"]
 
 [project.urls]
 Homepage = "https://github.com/anthill-tec/office_assistant"
@@ -57,3 +62,16 @@ packages = ["vidushi_oa"]
 # `packages` already bundles vidushi_oa/schema/*.json; `artifacts` just pins the
 # packaging intent for the schema validators (a pattern set, not a source->dest map).
 artifacts = ["vidushi_oa/schema/*.json"]
+
+[tool.pytest.ini_options]
+# The `e2e` tier (tests/e2e/, DN-mail-e2e-emulator-testing.md) is a LOCAL, pre-release-only
+# smoke pass against a Dockerized Stalwart emulator — it must NEVER be part of the normal
+# test population (CI, regression, the release checklist's `pytest tests/ -q` full-suite run).
+# `addopts = -m "not e2e"` FILTERS IT OUT BY CONSTRUCTION: the default `pytest tests/` never
+# collects an e2e test. Running it is an explicit opt-in that overrides the default —
+# `pytest -m e2e` (see the `make e2e` target). The container/extra auto-skip in tests/e2e/
+# conftest.py is a secondary guard; this exclusion is the primary mechanism.
+addopts = "-m 'not e2e'"
+markers = [
+    "e2e: LOCAL-only Dockerized-emulator smoke tests (opt-in via `-m e2e`; excluded by default).",
+]
