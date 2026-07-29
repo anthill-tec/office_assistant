@@ -16,8 +16,10 @@ import re
 import smtplib
 import ssl
 import sys
+from datetime import date
 
 from vidushi_oa.mail.base import MailAdapter, Message
+from vidushi_oa.mail.query import QueryModel, parse
 
 # Header fields requested from the server for every message.
 _HEADER_FIELDS = "SUBJECT FROM TO DATE MESSAGE-ID REFERENCES IN-REPLY-TO"
@@ -471,6 +473,54 @@ class ImapAdapter(MailAdapter):
         return messages
 
 
+def _gmail_value(value: str) -> str:
+    """Render one Gmail operator value/bare term, re-quoting it when it carries
+    whitespace (or is empty) so a multi-word phrase stays ONE Gmail token."""
+    if not value or any(ch.isspace() for ch in value):
+        return f'"{value}"'
+    return value
+
+
+def compile_gmail_query(model: QueryModel, *, today: date | None = None) -> str:
+    """Compile a portable `QueryModel` into a Gmail-native `X-GM-RAW` query
+    string (CR-OA-031 §S3).
+
+    The string is **reconstructed from the model**, never echoed from the raw
+    query: `subject:`/`from:`/`to:`/`category:`/`has:attachment` are re-emitted
+    as Gmail's own operators, bare terms and phrases keep their order (phrases
+    re-quoted), implicit-AND is a single space and `OR` Gmail's own keyword.
+
+    `newer_than:` is the reason the raw string cannot simply be passed through:
+    the portable grammar accepts `d`/`w`/`m`/`y`, but Gmail's own `newer_than:`
+    has no `w` at all (a literal `1w` reaches Gmail unrecognised and matches
+    nothing), and its `m`/`y` mean *calendar* months/years rather than the
+    parser's calendar-free 30/365-day folding. The parser already resolved the
+    value to an absolute cutoff date, so this re-expresses that cutoff as a
+    plain **day** count — the one relative unit Gmail reads the same way we do.
+
+    `today` is the reference date the cutoff is measured back from; pass the
+    same value the query was parsed with so the two cannot straddle midnight.
+    """
+    reference = today if today is not None else date.today()
+    parts = []
+    if model.subject is not None:
+        parts.append(f"subject:{_gmail_value(model.subject)}")
+    if model.from_ is not None:
+        parts.append(f"from:{_gmail_value(model.from_)}")
+    if model.to is not None:
+        parts.append(f"to:{_gmail_value(model.to)}")
+    if model.category is not None:
+        parts.append(f"category:{_gmail_value(model.category)}")
+    if model.has_attachment:
+        parts.append("has:attachment")
+    if model.newer_than is not None:
+        parts.append(f"newer_than:{(reference - model.newer_than).days}d")
+    parts.extend(_gmail_value(term) for term in model.terms)
+
+    joiner = " OR " if model.operator == "OR" else " "
+    return joiner.join(parts)
+
+
 class GmailImapAdapter(ImapAdapter):
     """Gmail adapter — server-side `X-GM-RAW` search and `X-GM-THRID` threads."""
 
@@ -482,7 +532,9 @@ class GmailImapAdapter(ImapAdapter):
 
     def search(self, query, folder=None, limit=None) -> list:
         conn = self._conn()
-        escaped = query.replace("\\", "\\\\").replace('"', '\\"')
+        reference = date.today()
+        native = compile_gmail_query(parse(query, today=reference), today=reference)
+        escaped = native.replace("\\", "\\\\").replace('"', '\\"')
         typ, data = conn.uid("SEARCH", "X-GM-RAW", f'"{escaped}"')
         uids = _parse_uids(data)
         if limit is not None:
