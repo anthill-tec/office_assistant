@@ -133,10 +133,25 @@ Per path, driving the **real CLI verbs** end-to-end against the emulator:
   `fileinto "Sent"` rule reproduces Gmail's server-side sent-filing — so the *skip-the-Sent-`APPEND`* branch
   is validated end-to-end, not just asserted. A deterministic unit test additionally asserts **no** Sent
   `APPEND` is issued for a Gmail account (independent of the server).
-- **Residual (out of scope for the smoke gate, small, explicitly accepted for 1.1.1):** `X-GM-RAW` is a
-  *read/search* concern, not send/draft; **XOAUTH2 SMTP** (Workspace Gmail) needs an OAuth token endpoint →
-  stays fake-covered (continuation-response unit-tested); and a Stalwart profile is a **strong proxy, not
-  proof** against real Fastmail/Gmail production. A real-account spot-check stays optional.
+- **Gmail `X-GM-RAW` search — protocol/round-trip COVERED end-to-end; semantics real-Gmail-only** (task #68,
+  `tests/e2e/test_gmail_xgmraw_e2e.py`). Empirically (2026-07-29, `stalwartlabs/mail-server:v0.11.8-alpine`,
+  `gmail` profile): Stalwart's `CAPABILITY` does **not** advertise `X-GM-EXT-1`, and
+  `UID SEARCH X-GM-RAW "…"` is **rejected with a tagged `BAD`** (`Invalid sequence set "X-GM-RAW"…`) — as is
+  `X-GM-THRID` in a FETCH (`Invalid attribute "X-GM-THRID"`) — while a plain RFC 3501 `SEARCH` on the same
+  connection returns `OK`. A self-hosted server therefore **cannot reproduce Gmail's proprietary full-text
+  search semantics**. So the E2E test covers the maximum the emulator allows — the **client protocol/round-trip
+  path**: it drives the real `GmailImapAdapter.search` over a real implicit-TLS (verification-off) connection to
+  the live container, captures the emitted bytes off the wire, and asserts the **exact, correctly-ESCAPED**
+  `UID SEARCH X-GM-RAW "<query>"` (the CR-OA-025 quoted-phrase-escaping path, exercised with embedded quotes and
+  a backslash), and that the command genuinely round-trips — the server's own `BAD` (echoing the `X-GM-RAW`
+  token) comes back and is surfaced as `imaplib.IMAP4.error`, imaplib's structured protocol-error signal, not an
+  unhandled crash. **What it does NOT prove:** which messages a real `X-GM-RAW` query matches — Gmail's search
+  semantics remain real-Gmail-only. Surfacing a non-Gmail server's `BAD` is *correct* here (real Gmail never
+  `BAD`s a well-formed `X-GM-RAW`), so this is by design, not a client bug.
+- **Residual (out of scope for the smoke gate, small, explicitly accepted for 1.1.1):** **XOAUTH2 SMTP**
+  (Workspace Gmail) needs an OAuth token endpoint → stays fake-covered (continuation-response unit-tested);
+  and a Stalwart profile is a **strong proxy, not proof** against real Fastmail/Gmail production (this applies
+  to the `X-GM-RAW` *semantics* above too). A real-account spot-check stays optional.
 
 ## Components (deliverables)
 
