@@ -28,7 +28,10 @@ The three profiles (Decision 2):
 import base64
 import imaplib
 import json
+import shutil
 import socket
+import ssl
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -440,3 +443,368 @@ def _read_admin_password(container, timeout=60):
             return m.group(2)
         time.sleep(0.5)
     raise RuntimeError("could not read the Stalwart admin password from container logs")
+
+
+
+# ===========================================================================
+# Dovecot XOAUTH2 emulator (task #71) — the SECOND emulator tier.
+# ===========================================================================
+# WHY A SECOND SERVER. Our capability matrix is split across two emulators and
+# that split is the irreducible floor, not an accident:
+#   * Stalwart (above) speaks JMAP + IMAP + SMTP and does PLAIN/LOGIN SASL — it
+#     hosts the fastmail(JMAP)/gmail/yahoo(password) profiles. But it does NOT
+#     accept the `user=…\x01auth=Bearer …\x01\x01` XOAUTH2 SASL blob our
+#     `GmailXoauth2Adapter` emits (its bearer-SASL is OAUTHBEARER-shaped), so it
+#     cannot drive the real Workspace-XOAUTH2 read+send path.
+#   * Dovecot (here) DOES accept XOAUTH2 SASL against an RFC 7662 token
+#     introspection endpoint — but speaks no JMAP. So neither server alone covers
+#     both JMAP and XOAUTH2; two emulators is the minimum.
+#
+# TOPOLOGY. One `dovecot/dovecot:2.3-latest` container (2.3, NOT 2.4 — the config
+# syntax differs) seeds a single `gmail-xoauth2` account whose oauth2 passdb
+# introspects a tiny RFC 7662 stub; a second tiny SMTP sink receives the
+# submission relay so a full `send_draft` round-trips. The stub and the sink are
+# run as `python:3.12-alpine` containers on a shared throwaway network, reached by
+# Dovecot at the network aliases `dc-stub`/`dc-sink` — the feasibility topology.
+# (In-process HOST stdlib servers would be fewer moving parts, but this machine's
+# host firewall silently DROPS docker-bridge -> host INPUT traffic, so a container
+# cannot reach a host-gateway-published port; container-to-container on a
+# user-defined bridge is unaffected. Teardown is what matters, and it is
+# guaranteed either way.)
+#
+# TEARDOWN (hard requirement — zero leakage). All THREE containers are torn down
+# by testcontainers' managed lifecycle (the ryuk reaper) AND explicit
+# `.stop()`s; the network is removed and the generated config dir deleted in the
+# fixture's `finally`, so nothing survives session exit — on pass, failure,
+# exception or interrupt alike.
+
+DOVECOT_IMAGE = "dovecot/dovecot:2.3-latest"
+AUX_IMAGE = "python:3.12-alpine"
+DOVECOT_ADDRESS = "gmail-xoauth2@gmail.test"
+DOVECOT_TOKEN = "stub-dovecot-access-token"
+DOVECOT_IMAPS = 993
+DOVECOT_SUBMISSION = 587
+_STUB_ALIAS = "dc-stub"
+_SINK_ALIAS = "dc-sink"
+_STUB_PORT = 8080     # internal — Dovecot's oauth2 passdb POSTs here
+_SINK_PORT = 25       # internal — Dovecot's submission relay target
+
+
+@dataclass
+class DovecotEmulator:
+    """Handle onto the running Dovecot container + the account the test drives the
+    real ``GmailXoauth2Adapter`` against. ``sink`` is the SMTP-sink container: its
+    stdout logs carry each relayed message, so a test can assert delivery."""
+
+    host: str
+    imaps_port: int
+    smtp_port: int
+    address: str
+    token: str
+    sink: object
+
+
+# ---------------------------------------------------------------------------
+# The two auxiliaries, run as python:3.12-alpine containers on the shared network.
+# ---------------------------------------------------------------------------
+# RFC 7662 introspection stub: accept ANY token, vouch `active:true` for the account
+# email (`username_attribute = email`), so any stub bearer string authenticates.
+_STUB_SCRIPT = """\
+import json, os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+ACCOUNT = os.environ.get("DOVECOT_ACCOUNT", "gmail-xoauth2@gmail.test")
+class H(BaseHTTPRequestHandler):
+    def _reply(self):
+        body = json.dumps({"active": True, "email": ACCOUNT, "username": ACCOUNT,
+                           "sub": ACCOUNT, "scope": "mail", "client_id": "stub",
+                           "token_type": "Bearer", "exp": 9999999999}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", 0))
+        if n:
+            self.rfile.read(n)
+        self._reply()
+    def do_GET(self):
+        self._reply()
+    def log_message(self, *a):
+        pass
+print("STUB READY", flush=True)
+ThreadingHTTPServer(("0.0.0.0", 8080), H).serve_forever()
+"""
+
+# Dead-simple SMTP sink: accept everything, print each relayed message's DATA to
+# stdout (so the host can assert the submission truly relayed here via container logs).
+_SINK_SCRIPT = """\
+import socket, sys, threading
+def handle(conn):
+    fp = conn.makefile("rb")
+    conn.sendall(b"220 sink ESMTP\\r\\n")
+    in_data = False
+    data = []
+    for line in fp:
+        text = line.decode("latin1")
+        if in_data:
+            if text.rstrip("\\r\\n") == ".":
+                in_data = False
+                flat = "".join(data).replace(chr(13), " ").replace(chr(10), " ")
+                sys.stdout.write("SINK-RECEIVED " + flat + "\\n")
+                sys.stdout.flush()
+                data = []
+                conn.sendall(b"250 2.0.0 Ok: queued\\r\\n")
+            else:
+                data.append(text)
+            continue
+        up = text.upper()
+        if up.startswith(("EHLO", "HELO")):
+            conn.sendall(b"250-sink\\r\\n250 SIZE 100000000\\r\\n")
+        elif up.startswith("MAIL"):
+            conn.sendall(b"250 2.1.0 Ok\\r\\n")
+        elif up.startswith("RCPT"):
+            conn.sendall(b"250 2.1.5 Ok\\r\\n")
+        elif up.startswith("DATA"):
+            conn.sendall(b"354 End data with <CR><LF>.<CR><LF>\\r\\n")
+            in_data = True
+        elif up.startswith("RSET"):
+            conn.sendall(b"250 2.0.0 Ok\\r\\n")
+        elif up.startswith("QUIT"):
+            conn.sendall(b"221 2.0.0 Bye\\r\\n")
+            break
+        else:
+            conn.sendall(b"250 2.0.0 Ok\\r\\n")
+    conn.close()
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("0.0.0.0", 25))
+s.listen(5)
+print("SINK READY", flush=True)
+while True:
+    c, _ = s.accept()
+    threading.Thread(target=handle, args=(c,), daemon=True).start()
+"""
+
+
+# ---------------------------------------------------------------------------
+# Config generation (a throwaway self-signed cert + the two Dovecot conf files
+# + the two auxiliary scripts), all mounted read-only into the containers.
+# ---------------------------------------------------------------------------
+_DOVECOT_CONF = """\
+mail_home=/tmp/vmail/%Lu
+mail_location=maildir:~/Maildir
+mail_uid=1000
+mail_gid=1000
+
+protocols = imap submission
+
+first_valid_uid = 1000
+last_valid_uid = 1000
+
+auth_mechanisms = plain login xoauth2
+auth_verbose = yes
+
+passdb {{
+  driver = oauth2
+  mechanisms = xoauth2
+  args = /etc/dovecot/dovecot-oauth2.conf.ext
+}}
+
+userdb {{
+  driver = static
+  args = uid=1000 gid=1000 home=/tmp/vmail/%Lu allow_all_users=yes
+}}
+
+ssl=yes
+ssl_cert=</etc/dovecot/cert.pem
+ssl_key=</etc/dovecot/key.pem
+
+namespace inbox {{
+  inbox = yes
+  separator = /
+  mailbox Drafts {{
+    special_use = \\Drafts
+    auto = subscribe
+  }}
+  mailbox Sent {{
+    special_use = \\Sent
+    auto = subscribe
+  }}
+}}
+
+service imap-login {{
+  inet_listener imap {{
+    port = 143
+  }}
+  inet_listener imaps {{
+    port = 993
+    ssl = yes
+  }}
+  process_min_avail = 1
+}}
+
+service submission-login {{
+  inet_listener submission {{
+    port = 587
+  }}
+  process_min_avail = 1
+}}
+
+# Relay submitted mail to the sink container so a full send_draft round-trips.
+submission_relay_host = {sink_alias}
+submission_relay_port = {sink_port}
+submission_relay_ssl = no
+submission_relay_trusted = yes
+submission_relay_max_idle_time = 30s
+hostname = dovecot.test
+login_greeting = dovecot-xoauth2 ready
+
+listen = *
+log_path=/dev/stdout
+info_log_path=/dev/stdout
+"""
+
+_DOVECOT_OAUTH2_CONF = """\
+introspection_url = http://{stub_alias}:{stub_port}/introspect
+introspection_mode = post
+force_introspection = yes
+username_attribute = email
+active_attribute = active
+active_value = true
+tls_allow_invalid_cert = yes
+"""
+
+
+def _write_dovecot_config(config_dir):
+    """Write the Dovecot conf files, the two auxiliary scripts, and a throwaway
+    self-signed cert into ``config_dir``. The cert is generated per session with
+    ``openssl`` — nothing is committed, and the client verifies with
+    ``tls_verify=False``, so the cert only needs to parse."""
+    files = {
+        "dovecot.conf": _DOVECOT_CONF.format(sink_alias=_SINK_ALIAS, sink_port=_SINK_PORT),
+        "dovecot-oauth2.conf.ext": _DOVECOT_OAUTH2_CONF.format(
+            stub_alias=_STUB_ALIAS, stub_port=_STUB_PORT),
+        "stub.py": _STUB_SCRIPT,
+        "sink.py": _SINK_SCRIPT,
+    }
+    for name, content in files.items():
+        with open(f"{config_dir}/{name}", "w", encoding="utf-8") as fh:
+            fh.write(content)
+    import subprocess
+
+    proc = subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+         "-subj", "/CN=dovecot.test",
+         "-keyout", f"{config_dir}/key.pem", "-out", f"{config_dir}/cert.pem"],
+        capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"openssl cert generation failed: {proc.stderr.decode(errors='replace')}")
+
+
+def _wait_for_log(container, marker, timeout=60):
+    """Block until ``marker`` appears in ``container``'s logs (its readiness line)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        stdout, stderr = container.get_logs()
+        if marker in (stdout + stderr).decode(errors="replace"):
+            return
+        time.sleep(0.5)
+    raise RuntimeError(f"{marker!r} not seen in container logs within {timeout}s")
+
+
+def _wait_for_imaps(host, port, timeout=60):
+    """Block until the container's IMAPS listener answers with an ``* OK`` banner."""
+    deadline = time.time() + timeout
+    context = ssl._create_unverified_context()
+    last = None
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=5) as raw:
+                with context.wrap_socket(raw, server_hostname=host) as tls:
+                    tls.settimeout(5)
+                    banner = tls.recv(128)
+                    if banner.startswith(b"* OK"):
+                        return
+                    last = banner
+        except (OSError, ssl.SSLError) as e:
+            last = e
+        time.sleep(0.5)
+    raise RuntimeError(f"Dovecot IMAPS not ready within {timeout}s (last={last!r})")
+
+
+# ---------------------------------------------------------------------------
+# The session-scoped fixture
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="session")
+def dovecot_xoauth2_emulator():
+    """Start the Dovecot container + its introspection-stub and SMTP-sink containers
+    on one throwaway network, yield a :class:`DovecotEmulator`, then GUARANTEE
+    teardown of all three containers, the network and the config dir on session exit.
+
+    Auto-skips (secondary guard) when the ``[e2e]`` extra or a reachable Docker daemon
+    is absent — the primary exclusion is ``addopts = -m "not e2e"``."""
+    testcontainers = pytest.importorskip(
+        "testcontainers.core.container",
+        reason="the [e2e] extra (testcontainers) is not installed")
+    from testcontainers.core.network import Network
+    DockerContainer = testcontainers.DockerContainer
+
+    network = None
+    stub = None
+    sink = None
+    dovecot = None
+    config_dir = None
+    try:
+        config_dir = tempfile.mkdtemp(prefix="dovecot-xoauth2-")
+        _write_dovecot_config(config_dir)
+
+        network = Network()
+        try:
+            network.create()
+        except Exception as e:  # noqa: BLE001 — any docker-side failure means "skip locally"
+            pytest.skip(f"Docker unavailable for the Dovecot E2E emulator: {e!r}")
+
+        stub = (DockerContainer(AUX_IMAGE)
+                .with_command("python /aux/stub.py")
+                .with_env("DOVECOT_ACCOUNT", DOVECOT_ADDRESS)
+                .with_volume_mapping(config_dir, "/aux", "ro")
+                .with_network(network).with_network_aliases(_STUB_ALIAS))
+        sink = (DockerContainer(AUX_IMAGE)
+                .with_command("python /aux/sink.py")
+                .with_volume_mapping(config_dir, "/aux", "ro")
+                .with_network(network).with_network_aliases(_SINK_ALIAS))
+        dovecot = (DockerContainer(DOVECOT_IMAGE)
+                   .with_exposed_ports(DOVECOT_IMAPS, DOVECOT_SUBMISSION)
+                   .with_volume_mapping(config_dir, "/etc/dovecot", "ro")
+                   .with_network(network))
+        try:
+            stub.start()
+            sink.start()
+            dovecot.start()
+        except Exception as e:  # noqa: BLE001
+            pytest.skip(f"Docker unavailable for the Dovecot E2E emulator: {e!r}")
+
+        _wait_for_log(stub, "STUB READY")
+        _wait_for_log(sink, "SINK READY")
+        host = dovecot.get_container_host_ip()
+        imaps_port = int(dovecot.get_exposed_port(DOVECOT_IMAPS))
+        smtp_port = int(dovecot.get_exposed_port(DOVECOT_SUBMISSION))
+        _wait_for_imaps(host, imaps_port)
+        yield DovecotEmulator(host=host, imaps_port=imaps_port, smtp_port=smtp_port,
+                              address=DOVECOT_ADDRESS, token=DOVECOT_TOKEN, sink=sink)
+    finally:
+        for container in (dovecot, sink, stub):
+            if container is not None:
+                try:
+                    container.stop()
+                except Exception:  # noqa: BLE001 — teardown must never mask a test error
+                    pass
+        if network is not None:
+            try:
+                network.remove()
+            except Exception:  # noqa: BLE001
+                pass
+        if config_dir is not None:
+            shutil.rmtree(config_dir, ignore_errors=True)

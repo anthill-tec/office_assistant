@@ -59,6 +59,21 @@ config:
   **end-to-end** (send → we skip the `APPEND` → the server's Sieve files it to Sent → assert it is in Sent),
   not merely asserted.
 - **`yahoo` profile** — a plain **RFC 3501 IMAP+SMTP** account, standard folder names; the generic IMAP path.
+- **`gmail-xoauth2` profile — a SECOND emulator, Dovecot** (`dovecot/dovecot:2.3-latest`, task #71,
+  `tests/e2e/test_gmail_xoauth2_e2e.py`). A single account whose **oauth2 passdb** introspects an RFC 7662
+  stub; drives the real `GmailXoauth2Adapter` XOAUTH2 SASL on **both** channels — IMAPS login and SMTP
+  submission (STARTTLS → `AUTH XOAUTH2` → relay to a sink).
+
+**Capability split — why two emulators is the irreducible floor.** Stalwart speaks **JMAP + IMAP + SMTP** and
+does **PLAIN/LOGIN** SASL, so it hosts the fastmail(JMAP)/gmail/yahoo(password) profiles — but it does **not**
+accept the `user=…\x01auth=Bearer …\x01\x01` **XOAUTH2** blob our `GmailXoauth2Adapter` emits (its bearer-SASL
+is OAUTHBEARER-shaped). **Dovecot** *does* accept XOAUTH2 SASL against an introspection endpoint — but speaks
+**no JMAP**. Neither server alone covers both JMAP and XOAUTH2, so **the tier runs two emulators**: Stalwart for
+JMAP + password IMAP/SMTP, Dovecot for XOAUTH2 IMAP/SMTP. (The Dovecot tier runs the stub introspection
+endpoint + SMTP sink as two tiny `python:3.12-alpine` containers on a shared throwaway network — reached at
+network aliases — because this host's firewall drops docker-bridge → host traffic, ruling out in-process
+host-gateway auxiliaries; all three containers + the network are torn down on session exit, ryuk-reaped, zero
+leakage.)
 
 Each test targets its profile's account + endpoint. **Supersedes the earlier Cyrus split:** for **smoke
 tests**, Stalwart is a real, compliant JMAP server, and the round-1-class defect (`Email/set $draft` vs
@@ -148,10 +163,23 @@ Per path, driving the **real CLI verbs** end-to-end against the emulator:
   unhandled crash. **What it does NOT prove:** which messages a real `X-GM-RAW` query matches — Gmail's search
   semantics remain real-Gmail-only. Surfacing a non-Gmail server's `BAD` is *correct* here (real Gmail never
   `BAD`s a well-formed `X-GM-RAW`), so this is by design, not a client bug.
-- **Residual (out of scope for the smoke gate, small, explicitly accepted for 1.1.1):** **XOAUTH2 SMTP**
-  (Workspace Gmail) needs an OAuth token endpoint → stays fake-covered (continuation-response unit-tested);
-  and a Stalwart profile is a **strong proxy, not proof** against real Fastmail/Gmail production (this applies
-  to the `X-GM-RAW` *semantics* above too). A real-account spot-check stays optional.
+- **Workspace-Gmail XOAUTH2 IMAP + SMTP — now COVERED end-to-end (via Dovecot)** (task #71,
+  `tests/e2e/test_gmail_xoauth2_e2e.py`, the `gmail-xoauth2` profile). This was the round-1 residual (XOAUTH2
+  needs an OAuth token endpoint); it is now driven end-to-end against a live **Dovecot** container whose oauth2
+  passdb introspects an RFC 7662 stub. The real, unmodified `GmailXoauth2Adapter` authenticates with the
+  `XOAUTH2` SASL mechanism — its own `_xoauth2_raw` blob — on **both** channels: (a) IMAPS login (proved via
+  `list_folders()` over a real implicit-TLS connection) and (b) SMTP submission (`create_draft` APPEND →
+  `send_draft`: STARTTLS → EHLO → `AUTH XOAUTH2` → `sendmail`), with Dovecot relaying the accepted submission
+  to an SMTP sink that confirms delivery. The **only** stub is the OAuth token *provider* (a zero-network
+  callable) — minting a real Google access token needs a live token endpoint, orthogonal to what this tier
+  validates. Stalwart could not host this path (it does not accept our XOAUTH2 SASL blob), which is why the
+  tier runs a second emulator (see Decision 2 "Capability split").
+- **Residual — Gmail `X-GM-RAW` / `X-GM-THRID` search SEMANTICS (exhausted; no emulator can cover it):** these
+  two Gmail-proprietary extensions are implemented by **neither** candidate — Stalwart `BAD`s both (above) and
+  Hoodiecrow (the other mock IMAP considered) implements neither — so no self-hosted server can reproduce which
+  messages a real query matches. The client protocol/round-trip path **is** covered (above); the semantics
+  remain real-Gmail-only and are the accepted residual. A Stalwart/Dovecot profile is a **strong proxy, not
+  proof** against real Fastmail/Gmail production; a real-account spot-check stays optional.
 
 ## Components (deliverables)
 
