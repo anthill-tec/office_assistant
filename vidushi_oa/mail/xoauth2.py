@@ -82,10 +82,11 @@ class GmailXoauth2Adapter(GmailImapAdapter):
 
     def __init__(self, account, source_tag, host, user, access_token, port=993,
                  conn_factory=None, smtp_host=None,
-                 smtp_port=_SMTP_SUBMISSION_PORT):
+                 smtp_port=_SMTP_SUBMISSION_PORT, tls_verify=True):
         super().__init__(account, source_tag, host, user, password="",
                          port=port, conn_factory=conn_factory,
-                         smtp_host=smtp_host, smtp_port=smtp_port)
+                         smtp_host=smtp_host, smtp_port=smtp_port,
+                         tls_verify=tls_verify)
         self.access_token = access_token
         self._resolved_token = None
 

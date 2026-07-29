@@ -52,7 +52,7 @@ def test_fastmail_bearer_token_is_rejected_when_wrong(stalwart_emulator):
     """The JMAP endpoint genuinely authenticates (a bogus Bearer is refused, not waved
     through) — so the 200 above is real auth, not an open endpoint."""
     fm = stalwart_emulator.profiles["fastmail"]
-    bogus = base64.b64encode(b"fastmail@emu.test:wrong").decode()
+    bogus = base64.b64encode(b"fastmail@emumail.org:wrong").decode()
     req = urllib.request.Request(fm.jmap_url, headers={"Authorization": f"Bearer {bogus}"})
     with pytest.raises(urllib.error.HTTPError) as exc:
         urllib.request.urlopen(req, timeout=15)

@@ -14,6 +14,7 @@ import email.utils
 import imaplib
 import re
 import smtplib
+import ssl
 import sys
 
 from vidushi_oa.mail.base import MailAdapter, Message
@@ -58,7 +59,26 @@ def imap_endpoint_kwargs(endpoint, default_host):
         kwargs["smtp_host"] = endpoint["smtp_host"]
     if endpoint.get("smtp_port"):
         kwargs["smtp_port"] = endpoint["smtp_port"]
+    # TLS verification defaults ON; only the explicit `tls_verify: false` opt-out
+    # (the emulator's self-signed cert) is threaded through — an absent key keeps
+    # the verifying default so a real account is byte-for-byte unchanged.
+    if "tls_verify" in endpoint:
+        kwargs["tls_verify"] = endpoint["tls_verify"]
     return host, kwargs
+
+
+def _quote_mailbox_if_needed(name) -> str:
+    """Double-quote a mailbox name for the wire when it contains a space (RFC 3501
+    astring).
+
+    Real `imaplib.IMAP4.append` forwards the mailbox argument to the wire verbatim,
+    doing no quoting of its own, so a name carrying a space (Yahoo's `Sent Items`,
+    a `Draft Items`) breaks the `APPEND` command unquoted. Names that are already
+    valid atoms (`Sent`, `Drafts`, `[Gmail]/Drafts`) are passed through unchanged so
+    their wire form is exactly as before."""
+    if " " in name and not (name.startswith('"') and name.endswith('"')):
+        return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return name
 
 
 class ImapAdapter(MailAdapter):
@@ -70,14 +90,18 @@ class ImapAdapter(MailAdapter):
     server_files_sent_copy = False
 
     def __init__(self, account, source_tag, host, user, password, port=993,
-                 conn_factory=None, smtp_host=None, smtp_port=_SMTP_SUBMISSION_PORT):
+                 conn_factory=None, smtp_host=None, smtp_port=_SMTP_SUBMISSION_PORT,
+                 tls_verify=True):
         self.account = account
         self.source_tag = source_tag
         self.host = host
         self.user = user
         self.password = password
         self.port = port
-        self._factory = conn_factory or (lambda h, p: imaplib.IMAP4_SSL(h, p))
+        # Verify the server certificate/hostname by default (real Gmail/Yahoo/
+        # Fastmail); `tls_verify=False` is the explicit emulator-only opt-out.
+        self.tls_verify = tls_verify
+        self._factory = conn_factory or self._default_conn_factory
         self._connection = None
         self._sent_mailbox = None
         self._drafts_mailbox = None
@@ -86,6 +110,23 @@ class ImapAdapter(MailAdapter):
         self.smtp_host = smtp_host or (
             "smtp." + host[len("imap."):] if host.startswith("imap.") else host)
         self.smtp_port = smtp_port
+
+    def _default_conn_factory(self, host, port):
+        """The default IMAP socket factory: `imaplib.IMAP4_SSL` handed a real,
+        VERIFYING `ssl` context (CERT_REQUIRED + hostname check) — the stdlib's own
+        default context is CERT_NONE, so passing one is what makes the channel
+        actually authenticate the server."""
+        return imaplib.IMAP4_SSL(host, port, ssl_context=self._ssl_context())
+
+    def _ssl_context(self) -> ssl.SSLContext:
+        """A verifying TLS context by default (`ssl.create_default_context()` —
+        CERT_REQUIRED, `check_hostname=True`), or a non-verifying one when
+        `tls_verify` is False (the emulator's self-signed-cert opt-out). Shared by
+        the IMAP socket factory and the SMTP `STARTTLS` upgrade so both channels
+        honour the same policy."""
+        if self.tls_verify:
+            return ssl.create_default_context()
+        return ssl._create_unverified_context()
 
     def _conn(self):
         """Create the connection once, then return the cached one."""
@@ -133,7 +174,7 @@ class ImapAdapter(MailAdapter):
         successful draft whose id is the server's error text. The tagged status is
         checked and a rejection raised structurally, mirroring the JMAP path."""
         conn = self._conn()
-        mailbox = folder or self._drafts_mailbox_name()
+        mailbox = _quote_mailbox_if_needed(folder or self._drafts_mailbox_name())
         typ, data = conn.append(mailbox, r"(\Draft)", None, raw_rfc822)
         if typ != "OK":
             raise RuntimeError(
@@ -188,7 +229,7 @@ class ImapAdapter(MailAdapter):
             email.utils.make_msgid(domain=self.smtp_host)
         smtp = smtplib.SMTP(self.smtp_host, self.smtp_port)
         try:
-            smtp.starttls()
+            smtp.starttls(context=self._ssl_context())
             smtp.ehlo_or_helo_if_needed()
             self._smtp_login(smtp)
             smtp.sendmail(from_addr, recipients, raw_bytes)
@@ -251,7 +292,8 @@ class ImapAdapter(MailAdapter):
                 if not sent:
                     _warn(f"no \\Sent mailbox found; the sent message stays in {folder!r}")
                     return
-                typ, data = conn.append(sent, r"(\Seen)", None, raw_bytes)
+                typ, data = conn.append(
+                    _quote_mailbox_if_needed(sent), r"(\Seen)", None, raw_bytes)
                 if typ != "OK":
                     _warn(f"APPEND to {sent!r} rejected ({typ} {_response_text(data)}); "
                           f"the sent message stays in {folder!r}")

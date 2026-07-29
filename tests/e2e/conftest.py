@@ -40,7 +40,12 @@ import pytest
 # Configuration knobs
 # ---------------------------------------------------------------------------
 STALWART_IMAGE = "stalwartlabs/mail-server:v0.11.8-alpine"
-EMU_DOMAIN = "emu.test"
+# A non-reserved TLD on purpose: Stalwart rejects the RFC 2606 `.test` TLD as an
+# "invalid e-mail address" for a JMAP Identity (and auto-creates none for it), which
+# blocks `EmailSubmission/set` — RFC 8621 §7.1 makes `identityId` required, and the
+# JMAP send path resolves it via `Identity/get`. With a normal TLD Stalwart
+# auto-provisions the account's identity, so the fastmail JMAP send round-trip works.
+EMU_DOMAIN = "emumail.org"
 # submission / IMAP / JMAP-HTTP-admin+API + ManageSieve (the last is needed ONLY to seed the
 # gmail per-account Sieve script). Seeding + test assertions use PLAINTEXT IMAP 143; the
 # real `voa` IMAP round-trip uses IMAPS 993 (implicit TLS) because `ImapAdapter` dials
@@ -63,7 +68,7 @@ _ACCOUNTS = {
 # "Sent", mirroring Gmail's server-side sent-filing (so our send path need not APPEND).
 _GMAIL_SIEVE = (
     'require ["fileinto"];\n'
-    'if header :contains "from" "gmail@emu.test" { fileinto "Sent"; }\n'
+    f'if header :contains "from" "gmail@{EMU_DOMAIN}" {{ fileinto "Sent"; }}\n'
 )
 
 
@@ -87,12 +92,15 @@ class Profile:
         """The ``endpoint`` override object (Decision 3) for this profile.
 
         The IMAP override points at the IMAPS (993) implicit-TLS port, not plaintext
-        143: ``ImapAdapter`` dials ``imaplib.IMAP4_SSL``. Its stdlib context does not
-        verify the cert, so Stalwart's self-signed cert needs no CA/trust setup."""
+        143: ``ImapAdapter`` dials ``imaplib.IMAP4_SSL``. ``tls_verify: false`` is the
+        explicit opt-out the emulator needs: the adapter now verifies the server
+        certificate/hostname by default, and Stalwart presents a self-signed cert, so
+        without the opt-out the IMAP/SMTP TLS handshake would be rejected."""
         if self.provider == "fastmail":
             return {"jmap_url": self.jmap_url}
         return {"imap_host": self.host, "imap_port": self.imaps_port,
-                "smtp_host": self.host, "smtp_port": self.smtp_port}
+                "smtp_host": self.host, "smtp_port": self.smtp_port,
+                "tls_verify": False}
 
 
 @dataclass
@@ -229,6 +237,13 @@ def _seed(emu: Emulator):
         ["imap.auth.allow-plain-text", "true"],
         ["session.auth.mechanisms", "[plain, login]"],
         ["server.hostname", emu.container_ip],
+        # Let an authenticated account send from its own address over the JMAP
+        # `EmailSubmission` relay. Stalwart's default sender-authorization rejects
+        # the MAIL-FROM ("501 5.5.4 You are not allowed to send from this address")
+        # on the JMAP submission path even for the account's own identity address
+        # (the SMTP-587 submission path the gmail/yahoo profiles use is unaffected),
+        # which would otherwise fail the fastmail JMAP send round-trip.
+        ["session.auth.must-match-sender", "false"],
     ]
     status, payload = _admin_call(base, auth, "POST", "/api/settings",
                                   [{"type": "insert", "prefix": None,

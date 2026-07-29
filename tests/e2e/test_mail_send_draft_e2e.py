@@ -252,18 +252,11 @@ def test_fastmail_jmap_draft_round_trip(stalwart_emulator, tmp_path):
     assert body in text, text
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "REAL adapter bug this tier exists to catch (round-1-class divergence): "
-    "vidushi_oa/mail/jmap.py JmapAdapter.send_draft builds EmailSubmission/set with only "
-    "{emailId} and never resolves an Identity, but RFC 8621 §7 makes `identityId` a "
-    "required property of EmailSubmission. A spec-compliant server (Stalwart) rejects the "
-    "submission: invalidProperties [emailId, identityId] 'emailId and identityId "
-    "properties are required.'. It only works against Fastmail, which leniently assigns a "
-    "default identity. FIX: Identity/get the account's identity for the From address and "
-    "include identityId in the create; then remove this xfail (strict -> XPASS flags it)."))
 def test_fastmail_jmap_send_round_trip_moves_to_sent(stalwart_emulator, tmp_path):
     """`voa mail-send` -> EmailSubmission + onSuccessUpdateEmail moves the message to Sent
-    and clears $draft/Drafts. Currently xfails on the missing-identityId adapter bug."""
+    and clears $draft/Drafts. The adapter now resolves the account identity via
+    Identity/get and includes `identityId` in the submission (RFC 8621 §7.1), so a
+    spec-compliant Stalwart accepts it."""
     fm = stalwart_emulator.profiles["fastmail"]
     env = _voa_env(tmp_path)
     account = _register(env, fm)
