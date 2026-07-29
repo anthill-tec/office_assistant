@@ -109,8 +109,12 @@ entry (`accounts.add_account`), stored **only when truthy** so a real account's 
 byte-identical and carried forward across a re-registration; `mail-auth --endpoint '<json>'` sets it;
 `imap_endpoint_kwargs` (`mail/imap.py`) is the single mapping into the IMAP/SMTP adapters, `fastmail_adapter`
 maps `jmap_url` onto `JmapAdapter.session_url`, and `build_client` layers `VIDUSHI_MAIL_ENDPOINTS` (ignored
-with a warning when malformed) over the persisted value. The **no-real-account-regression** invariant is
-asserted across every adapter by `tests/test_mail_endpoint_override.py`. User-facing setup guidance lives in
+with a warning when malformed) over the persisted value — the precedence `voa doctor` also reports through,
+so a diagnostic can never describe a channel other than the one the adapters dial. The endpoint object also
+carries the `tls_verify` opt-out this tier's self-signed certs need (owned by
+[DN-mail-access.md](DN-mail-access.md) §Decision 7 as-built — never point a real mailbox at it). The
+**no-real-account-regression** invariant is asserted across every adapter by
+`tests/test_mail_endpoint_override.py`. User-facing setup guidance lives in
 [`skills/vidushi-oa/references/mail-setup.md`](../../skills/vidushi-oa/references/mail-setup.md).
 
 ## Decision 4 — lifecycle: `testcontainers`, session-scoped
@@ -136,6 +140,11 @@ Per path, driving the **real CLI verbs** end-to-end against the emulator:
   SMTP + safe-gated Sent `APPEND`/de-draft). Assert the returned message id.
 - **Safe-gate (IMAP).** Configure the emulator to refuse the Sent `APPEND` (or advertise no `\Sent`) →
   assert the draft is **retained untouched**, never expunged (the data-loss guard).
+- **Partial recipient refusal (IMAP/SMTP).** Address a draft to one deliverable emulator mailbox and one
+  the server rejects — the case `smtplib.sendmail` reports as a quiet per-recipient dict rather than an
+  exception, which no fake can force a real server to produce → assert `mail-send` exits non-zero with a
+  structured error naming the refused address and leaves the draft in Drafts (contract in
+  [DN-mail-access.md](DN-mail-access.md) §Decision 7 as-built).
 - **Special-use resolution.** Configure the emulator to name its drafts folder non-literally and advertise
   the `\Drafts` attribute → assert resolution via the attribute (exercises the `[Gmail]/Drafts` /
   `Draft` fallback code paths).

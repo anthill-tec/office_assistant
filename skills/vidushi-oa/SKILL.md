@@ -76,7 +76,9 @@ send-capable at `mail-auth` time, and `mail-send` refuses one that is not — se
   **threaded** reply to a `mail-get`-fetched message.
 - **`voa mail-send`** — dispatches **only that identified draft** and files it to Sent. **Take the exact
   command from the draft's `next[]`** (the CLI returns `mail-send --account <a> --draft <id>` — don't
-  hand-assemble the flags), and run it **only after the user explicitly says to send.**
+  hand-assemble the flags), and run it **only after the user explicitly says to send.** A send the server
+  accepted for only *some* recipients **fails** (non-zero, a structured error naming each refused address)
+  and leaves the draft in Drafts — never report it as sent; fix or drop those addresses and send again.
 
 The user files mail into folders (`Subscriptions`, `Shipping`, `Purchases`, `Electronics/*`) and
 uses **per-merchant masked aliases** on Fastmail, so the recipient alias is a reliable provider key;

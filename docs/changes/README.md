@@ -189,8 +189,13 @@ hardened the CR-022 send/draft path (JMAP blob-upload + `Email/import` so a draf
 content, CRLF-serialized bytes, sent mail filed in Sent with the de-draft gated on a confirmed Sent copy,
 Sent/Drafts resolved by RFC 6154 special-use, SMTP submission authenticated over `XOAUTH2` for Workspace
 accounts that carry no password — and closed on every path, the verified-recipient guard extended to `--cc`
-and to every address of a recipient list) plus CR-028's live-failure errors and mapper fix and CR-029's
-repo-wide personal-Gmail purge.
+and to every address of a recipient list, a partially refused SMTP submission raised as the failure it is
+instead of reported as sent, and the draft-then-confirm chain carried by the AXI #9 `next[]` hint) plus
+CR-028's live-failure errors and mapper fix and CR-029's repo-wide personal-Gmail purge. The same run also
+added the LOCAL-ONLY **E2E emulator tier** and the per-account endpoint override it needs
+([`../research/DN-mail-e2e-emulator-testing.md`](../research/DN-mail-e2e-emulator-testing.md)) — design-note
+driven, no CR — which caught three further defects the fakes could not, including **unverified IMAP/SMTP TLS**
+shipped in 1.1.0.
 
 **Recommended order:** 001 → 002 → 003 → **006 → 004** → 005 → 007 → 009 → 008.
 (2026-07-11: 006 pulled ahead of 004 — after the CRUD refactor the Mongo store is empty and the
