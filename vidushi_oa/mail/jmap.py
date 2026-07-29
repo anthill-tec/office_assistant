@@ -479,6 +479,7 @@ class JmapAdapter(MailAdapter):
             to=_format_address(item.get("to")),
             date=item.get("receivedAt", ""),
             thread_id=item.get("threadId"),
+            uid=item.get("id"),
         )
         message.delivered_to = _header_all_to_str(item.get(_DELIVERED_TO_HEADER))
         return message
