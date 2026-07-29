@@ -1,18 +1,26 @@
-"""Session-scoped Dockerized-emulator fixture for the LOCAL mail E2E tier.
+"""Session-scoped Dockerized-emulator fixtures for the LOCAL mail E2E tier.
 
 Design of record: ``docs/research/DN-mail-e2e-emulator-testing.md`` (Decisions 1, 2, 4
-and "Borrowed Docker configs"). This module spins up ONE throwaway Stalwart mail server
-(`stalwartlabs/mail-server`) via ``testcontainers``, seeds THREE provider profiles that
-mimic each provider's observable behaviour, yields their connection details, and tears the
-container down after the session.
+and "Borrowed Docker configs"). The tier's capability matrix is split across TWO
+throwaway emulators, both driven via ``testcontainers`` and both torn down after the
+session — the split is the irreducible floor, since neither server covers both halves:
+
+* ``stalwart_emulator`` — ONE Stalwart mail server (`stalwartlabs/mail-server`) speaking
+  **JMAP + IMAP/SMTP with PLAIN/LOGIN SASL**, seeded with the three password/JMAP
+  provider profiles below.
+* ``dovecot_xoauth2_emulator`` — a Dovecot 2.3 container (plus an RFC 7662
+  introspection-stub container and an SMTP-sink container on a shared throwaway network)
+  serving the fourth, ``gmail-xoauth2`` profile: the **XOAUTH2** IMAP+SMTP auth path,
+  which Stalwart cannot accept. See the "Dovecot XOAUTH2 emulator" section below.
 
 Nothing here runs in CI. The whole tier is excluded from the default test population by
 ``addopts = -m "not e2e"`` (pyproject) and additionally auto-skips when Docker or the
-``[e2e]`` extra is absent (the ``stalwart_emulator`` fixture below). Seeding uses only the
-stdlib (``imaplib`` / ``smtplib`` / ``urllib`` / ``socket``) so the sole extra dependency is
+``[e2e]`` extra is absent (both fixtures below; the Dovecot one also needs the ``openssl``
+CLI for its throwaway cert and skips without it). Seeding uses only the stdlib
+(``imaplib`` / ``smtplib`` / ``urllib`` / ``socket``) so the sole extra dependency is
 ``testcontainers`` itself.
 
-The three profiles (Decision 2):
+The three Stalwart profiles (Decision 2):
 
 * ``fastmail`` — a JMAP account. Its session resource is Stalwart's ``/.well-known/jmap``;
   the account authenticates with ``Authorization: Bearer <base64(address:password)>`` — which
@@ -31,6 +39,7 @@ import json
 import shutil
 import socket
 import ssl
+import subprocess
 import tempfile
 import time
 import urllib.error
@@ -486,6 +495,9 @@ DOVECOT_IMAPS = 993
 DOVECOT_SUBMISSION = 587
 _STUB_ALIAS = "dc-stub"
 _SINK_ALIAS = "dc-sink"
+# Single source of truth for the aux-service ports: these render Dovecot's
+# `introspection_url` / `submission_relay_port` AND are handed to the embedded scripts
+# as env vars (`STUB_PORT` / `SINK_PORT`), so the two ends can never drift apart.
 _STUB_PORT = 8080     # internal — Dovecot's oauth2 passdb POSTs here
 _SINK_PORT = 25       # internal — Dovecot's submission relay target
 
@@ -512,7 +524,8 @@ class DovecotEmulator:
 _STUB_SCRIPT = """\
 import json, os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-ACCOUNT = os.environ.get("DOVECOT_ACCOUNT", "gmail-xoauth2@gmail.test")
+ACCOUNT = os.environ["DOVECOT_ACCOUNT"]
+PORT = int(os.environ["STUB_PORT"])
 class H(BaseHTTPRequestHandler):
     def _reply(self):
         body = json.dumps({"active": True, "email": ACCOUNT, "username": ACCOUNT,
@@ -532,14 +545,16 @@ class H(BaseHTTPRequestHandler):
         self._reply()
     def log_message(self, *a):
         pass
+server = ThreadingHTTPServer(("0.0.0.0", PORT), H)
 print("STUB READY", flush=True)
-ThreadingHTTPServer(("0.0.0.0", 8080), H).serve_forever()
+server.serve_forever()
 """
 
 # Dead-simple SMTP sink: accept everything, print each relayed message's DATA to
 # stdout (so the host can assert the submission truly relayed here via container logs).
 _SINK_SCRIPT = """\
-import socket, sys, threading
+import os, socket, sys, threading
+PORT = int(os.environ["SINK_PORT"])
 def handle(conn):
     fp = conn.makefile("rb")
     conn.sendall(b"220 sink ESMTP\\r\\n")
@@ -578,7 +593,7 @@ def handle(conn):
     conn.close()
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(("0.0.0.0", 25))
+s.bind(("0.0.0.0", PORT))
 s.listen(5)
 print("SINK READY", flush=True)
 while True:
@@ -678,9 +693,10 @@ tls_allow_invalid_cert = yes
 
 def _write_dovecot_config(config_dir):
     """Write the Dovecot conf files, the two auxiliary scripts, and a throwaway
-    self-signed cert into ``config_dir``. The cert is generated per session with
-    ``openssl`` — nothing is committed, and the client verifies with
-    ``tls_verify=False``, so the cert only needs to parse."""
+    self-signed cert into ``config_dir``. The cert is generated per session with the
+    ``openssl`` CLI — an undeclared-by-pip local prerequisite, so a missing binary
+    SKIPS the tier (like the Docker guards) rather than erroring. Nothing is committed,
+    and the client verifies with ``tls_verify=False``, so the cert only needs to parse."""
     files = {
         "dovecot.conf": _DOVECOT_CONF.format(sink_alias=_SINK_ALIAS, sink_port=_SINK_PORT),
         "dovecot-oauth2.conf.ext": _DOVECOT_OAUTH2_CONF.format(
@@ -691,13 +707,16 @@ def _write_dovecot_config(config_dir):
     for name, content in files.items():
         with open(f"{config_dir}/{name}", "w", encoding="utf-8") as fh:
             fh.write(content)
-    import subprocess
-
-    proc = subprocess.run(
-        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-         "-subj", "/CN=dovecot.test",
-         "-keyout", f"{config_dir}/key.pem", "-out", f"{config_dir}/cert.pem"],
-        capture_output=True)
+    try:
+        proc = subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+             "-subj", "/CN=dovecot.test",
+             "-keyout", f"{config_dir}/key.pem", "-out", f"{config_dir}/cert.pem"],
+            capture_output=True)
+    except (FileNotFoundError, NotADirectoryError, PermissionError) as e:
+        pytest.skip(
+            "the `openssl` CLI is required by the Dovecot E2E emulator (it generates the "
+            f"container's throwaway self-signed cert) and is not usable: {e!r}")
     if proc.returncode != 0:
         raise RuntimeError(
             f"openssl cert generation failed: {proc.stderr.decode(errors='replace')}")
@@ -743,8 +762,9 @@ def dovecot_xoauth2_emulator():
     on one throwaway network, yield a :class:`DovecotEmulator`, then GUARANTEE
     teardown of all three containers, the network and the config dir on session exit.
 
-    Auto-skips (secondary guard) when the ``[e2e]`` extra or a reachable Docker daemon
-    is absent — the primary exclusion is ``addopts = -m "not e2e"``."""
+    Auto-skips (secondary guard) when the ``[e2e]`` extra, the ``openssl`` CLI or a
+    reachable Docker daemon is absent — the primary exclusion is
+    ``addopts = -m "not e2e"``."""
     testcontainers = pytest.importorskip(
         "testcontainers.core.container",
         reason="the [e2e] extra (testcontainers) is not installed")
@@ -769,10 +789,12 @@ def dovecot_xoauth2_emulator():
         stub = (DockerContainer(AUX_IMAGE)
                 .with_command("python /aux/stub.py")
                 .with_env("DOVECOT_ACCOUNT", DOVECOT_ADDRESS)
+                .with_env("STUB_PORT", str(_STUB_PORT))
                 .with_volume_mapping(config_dir, "/aux", "ro")
                 .with_network(network).with_network_aliases(_STUB_ALIAS))
         sink = (DockerContainer(AUX_IMAGE)
                 .with_command("python /aux/sink.py")
+                .with_env("SINK_PORT", str(_SINK_PORT))
                 .with_volume_mapping(config_dir, "/aux", "ro")
                 .with_network(network).with_network_aliases(_SINK_ALIAS))
         dovecot = (DockerContainer(DOVECOT_IMAGE)

@@ -20,12 +20,17 @@ WHAT THIS TEST PROVES (end-to-end, over the wire, against the running container)
   (verification-off) IMAPS connection, authenticates with ``AUTHENTICATE XOAUTH2`` using
   the adapter's own unmodified ``_xoauth2_raw`` blob and a stubbed **zero-network** token
   provider, and issues a real ``LIST`` (``list_folders()``). Dovecot introspects the token
-  against the in-process stub, gets ``active:true`` + the account email, and admits the
-  session.
+  against the RFC 7662 stub CONTAINER on the shared testcontainers network, gets
+  ``active:true`` + the account email, and admits the session.
 * **SMTP XOAUTH2 send** — ``create_draft`` APPENDs a draft to the ``\Drafts`` special-use
   mailbox, then ``send_draft`` opens the submission port, ``STARTTLS`` → ``EHLO`` →
   ``AUTH XOAUTH2`` (same ``_xoauth2_raw`` blob) → ``sendmail``. Dovecot relays the accepted
-  submission to the in-process SMTP sink; the test asserts the message truly arrived there.
+  submission to the SMTP-sink CONTAINER; the test asserts the message truly arrived there.
+
+Both auxiliaries (the introspection stub and the SMTP sink) run as containers on the same
+throwaway testcontainers network as Dovecot, NOT in-process on the host: a container here
+cannot reach a host-gateway-published port, because this machine's host firewall drops
+docker-bridge → host traffic (see the fixture's topology note in ``conftest.py``).
 
 The adapter is driven UNMODIFIED — no ``conn_factory`` injection (it dials its own
 ``imaplib.IMAP4_SSL`` with a non-verifying context because ``tls_verify=False``), and the
@@ -102,7 +107,7 @@ def test_dovecot_imap_xoauth2_login_lists_folders(dovecot_xoauth2_emulator):
 def test_dovecot_xoauth2_create_and_send_draft_relays_to_sink(dovecot_xoauth2_emulator):
     """(b) ``create_draft`` (IMAP APPEND to ``\\Drafts``) then ``send_draft``
     (SMTP STARTTLS → EHLO → ``AUTH XOAUTH2`` → ``sendmail``) against the live Dovecot
-    container; the accepted submission is relayed to the in-process SMTP sink."""
+    container; the accepted submission is relayed to the SMTP-sink container."""
     emu = dovecot_xoauth2_emulator
     adapter = _adapter(emu, lambda: emu.token)
 
