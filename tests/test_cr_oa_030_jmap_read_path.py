@@ -44,6 +44,7 @@ import vidushi_oa._cli as cli
 from vidushi_oa import toon as oa_toon
 from vidushi_oa.mail import jmap
 from vidushi_oa.mail.client import MailClient
+from vidushi_oa.mail.imap import ImapAdapter
 from vidushi_oa.mail.jmap import JmapAdapter
 
 SESSION_URL = "https://api.fastmail.com/jmap/session"
@@ -509,6 +510,203 @@ class SharedMethodErrorCheckIsNotDuplicatedTest(unittest.TestCase):
         self.assertTrue(
             f"{owner_name}(" in parse_source or f"{owner_name}(" in search_source,
             f"shared check `{owner_name}` must be called from search()/_parse()")
+
+
+def _s3_email_get_response(email_id):
+    """A canned batched `Email/get` response carrying exactly one item whose
+    JMAP `Email` id is `email_id` — unlike `_canned_email_get_response` (whose
+    inline `items` dict only ever knows the key `"Ma1"`), this lets §S3's tests
+    prove `Message.uid` tracks the SERVER'S id rather than a hardcoded literal
+    a no-op stub could fake."""
+    item = {
+        "id": email_id,
+        "threadId": "Ta1",
+        "messageId": ["<msg1@example.com>"],
+        "subject": "Invoice from Acme",
+        "from": [{"name": "Acme Billing", "email": "billing@acme.example"}],
+        "to": [{"name": "Alex Doe", "email": "you@fastmail.com"}],
+        "receivedAt": "2026-07-20T10:00:00Z",
+        "header:Delivered-To:asText:all": "purchases-alias@fastmail.com",
+    }
+    return {
+        "methodResponses": [
+            ["Email/query", {"accountId": ACCOUNT_ID, "ids": [email_id]}, "0"],
+            [
+                "Email/get",
+                {"accountId": ACCOUNT_ID, "list": [item], "notFound": []},
+                "1",
+            ],
+        ],
+    }
+
+
+class BuildMessageSetsUidFromJmapEmailIdTest(unittest.TestCase):
+    """§S3 AC1: for a JMAP-sourced row, `Message.uid` equals the JMAP `Email`
+    id (the item's `"id"`) and is non-null — asserted both directly against
+    `_build_message` and through `JmapAdapter.search(...)` via the existing
+    fake-transport seam. Fails today: `_build_message` never sets `uid` at
+    all, so `Message.uid` stays `None` (the dataclass default in
+    `vidushi_oa/mail/base.py`) on every JMAP-sourced row."""
+
+    def setUp(self):
+        self.adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=FakeTransport(),
+        )
+
+    def test_build_message_sets_uid_to_the_jmap_email_id(self):
+        item = {
+            "id": "Ma1",
+            "threadId": "Ta1",
+            "messageId": ["<msg1@example.com>"],
+            "subject": "Invoice from Acme",
+            "from": [{"name": "Acme Billing", "email": "billing@acme.example"}],
+            "to": [{"name": "Alex Doe", "email": "you@fastmail.com"}],
+            "receivedAt": "2026-07-20T10:00:00Z",
+        }
+
+        message = self.adapter._build_message(item)
+
+        self.assertIsNotNone(message.uid)
+        self.assertEqual(message.uid, "Ma1")
+
+    def test_search_returns_a_row_whose_uid_is_the_email_id_not_a_hardcoded_value(self):
+        transport = FakeTransport(post_response=_s3_email_get_response("custom-id-42"))
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+
+        results = adapter.search("invoice")
+
+        self.assertEqual(len(results), 1)
+        self.assertIsNotNone(results[0].uid)
+        self.assertEqual(results[0].uid, "custom-id-42")
+
+
+class MailRowProjectsJmapUidTest(unittest.TestCase):
+    """§S3 AC2 (AXI projection half): the AXI mail row projection
+    `_mail_row(msg)` (`vidushi_oa/_cli.py`) for a JMAP-sourced `Message` yields
+    a non-null `uid` field equal to the `Email` id — i.e. a `mail-search` row
+    is actually usable to drive `mail-get`. Fails today: `msg.uid` is `None`
+    (§S3 AC1 unmet), so the projected row's `uid` key is `None` too."""
+
+    def test_mail_row_uid_equals_the_email_id_the_message_carries(self):
+        transport = FakeTransport(post_response=_s3_email_get_response("Ma9"))
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        messages = adapter.search("invoice")
+        self.assertEqual(len(messages), 1)
+
+        row = cli._mail_row(messages[0])
+
+        self.assertIsNotNone(row["uid"])
+        self.assertEqual(row["uid"], "Ma9")
+
+    def test_mail_row_uid_tracks_a_different_email_id_not_a_fixed_stub_value(self):
+        # Guard against a no-op/hardcoded fix: a DIFFERENT server id must
+        # project through as that same different value, not a fixed literal.
+        transport = FakeTransport(post_response=_s3_email_get_response("Zz-77"))
+        adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL, transport=transport,
+        )
+        messages = adapter.search("invoice")
+
+        row = cli._mail_row(messages[0])
+
+        self.assertEqual(row["uid"], "Zz-77")
+
+
+def _s3_imap_headers(subject, sender, to, date, message_id):
+    lines = [
+        f"Subject: {subject}",
+        f"From: {sender}",
+        f"To: {to}",
+        f"Date: {date}",
+        f"Message-ID: {message_id}",
+    ]
+    return ("\r\n".join(lines) + "\r\n\r\n").encode()
+
+
+def _s3_imap_fetch_tuple(msg_num, uid, header_bytes):
+    descriptor = (
+        f"{msg_num} (UID {uid} BODY[HEADER.FIELDS (SUBJECT FROM TO DATE "
+        f"MESSAGE-ID REFERENCES IN-REPLY-TO)] {{{len(header_bytes)}}}"
+    )
+    return (descriptor.encode(), header_bytes)
+
+
+class _S3FakeImapConn:
+    """Minimal fake IMAP connection for the §S3 JMAP/IMAP uid-parity guard —
+    mirrors the shape `tests/test_cr_oa_020_imap_adapters.py`'s `FakeIMAP`
+    already proves `ImapAdapter.search()` against (no real network, no cross-
+    module import — kept local so this file's fixtures stay self-contained)."""
+
+    def __init__(self, search_uids, fetch_response):
+        self._search_uids = search_uids
+        self._fetch_response = fetch_response
+        self.uid_calls = []
+
+    def login(self, user, password):
+        return ("OK", [b"Logged in"])
+
+    def select(self, mailbox="INBOX", readonly=False):
+        return ("OK", [b"1"])
+
+    def uid(self, command, *args):
+        self.uid_calls.append((command, args))
+        if command.upper() == "SEARCH":
+            return ("OK", [self._search_uids])
+        if command.upper() == "FETCH":
+            return self._fetch_response
+        return ("OK", [None])
+
+
+class JmapImapUidParityTest(unittest.TestCase):
+    """§S3 AC (parity guard): the JMAP adapter must populate `Message.uid` the
+    same way the IMAP adapter already does — both non-null on an ordinary
+    search row, each carrying that adapter's OWN server-assigned identifier
+    (not a shared/synthesized value) — a small mechanical guard so the two
+    adapters cannot drift apart again the way CR-OA-026 (IMAP-only `uid`
+    exposure) let them. Fails today: the JMAP row's `uid` is `None` while the
+    IMAP row's `uid` is already a populated string."""
+
+    def test_both_adapters_populate_a_non_null_uid_matching_their_own_server_id(self):
+        jmap_adapter = JmapAdapter(
+            account="fastmail_main", source_tag="[FM]", token="secret-token",
+            session_url=SESSION_URL,
+            transport=FakeTransport(post_response=_s3_email_get_response("Ma7")),
+        )
+        jmap_results = jmap_adapter.search("invoice")
+        self.assertEqual(len(jmap_results), 1)
+        jmap_uid = jmap_results[0].uid
+
+        header_bytes = _s3_imap_headers(
+            "Invoice from Acme", "billing@acme.example", "me@example.com",
+            "Mon, 20 Jul 2026 10:00:00 +0000", "<msg1@example.com>",
+        )
+        fetch_response = ("OK", [_s3_imap_fetch_tuple(1, 42, header_bytes), b")"])
+        fake_conn = _S3FakeImapConn(search_uids=b"1", fetch_response=fetch_response)
+        imap_adapter = ImapAdapter(
+            account="yahoo_main", source_tag="[YH]", host="imap.mail.yahoo.com",
+            user="me@example.com", password="app-pw",
+            conn_factory=lambda host, port: fake_conn,
+        )
+        imap_results = imap_adapter.search("invoice")
+        self.assertEqual(len(imap_results), 1)
+        imap_uid = imap_results[0].uid
+
+        # Parity: neither adapter leaves `uid` null on an ordinary search row.
+        self.assertIsNotNone(jmap_uid, "JMAP-sourced Message.uid must not be None")
+        self.assertIsNotNone(imap_uid, "IMAP-sourced Message.uid must not be None")
+        # Each uid is that adapter's OWN server-assigned identifier verbatim —
+        # not a placeholder, not copied from the other adapter.
+        self.assertEqual(jmap_uid, "Ma7")
+        self.assertEqual(imap_uid, "42")
+        self.assertNotEqual(jmap_uid, imap_uid)
 
 
 if __name__ == "__main__":
