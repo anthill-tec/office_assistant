@@ -15,7 +15,7 @@ import json
 import urllib.request
 
 from vidushi_oa.mail.base import MailAdapter, Message
-from vidushi_oa.mail.imap import ImapAdapter
+from vidushi_oa.mail.imap import ImapAdapter, imap_endpoint_kwargs
 
 _MAIL_CAPABILITY = "urn:ietf:params:jmap:mail"
 _CORE_CAPABILITY = "urn:ietf:params:jmap:core"
@@ -415,23 +415,19 @@ def fastmail_adapter(account, source_tag, config, transport=None, conn_factory=N
     endpoint = config.get("endpoint") or {}
     token = config.get("jmap_token")
     if token:
-        session_url = endpoint.get("jmap_url")
-        if session_url:
-            return JmapAdapter(account, source_tag, token,
-                               session_url=session_url, transport=transport)
-        return JmapAdapter(account, source_tag, token, transport=transport)
-    imap_kwargs = {}
-    if endpoint.get("smtp_host"):
-        imap_kwargs["smtp_host"] = endpoint["smtp_host"]
-    if endpoint.get("smtp_port"):
-        imap_kwargs["smtp_port"] = endpoint["smtp_port"]
+        # `session_url` is supplied only when overridden, so the absent case keeps
+        # JmapAdapter's real Fastmail session default.
+        jmap_kwargs = {"session_url": endpoint["jmap_url"]} if endpoint.get(
+            "jmap_url") else {}
+        return JmapAdapter(account, source_tag, token, transport=transport,
+                           **jmap_kwargs)
+    host, imap_kwargs = imap_endpoint_kwargs(endpoint, "imap.fastmail.com")
     return ImapAdapter(
         account=account,
         source_tag=source_tag,
-        host=endpoint.get("imap_host") or "imap.fastmail.com",
+        host=host,
         user=config.get("username", account),
         password=config["app_password"],
-        port=endpoint.get("imap_port") or 993,
         conn_factory=conn_factory,
         **imap_kwargs,
     )

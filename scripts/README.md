@@ -61,6 +61,8 @@ them; `mail-get --account <name> --uid <uid>` fetches one message; `mail-extract
 parses that message's schema.org markup into store candidates (it only *suggests* the `voa add`);
 `mail-auth --provider <p> --address <a>` registers a credential *reference* (never the secret) with
 `--auth-mode password|xoauth2`, and `--send` opts that account into send capability (read-only otherwise).
+Its `--endpoint '<json>'` is an **advanced** override that points *that one account* at a non-default server
+(a local test emulator) instead of the real provider — see `skills/vidushi-oa/references/mail-setup.md`.
 
 **Embedded mail client — outbound (draft-then-confirm):** `mail-draft` and `mail-reply` compose and save a
 **real draft** — never a send — to **verified** contact addresses (every `--to`/`--cc` recipient) from one of

@@ -40,6 +40,27 @@ _LIST_LINE_RE = re.compile(rb'^\s*\([^)]*\)\s+(?:"[^"]*"|NIL)\s+(?P<name>.+?)\s*
 _SMTP_SUBMISSION_PORT = 587
 
 
+def imap_endpoint_kwargs(endpoint, default_host):
+    """Resolve `(host, kwargs)` for an `ImapAdapter` from an optional `endpoint`.
+
+    `host` is `endpoint.imap_host` (else `default_host`); `kwargs` carries
+    `port`/`smtp_host`/`smtp_port` ONLY when the override supplies them — so an
+    absent override yields the real provider defaults (IMAP :993 and the
+    host-derived SMTP submission host on :587). Single home for this mapping so no
+    caller can honour half the override.
+    """
+    endpoint = endpoint or {}
+    host = endpoint.get("imap_host") or default_host
+    kwargs = {}
+    if endpoint.get("imap_port"):
+        kwargs["port"] = endpoint["imap_port"]
+    if endpoint.get("smtp_host"):
+        kwargs["smtp_host"] = endpoint["smtp_host"]
+    if endpoint.get("smtp_port"):
+        kwargs["smtp_port"] = endpoint["smtp_port"]
+    return host, kwargs
+
+
 class ImapAdapter(MailAdapter):
     """Concrete IMAP adapter with a lazily-created, reused connection."""
 

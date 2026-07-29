@@ -70,7 +70,7 @@ voa mail-search '<query>' [--accounts a,b]         # server-side search across a
 voa mail-accounts                    # list configured accounts + adapter capabilities
 voa mail-get --account <name> --uid <uid>          # fetch one full message by account + uid
 voa mail-extract --account <name> --uid <uid>      # parse the body's schema.org markup into store candidates; suggests the `voa add`, never writes
-voa mail-auth --provider <p> --address <a> [--auth-mode password|xoauth2] [--secret-ref <ref>] [--send] [--alias <addr>]   # register a credential REFERENCE (never the secret; prompt/stdin if --secret-ref omitted); --send opts THIS account into send capability (accounts are read-only by default), --alias adds an allowed From identity
+voa mail-auth --provider <p> --address <a> [--auth-mode password|xoauth2] [--secret-ref <ref>] [--send] [--alias <addr>] [--endpoint <json>]   # register a credential REFERENCE (never the secret; prompt/stdin if --secret-ref omitted); --send opts THIS account into send capability (accounts are read-only by default), --alias adds an allowed From identity, --endpoint is an ADVANCED override pointing THIS account at a non-default server (see references/mail-setup.md)
 
 # embedded mail client — outbound: draft-then-confirm (see "Conventions" below); mail-send is the ONLY verb that dispatches
 voa mail-draft --account <n> --from <a> --to <a> --subject <s> --body <b> [--cc <a>] [--attach <path>] [--case|--invoice|--warranty|--order <id>] [--force]   # save a REAL draft in Drafts, ZERO send; EVERY --to/--cc address must be a verified contact (--force overrides) and --from must be the account address or a registered alias; an FK flag links the draft so the send records correspondence on that row

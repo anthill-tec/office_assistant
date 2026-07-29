@@ -40,6 +40,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import pytest
+
 from vidushi_oa.mail import accounts
 from vidushi_oa.mail.compose import compose
 from vidushi_oa.mail.factory import _default_adapter_factory, build_client
@@ -59,6 +61,18 @@ class FakeResolver:
 
     def resolve(self, ref):
         return f"secret-for-{ref}"
+
+
+class _FixedResolver:
+    """`SecretResolver` stand-in returning ONE canned secret — the XOAUTH2 path
+    needs a `{client_id, client_secret, refresh_token}` JSON blob, not the
+    `FakeResolver` sentinel string."""
+
+    def __init__(self, secret):
+        self.secret = secret
+
+    def resolve(self, ref):
+        return self.secret
 
 
 class _RecordingTransport:
@@ -402,6 +416,90 @@ def test_no_endpoint_override_resolves_to_real_provider_defaults_across_all_adap
     assert yahoo.port == 993
     assert isinstance(fastmail, JmapAdapter)
     assert fastmail.session_url == FASTMAIL_DEFAULT_SESSION_URL
+
+
+# ---------------------------------------------------------------------------
+# Item 8 — the override survives a re-registration, reaches XOAUTH2 SMTP, and a
+# malformed env var degrades to "no override" instead of taking every verb down
+# ---------------------------------------------------------------------------
+
+def test_re_registering_an_account_without_an_endpoint_preserves_the_configured_one(
+        tmp_path):
+    config_path = tmp_path / "accounts.json"
+    endpoint = {"imap_host": "emu.local", "imap_port": 1143}
+    accounts.add_account("gmail:me@emu.test", "gmail", "me@emu.test", "ref-1",
+                         endpoint=endpoint, path=str(config_path))
+
+    # A secret rotation / `doctor --fix` re-provision passes no endpoint at all.
+    rotated = accounts.add_account("gmail:me@emu.test", "gmail", "me@emu.test",
+                                   "ref-2", path=str(config_path))
+
+    assert rotated["secret_ref"] == "ref-2"
+    assert rotated["endpoint"] == endpoint, (
+        "a re-registration that omits --endpoint must not drop the configured "
+        f"override; got {rotated!r}")
+    assert json.loads(config_path.read_text())[0]["endpoint"] == endpoint
+
+
+def test_gmail_xoauth2_adapter_honours_the_endpoint_imap_and_smtp_override():
+    creds = json.dumps({"client_id": "cid", "client_secret": "cs",
+                        "refresh_token": "rt"})
+    adapter = _default_adapter_factory(
+        provider="gmail", account="g_xoauth2_emu", address="me@emu.test",
+        secret_ref="r1", resolver=_FixedResolver(creds),
+        auth_mode="xoauth2",
+        endpoint={"imap_host": "emu.local", "imap_port": 1143,
+                  "smtp_host": "emu.local", "smtp_port": 1587},
+    )
+
+    assert (adapter.host, adapter.port) == ("emu.local", 1143)
+    assert (adapter.smtp_host, adapter.smtp_port) == ("emu.local", 1587), (
+        "the XOAUTH2 send path must dial the endpoint override's submission "
+        f"host/port; got {adapter.smtp_host}:{adapter.smtp_port}")
+
+
+def test_gmail_xoauth2_adapter_keeps_real_defaults_when_endpoint_absent():
+    creds = json.dumps({"client_id": "cid", "client_secret": "cs",
+                        "refresh_token": "rt"})
+    adapter = _default_adapter_factory(
+        provider="gmail", account="g_xoauth2_real", address="me@gmail.com",
+        secret_ref="r1", resolver=_FixedResolver(creds),
+        auth_mode="xoauth2", endpoint=None)
+
+    assert (adapter.host, adapter.port) == ("imap.gmail.com", 993)
+    assert (adapter.smtp_host, adapter.smtp_port) == ("smtp.gmail.com", 587)
+
+
+@pytest.mark.parametrize("raw", ['{"a": ', "[]", '"nope"', "17"])
+def test_malformed_endpoints_env_var_is_ignored_with_a_warning_not_a_traceback(
+        tmp_path, monkeypatch, capsys, raw):
+    config_path = tmp_path / "accounts.json"
+    accounts.add_account("fastmail_real", "fastmail", "me@fastmail.com", "ref-f",
+                         path=str(config_path))
+    monkeypatch.setenv("VIDUSHI_MAIL_ENDPOINTS", raw)
+
+    client = build_client(config_path=str(config_path), resolver=FakeResolver())
+
+    assert client.build_failures == [], (
+        "a malformed VIDUSHI_MAIL_ENDPOINTS must not fail every account; "
+        f"got {client.build_failures!r}")
+    assert client._adapters["fastmail_real"].session_url == FASTMAIL_DEFAULT_SESSION_URL
+    assert "VIDUSHI_MAIL_ENDPOINTS" in capsys.readouterr().err, (
+        "the ignored override must be reported on stderr, naming the variable")
+
+
+def test_endpoints_env_var_with_a_non_object_account_value_is_ignored(
+        tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "accounts.json"
+    accounts.add_account("fastmail_real", "fastmail", "me@fastmail.com", "ref-f",
+                         path=str(config_path))
+    monkeypatch.setenv("VIDUSHI_MAIL_ENDPOINTS", json.dumps({"fastmail_real": "emu"}))
+
+    client = build_client(config_path=str(config_path), resolver=FakeResolver())
+
+    assert client.build_failures == []
+    assert client._adapters["fastmail_real"].session_url == FASTMAIL_DEFAULT_SESSION_URL
+    assert "VIDUSHI_MAIL_ENDPOINTS" in capsys.readouterr().err
 
 
 if __name__ == "__main__":

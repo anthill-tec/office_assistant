@@ -57,6 +57,22 @@ voa mail-auth --provider fastmail --address you@fastmail.com --send --alias vend
 `voa mail-auth --provider yahoo --address you@yahoo.com < secret.txt`) — still never pasted into the
 conversation.
 
+**`--endpoint` — advanced, not part of normal setup.** Every account talks to its real provider by
+default. `--endpoint '<json>'` overrides that for **one** account, pointing it at a non-default server —
+in practice a local test emulator, not anything a user needs for their own mailbox. The JSON object takes
+any of `jmap_url` / `imap_host` / `imap_port` / `smtp_host` / `smtp_port`; whatever it omits keeps the real
+provider default, and an account registered without it is byte-for-byte unchanged. A re-run of
+`mail-auth` (or `voa doctor --fix`) that omits the flag keeps the override already configured.
+
+```bash
+voa mail-auth --provider gmail --address you@example.test \
+  --endpoint '{"imap_host":"127.0.0.1","imap_port":1143,"smtp_host":"127.0.0.1","smtp_port":1587}'
+```
+
+The `VIDUSHI_MAIL_ENDPOINTS` env var (a JSON object keyed by account *name*, mapping to the same shape)
+layers the same override on at run time without touching the registry; unset — the normal case — every
+account keeps its own configuration, and a malformed value is ignored with a warning.
+
 ## Step 3 — verify
 
 ```bash

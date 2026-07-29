@@ -15,7 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from vidushi_oa.mail.imap import GmailImapAdapter
+from vidushi_oa.mail.imap import _SMTP_SUBMISSION_PORT, GmailImapAdapter
 
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -81,9 +81,11 @@ class GmailXoauth2Adapter(GmailImapAdapter):
     """
 
     def __init__(self, account, source_tag, host, user, access_token, port=993,
-                 conn_factory=None):
+                 conn_factory=None, smtp_host=None,
+                 smtp_port=_SMTP_SUBMISSION_PORT):
         super().__init__(account, source_tag, host, user, password="",
-                         port=port, conn_factory=conn_factory)
+                         port=port, conn_factory=conn_factory,
+                         smtp_host=smtp_host, smtp_port=smtp_port)
         self.access_token = access_token
         self._resolved_token = None
 

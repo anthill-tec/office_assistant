@@ -56,13 +56,25 @@ def add_account(name, provider, address, secret_ref, auth_mode="password",
 
     `endpoint` is an OPTIONAL per-account provider-endpoint override mapping (any of
     `jmap_url` / `imap_host` / `imap_port` / `smtp_host` / `smtp_port`) pointing the
-    adapters at a local emulator instead of the hardcoded real providers. Absent /
-    `None` is stored as an empty mapping so a bare install behaves exactly as before.
+    adapters at a local emulator instead of the hardcoded real providers. An absent /
+    `None` override is OMITTED from the entry entirely — never stored as an empty
+    mapping — so a bare install's persisted schema is byte-for-byte as before. On a
+    re-registration (a secret rotation via `mail-auth`, or `doctor --fix`) an absent
+    override does not clear a previously configured one: since the matched entry is
+    replaced wholesale, the prior `endpoint` is carried forward.
     """
     target = _config_path(path)
     parent = os.path.dirname(target)
     if parent:
         os.makedirs(parent, exist_ok=True)
+
+    accounts = load_accounts(target)
+    index = next((i for i, e in enumerate(accounts) if e.get("name") == name), None)
+    # The matched entry is replaced WHOLESALE, so an absent override would silently
+    # drop a configured one on every re-registration (a secret rotation, `doctor
+    # --fix`) — carry the prior one forward instead.
+    if not endpoint and index is not None:
+        endpoint = accounts[index].get("endpoint")
 
     entry = {
         "name": name,
@@ -77,13 +89,10 @@ def add_account(name, provider, address, secret_ref, auth_mode="password",
     # never fabricated, so a real account's schema is byte-for-byte as before.
     if endpoint:
         entry["endpoint"] = dict(endpoint)
-    accounts = load_accounts(target)
-    for i, existing in enumerate(accounts):
-        if existing.get("name") == name:
-            accounts[i] = entry
-            break
-    else:
+    if index is None:
         accounts.append(entry)
+    else:
+        accounts[index] = entry
 
     # Create the file owner-only before writing any content.
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

@@ -10,6 +10,7 @@ concrete adapter (and even then, per-account, when `build_client` runs).
 """
 import json
 import os
+import sys
 
 from vidushi_oa.mail.accounts import load_accounts
 from vidushi_oa.mail.base import SOURCE_TAGS
@@ -23,30 +24,33 @@ _ENDPOINTS_ENV = "VIDUSHI_MAIL_ENDPOINTS"
 
 
 def _env_endpoints() -> dict:
-    """Parse the `VIDUSHI_MAIL_ENDPOINTS` override map, or `{}` when unset/blank."""
+    """Parse the `VIDUSHI_MAIL_ENDPOINTS` override map, or `{}` when unset/blank.
+
+    A malformed or non-object payload is IGNORED (treated as no override) after a
+    structured warning naming the variable — a debug-only env var must never take
+    every `voa mail-*` verb down with a raw traceback (AXI #6)."""
     raw = os.environ.get(_ENDPOINTS_ENV)
     if not raw:
         return {}
-    return json.loads(raw)
-
-
-def _imap_endpoint_kwargs(endpoint, default_host):
-    """Resolve the IMAP/SMTP adapter kwargs from an optional `endpoint` override.
-
-    Returns `(host, kwargs)` where `host` is `endpoint.imap_host` (else
-    `default_host`) and `kwargs` carries `port`/`smtp_host`/`smtp_port` only when the
-    override supplies them — so an absent override yields the real provider defaults
-    (IMAP :993 and the host-derived SMTP submission host on :587)."""
-    endpoint = endpoint or {}
-    host = endpoint.get("imap_host") or default_host
-    kwargs = {}
-    if endpoint.get("imap_port"):
-        kwargs["port"] = endpoint["imap_port"]
-    if endpoint.get("smtp_host"):
-        kwargs["smtp_host"] = endpoint["smtp_host"]
-    if endpoint.get("smtp_port"):
-        kwargs["smtp_port"] = endpoint["smtp_port"]
-    return host, kwargs
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        sys.stderr.write(
+            f"vidushi-oa: {_ENDPOINTS_ENV} is not valid JSON ({e}); ignoring it — "
+            f"every account keeps its own configured endpoint.\n")
+        return {}
+    if not isinstance(parsed, dict):
+        sys.stderr.write(
+            f"vidushi-oa: {_ENDPOINTS_ENV} must be a JSON object keyed by account "
+            f"name (got {type(parsed).__name__}); ignoring it — every account keeps "
+            f"its own configured endpoint.\n")
+        return {}
+    clean = {k: v for k, v in parsed.items() if isinstance(v, dict)}
+    for name in parsed.keys() - clean.keys():
+        sys.stderr.write(
+            f"vidushi-oa: {_ENDPOINTS_ENV}[{name!r}] is not a JSON object; ignoring "
+            f"it — that account keeps its own configured endpoint.\n")
+    return clean
 
 
 def _default_adapter_factory(provider, account, address, secret_ref, resolver,
@@ -66,14 +70,15 @@ def _default_adapter_factory(provider, account, address, secret_ref, resolver,
     injectable `conn_factory` seams the IMAP socket; both default to the real
     provider so a bare install is byte-for-byte unchanged.
     """
-    from vidushi_oa.mail.imap import GmailImapAdapter, YahooImapAdapter
+    from vidushi_oa.mail.imap import (GmailImapAdapter, YahooImapAdapter,
+                                      imap_endpoint_kwargs)
     from vidushi_oa.mail.jmap import fastmail_adapter
     from vidushi_oa.mail.secrets import SecretResolver
 
     resolver = resolver or SecretResolver()
     secret = resolver.resolve(secret_ref)
     if provider == "gmail":
-        host, imap_kwargs = _imap_endpoint_kwargs(endpoint, "imap.gmail.com")
+        host, imap_kwargs = imap_endpoint_kwargs(endpoint, "imap.gmail.com")
         if auth_mode == "xoauth2":
             from vidushi_oa.mail.xoauth2 import (GmailXoauth2Adapter,
                                                  refresh_access_token)
@@ -85,14 +90,13 @@ def _default_adapter_factory(provider, account, address, secret_ref, resolver,
                     creds["refresh_token"], transport=transport,
                 )
 
-            port = imap_kwargs.get("port", 993)
             return GmailXoauth2Adapter(account, SOURCE_TAGS["gmail"], host, address,
-                                       _token_provider, port=port,
-                                       conn_factory=conn_factory)
+                                       _token_provider, conn_factory=conn_factory,
+                                       **imap_kwargs)
         return GmailImapAdapter(account, SOURCE_TAGS["gmail"], host, address, secret,
                                 conn_factory=conn_factory, **imap_kwargs)
     if provider == "yahoo":
-        host, imap_kwargs = _imap_endpoint_kwargs(endpoint, "imap.mail.yahoo.com")
+        host, imap_kwargs = imap_endpoint_kwargs(endpoint, "imap.mail.yahoo.com")
         return YahooImapAdapter(account, SOURCE_TAGS["yahoo"], host, address, secret,
                                 conn_factory=conn_factory, **imap_kwargs)
     if provider == "fastmail":
