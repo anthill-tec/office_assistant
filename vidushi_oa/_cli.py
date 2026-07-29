@@ -1584,20 +1584,27 @@ def main():
     # embedded mail client (CR-OA-020 §S5) — reference-only auth + read verbs
     msr = add_parser(
         "mail-search",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "Search the configured mailboxes with a portable compound query, "
-            "merged + de-duped across accounts. Supported grammar: qualifiers "
-            "(subject:, from:, category:, newer_than:, has:attachment), the OR "
-            "operator, parenthesised groups, and quoted-phrase (\"exact phrase\") "
-            "matching. Example: category:purchases \"out for delivery\""
+            "Search the configured mailboxes with a portable compound query,\n"
+            "merged + de-duped across accounts.\n"
+            "\n"
+            "Qualifiers:  subject:  from:  to:  newer_than:  has:attachment\n"
+            "             category: is Gmail-only - JMAP (Fastmail) and plain IMAP\n"
+            "             accounts refuse it instead of silently ignoring it.\n"
+            "Operators:   OR, implicit AND when none is given, nestable\n"
+            "             parenthesised groups, and quoted \"exact phrase\" matching.\n"
+            "newer_than:  a count plus a unit - d / w / m / y (w=7d, m=30d, y=365d).\n"
+            "\n"
+            "Example: category:purchases (\"out for delivery\" OR shipped) newer_than:30d"
         ),
     )
     msr.add_argument(
         "query",
         help=(
-            "portable compound query: qualifiers + OR + parenthesised groups + "
-            "quoted \"exact phrase\" matching, e.g. category:purchases "
-            "\"out for delivery\""
+            "portable compound query: subject:/from:/to:/category:/newer_than:/"
+            "has:attachment + OR + parenthesised groups + quoted \"exact phrase\" "
+            "matching, e.g. category:purchases \"out for delivery\" newer_than:3m"
         ),
     )
     msr.add_argument("--accounts", type=lambda s: s.split(",") if s else None,
