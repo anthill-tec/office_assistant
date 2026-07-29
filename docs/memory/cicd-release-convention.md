@@ -97,10 +97,13 @@ a `License ::` trove classifier** (PEP 639: the SPDX expression supersedes it). 
 - **Test the CI workflow locally with `act`** — `act -l` for a fast parse-check (catches YAML errors, the
   Node-actions bump, etc.), a full `act push`/`act workflow_dispatch` to exercise jobs in Docker. (Caveat: a
   local mongod holding `27017` blocks act's own `mongo:7` service — stop it for a full act run.)
-- **Live mail-account verification (CR-OA-020) is a release-time test, not a CI gate** — the mail client
-  ships tested only against in-process fakes. Set up real Gmail/Fastmail/Yahoo accounts (secrets via the
-  vault/keyring resolver) to exercise the real adapters + the XOAUTH2 path end-to-end, as a release-branch
-  step. Keep it out of the pytest gate (no creds on runners).
+- **Mail verification against a real server is a release-time step, not a CI gate.** CI runs the
+  fakes-only suite. The **local E2E emulator tier** (`make e2e`, Docker + the `[e2e]` extra;
+  `DN-mail-e2e-emulator-testing.md`) is the release-branch pass that exercises the real adapters on the
+  wire — mandatory before `finish`, and excluded from the default population by `addopts = -m 'not e2e'`
+  so it can never leak into CI. A live **real-account** spot-check (Gmail/Fastmail/Yahoo secrets via the
+  keyring resolver, the only way to cover the XOAUTH2 SMTP path) stays optional and equally out of the
+  pytest gate — no creds on runners.
 - **Minor follow-up:** bump `actions/checkout@v4` → `@v5` and `setup-python@v5` → `@v6` (Node-20 deprecation
   warning; non-blocking).
 

@@ -89,8 +89,8 @@ specifics in a standalone `.skill-release.toml`. Run it on the release branch �
 env -u VIDUSHI_BACKEND .venv/bin/python scripts/skill-release-gate.py --project-dir .
 ```
 
-The gate is **one step of the mandatory release checklist** — the full ordered process (no-mistakes +
-reconcile → TestPyPI dry-run → gate + full test suite → irreversible-publish confirm) is in
+The gate is **one step of the mandatory release checklist** — the full ordered process (and every other
+step it does *not* cover, including the local E2E mail smoke run) is in
 [`../AGENTS.md`](../AGENTS.md) → **Release process**, with the CI/release model in
 [`../docs/memory/cicd-release-convention.md`](../docs/memory/cicd-release-convention.md).
 

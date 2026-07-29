@@ -157,17 +157,26 @@ Per path, driving the **real CLI verbs** end-to-end against the emulator:
 
 1. ~~**Configurable endpoints** (Decision 3) — engine change; the blocking prerequisite.~~ **DONE** — see
    Decision 3 §As built.
-2. **`[e2e]` extra** — `testcontainers` (+ any client dep); no change to base/`[mongo]`/`[sqlite]`.
-3. **Emulator fixture + profiles** — a session-scoped `testcontainers` fixture for the single Stalwart
-   image (readiness gating + teardown) that seeds the `fastmail` / `gmail` / `yahoo` provider profiles.
-4. **E2E test module** — `tests/e2e/test_mail_send_draft_e2e.py`, `@pytest.mark.e2e`, the Decision-5 cases
-   for both paths.
-5. **Marker + skip wiring** — register `e2e`, auto-skip without Docker/the extra; a `make e2e` / documented
-   invocation.
-6. **Documented local pre-release invocation** — a `make e2e` target (or a documented command) + a
+2. ~~**`[e2e]` extra** — `testcontainers` (+ any client dep); no change to base/`[mongo]`/`[sqlite]`.~~
+   **DONE** — `[project.optional-dependencies] e2e = ["testcontainers>=4"]`; seeding uses only the stdlib,
+   so that is the sole added dep.
+3. ~~**Emulator fixture + profiles** — a session-scoped `testcontainers` fixture for the single Stalwart
+   image (readiness gating + teardown) that seeds the `fastmail` / `gmail` / `yahoo` provider profiles.~~
+   **DONE** — `tests/e2e/conftest.py` (`stalwartlabs/mail-server:v0.11.8-alpine`; the `gmail` profile's
+   `[Gmail]/Drafts` special-use rename + its ManageSieve `fileinto "Sent"` script are seeded there).
+4. ~~**E2E test module** — `tests/e2e/test_mail_send_draft_e2e.py`, `@pytest.mark.e2e`, the Decision-5 cases
+   for both paths.~~ **DONE** — plus `tests/e2e/test_emulator_profiles.py` (profile shape) and
+   `tests/e2e/test_gmail_xgmraw_e2e.py` (task #68, see Fidelity above).
+5. ~~**Marker + skip wiring** — register `e2e`, auto-skip without Docker/the extra; a `make e2e` /
+   documented invocation.~~ **DONE** — the `e2e` marker is registered in `pyproject.toml`, which also pins
+   `addopts = -m 'not e2e'` so the default population **excludes the tier by construction**; the
+   fixture's Docker/extra auto-skip is the secondary guard.
+6. ~~**Documented local pre-release invocation** — a `make e2e` target (or a documented command) + a
    release-checklist line ("run the local E2E smoke tests; require green") — the manual **local** gate run
-   before `git flow release finish`. **Not** a CI job, and **not** auto-wired into the skill-release gate
-   (which stays Docker-free); the smoke run is a deliberate local step the releaser performs.
+   before `git flow release finish`.~~ **DONE** — `make e2e` (+ `make e2e-install`) in the `Makefile`, and
+   the mandatory checklist line in [`AGENTS.md`](../../AGENTS.md) → **Release process** step 3.iii.
+   **Not** a CI job, and **not** auto-wired into the skill-release gate (which stays Docker-free); the
+   smoke run is a deliberate local step the releaser performs.
 
 ## Borrowed Docker configs (published starting points to modify)
 
@@ -195,8 +204,10 @@ not a checked-in stack.
 1.1.1 is otherwise green (no-mistakes + skills conformance + release gate + fakes). Per the 2026-07-29
 decision it **holds at `git flow release finish`** until the E2E tier (Decisions 3–5, JMAP + IMAP/SMTP
 paths) is implemented and the smoke tests are **run locally and passing against the emulators** (a manual
-pre-release step, not CI). Implementation lands on `release/1.1.1` (design-note-driven, no CR). The
-remaining checklist (TestPyPI dry-run → gate → full suite → irreversible-publish confirm → finish) resumes
+pre-release step, not CI). Implementation **landed on `release/1.1.1`** (design-note-driven, no CR — all six
+Components delivered, and it caught three real defects: the missing JMAP `identityId`, unverified IMAP/SMTP
+TLS, and unquoted spaced mailbox names). The one condition still open is therefore the **local run itself**:
+`make e2e` green on the release branch. The remaining checklist (TestPyPI dry-run → gate → full suite → irreversible-publish confirm → finish) resumes
 once the local E2E smoke run is green.
 
 ## Research provenance (primary sources, 2026-07-29)
