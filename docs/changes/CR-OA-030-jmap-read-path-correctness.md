@@ -1,6 +1,6 @@
 # CR-OA-030 — JMAP read-path correctness (drop `deliveredTo`, surface method errors, expose `uid`)
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-29 on develop)
 **Type:** bugfix
 **Priority:** Critical
 **Depends on:** 020, 026
@@ -71,43 +71,43 @@ same pass so it can no longer assert a projection a real server rejects.
 ## Acceptance criteria
 
 ### §S1
-- [ ] `_EMAIL_PROPERTIES` contains no `deliveredTo` entry; every remaining entry is an RFC 8621 `Email`
+- [x] `_EMAIL_PROPERTIES` contains no `deliveredTo` entry; every remaining entry is an RFC 8621 `Email`
       property (`id`, `threadId`, `messageId`, `subject`, `from`, `to`, `receivedAt`) plus the
       delivered-to **header** projection (`header:Delivered-To:asText:all`).
-- [ ] `_build_message` populates `Message.delivered_to` from that header projection when present, and
+- [x] `_build_message` populates `Message.delivered_to` from that header projection when present, and
       `""` when absent (no raise).
-- [ ] Against the E2E Stalwart `fastmail` profile, an `Email/get` issued with the new projection returns
+- [x] Against the E2E Stalwart `fastmail` profile, an `Email/get` issued with the new projection returns
       an `Email/get` response (no `["error", …]` methodResponse).
 
 ### §S2
-- [ ] Given a response whose `methodResponses` carry `["error", {"type": "invalidArguments", …}, "1"]`,
+- [x] Given a response whose `methodResponses` carry `["error", {"type": "invalidArguments", …}, "1"]`,
       `JmapAdapter.search(...)` raises (does **not** return `[]`), and the raised message contains both
       the server's `type` and its `description`.
-- [ ] Given a response with an `Email/query` result but **no** `Email/get` response, `search()` raises
+- [x] Given a response with an `Email/query` result but **no** `Email/get` response, `search()` raises
       naming the missing `Email/get` — it does not return `[]`.
-- [ ] Given an `Email/query` answering `ids: []` with a matching empty `Email/get`, `search()` returns
+- [x] Given an `Email/query` answering `ids: []` with a matching empty `Email/get`, `search()` returns
       `[]` and `voa mail-search` prints `count: 0` at **exit 0** (a legitimate empty stays clean).
-- [ ] `voa mail-search '<q>' --accounts <jmap-account>` against a server that rejects the request exits
+- [x] `voa mail-search '<q>' --accounts <jmap-account>` against a server that rejects the request exits
       **non-zero** with a structured error payload (no traceback, per AXI #6).
-- [ ] A grep shows one reusable method-level error check used by `search`/`_parse` and the pre-existing
+- [x] A grep shows one reusable method-level error check used by `search`/`_parse` and the pre-existing
       `_created_id` path (no duplicated `["error", …]` literal handling).
 
 ### §S3
-- [ ] For a JMAP-sourced row, `Message.uid` equals the JMAP `Email` id and is non-null.
-- [ ] End-to-end against the `fastmail` profile: a `uid` taken from a `voa mail-search --json` row
+- [x] For a JMAP-sourced row, `Message.uid` equals the JMAP `Email` id and is non-null.
+- [x] End-to-end against the `fastmail` profile: a `uid` taken from a `voa mail-search --json` row
       resolves via `voa mail-get --account <a> --uid <uid>` (exit 0).
 
 ### §S4
-- [ ] `tests/e2e/test_mail_read_e2e.py::test_mail_search_returns_the_seeded_amazon_rows`,
+- [x] `tests/e2e/test_mail_read_e2e.py::test_mail_search_returns_the_seeded_amazon_rows`,
       `::test_mail_get_opens_a_seeded_message_by_jmap_id`, and
       `::test_smtp_roundtrip_message_is_findable_via_mail_search` pass with **no** `xfail` marker.
-- [ ] `::test_deliveredTo_property_is_rejected_by_the_compliant_jmap_server` (the property-still-present
+- [x] `::test_deliveredTo_property_is_rejected_by_the_compliant_jmap_server` (the property-still-present
       guard) is removed, and `::test_search_swallows_the_email_get_error_to_empty` /
       `::test_forced_query_error_is_also_swallowed_to_empty` are inverted to assert the error is now
       **raised**.
-- [ ] `make e2e` is green; the default runner still deselects the whole e2e tier
+- [x] `make e2e` is green; the default runner still deselects the whole e2e tier
       (`pytest tests/ -q --collect-only` collects zero `tests/e2e` tests).
-- [ ] No fakes-based test asserts `deliveredTo` in a request projection (grep over `tests/`).
+- [x] No fakes-based test asserts `deliveredTo` in a request projection (grep over `tests/`).
 
 ## Estimated size
 S–M — a projection change, one error-surfacing helper threaded through the JMAP read path, a `uid`

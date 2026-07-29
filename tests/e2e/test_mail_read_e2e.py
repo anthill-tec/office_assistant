@@ -3,45 +3,45 @@ the Stalwart JMAP (``fastmail``) emulator profile (DN-mail-e2e-emulator-testing.
 
 The existing E2E tier (``test_mail_send_draft_e2e.py``) only exercised the SEND/DRAFT
 path; the READ path (``mail-search`` / ``mail-get``) had never been driven end-to-end.
-This module closes that gap — and in doing so reproduces a class of read-path bugs the
-fakes-based suite (``tests/test_cr_oa_020_jmap.py``) structurally cannot catch.
+This module closes that gap — and in doing so reproduced a class of read-path bugs the
+fakes-based suite (``tests/test_cr_oa_020_jmap.py``) structurally cannot catch. Those
+bugs are CR-OA-030; this module is now their PROOF and their regression guard.
 
-HEADLINE FINDING — the read path is broken against a spec-compliant JMAP server:
+WHAT WAS BROKEN (CR-OA-030, fixed §S1–§S3 — this file is the proof it is fixed):
 
-``JmapAdapter`` requests ``deliveredTo`` in its ``Email/get`` property projection
-(``_EMAIL_PROPERTIES``, added in CR-OA-020 for the masked-alias trick). ``deliveredTo``
-is NOT an RFC 8621 Email property, so a compliant server (Stalwart — and, per the field
-report, real Fastmail) rejects it: the batched ``Email/query`` SUCCEEDS and returns the
-matching ids, but the paired ``Email/get`` comes back as
-``["error", {"type": "invalidArguments", "description": "Invalid property deliveredTo"}, "1"]``
-inside an HTTP 200. ``JmapAdapter._parse()`` scans ``methodResponses`` only for an
-``Email/get`` *response* and silently returns ``[]`` when it finds none — so the error is
-SWALLOWED and every search / fetch collapses to a legitimate-looking empty result
-(exit 0, ``count: 0``). The fake transport returns canned ``Email/get`` payloads that
-already *contain* ``deliveredTo``, so it proves the adapter can PARSE the property but
-never that a real server will accept it in a REQUEST — the exact mock-vs-real gap this
-tier exists to catch.
+* §S1 ``JmapAdapter`` requested ``deliveredTo`` in its ``Email/get`` projection
+  (``_EMAIL_PROPERTIES``, added in CR-OA-020 for the masked-alias trick).
+  ``deliveredTo`` is NOT an RFC 8621 Email property, so a compliant server (Stalwart —
+  and, per the field report, real Fastmail) rejected the whole projection: the batched
+  ``Email/query`` SUCCEEDED while the paired ``Email/get`` came back as
+  ``["error", {"type": "invalidArguments", "description": "…deliveredTo"}, "1"]`` inside
+  an HTTP 200. The correlation key is now read from the conformant header projection
+  ``header:Delivered-To:asText:all`` — which per RFC 8621 §4.1.4 answers a JSON **array**,
+  normalised to a ``str``. The fakes tier structurally could not catch a list landing on a
+  ``str`` field; ``test_delivered_to_is_a_string_against_the_real_server`` does, against a
+  real server.
+* §S2 ``_parse()`` scanned ``methodResponses`` only for an ``Email/get`` *response* and
+  returned ``[]`` when it found none — so that error was SWALLOWED and every search/fetch
+  collapsed to a legitimate-looking empty result (exit 0, ``count: 0``). A method-level
+  error now RAISES, naming the server's ``type`` and ``description``.
+* §S3 the JMAP ``_build_message`` never set ``uid``, so a ``mail-search`` row could not
+  supply the id ``mail-get`` needs. ``Message.uid`` is now the JMAP ``Email`` id.
 
-VERDICT (per the triaged read-path bugs): 5a / 5b / 7 REPRODUCE on Stalwart → OUR CODE
-BUG (the ``deliveredTo`` invalid-property + the ``_parse`` swallow), not Stalwart-vs-real
-Fastmail drift. The ``{"text": query}`` filter itself is CORRECT and matches on Stalwart
-(``test_text_filter_matches_on_the_compliant_jmap_server``). Bug 6 (the advertised
-portable/compound grammar) has a distinct mechanism: there is no query-translation layer
-at all, so ``subject:`` / ``newer_than:`` qualifiers are passed verbatim into the JMAP
-``text`` filter and are silently ineffective (a no-op on the date bound; zero hits for a
-bare qualifier). See ``test_portable_query_qualifiers_are_not_translated_for_jmap``.
-
-The behavioural contracts the read path OWES (``mail-search`` returns the seeded rows;
-``mail-get`` opens a message) are encoded as ``xfail(strict=True)`` — they fail today
-because of the swallow, and will flip to XPASS (a hard failure) the moment the adapter is
-fixed, forcing the markers to be removed. Nothing here patches production code.
+STILL OPEN (deliberately): the ``{"text": query}`` filter itself is CORRECT and matches on
+Stalwart (``test_text_filter_matches_on_the_compliant_jmap_server``), but the advertised
+portable/compound grammar has no translation layer at all, so ``subject:`` /
+``newer_than:`` qualifiers are passed verbatim into the JMAP ``text`` filter and are
+silently ineffective (a no-op on the date bound; zero hits for a bare qualifier). That is
+CR-OA-031; it is pinned here by
+``test_portable_query_qualifiers_are_not_translated_for_jmap``.
 
 ISOLATION mirrors ``test_mail_send_draft_e2e.py``: every ``voa`` verb runs in a subprocess
 whose registry/secret-store/data-dir are pinned into a throwaway ``tmp_path`` and pointed
 at the emulator purely via the #63 endpoint override, so the user's real accounts/store
 are never touched. Seeding lands messages straight in the ``fastmail`` mailbox over JMAP
-``Email/import`` (full control of ``receivedAt`` + an attachment) plus one real SMTP
-send→fetch round-trip. Every test is ``@pytest.mark.e2e`` (excluded by ``-m 'not e2e'``).
+``Email/import`` (full control of ``receivedAt``, an attachment, and a ``Delivered-To``
+header) plus one real SMTP send→fetch round-trip. Every test is ``@pytest.mark.e2e``
+(excluded by ``-m 'not e2e'``). Nothing here patches production code.
 """
 import base64
 import datetime
@@ -57,7 +57,7 @@ import urllib.request
 
 import pytest
 
-from vidushi_oa.mail.jmap import _EMAIL_PROPERTIES
+from vidushi_oa.mail.jmap import _EMAIL_PROPERTIES, JmapAdapter
 
 pytestmark = pytest.mark.e2e
 
@@ -67,6 +67,11 @@ STORE = os.path.join(ROOT, "scripts", "store.py")
 
 CORE = "urn:ietf:params:jmap:core"
 MAIL = "urn:ietf:params:jmap:mail"
+
+# The masked-alias correlation key seeded as a real ``Delivered-To`` header on ONE
+# message (CR-OA-030 §S1). Chosen to share no token with any search keyword used here,
+# so adding the header cannot perturb the `text`-filter counts the other tests assert.
+ALIAS_DELIVERED_TO = "masked-key-7fq2@emumail.org"
 
 
 # ---------------------------------------------------------------------------
@@ -149,8 +154,9 @@ def _upload_blob(upload_url, token, raw):
 
 
 def _query_ids(api, token, account_id, jmap_filter):
-    """Raw ``Email/query`` ids for ``jmap_filter`` (no ``Email/get`` — so this NEVER
-    trips the ``deliveredTo`` rejection; it is the clean ground-truth of what matched)."""
+    """Raw ``Email/query`` ids for ``jmap_filter`` — no ``Email/get``, no property
+    projection, so this bypasses the adapter entirely and is the clean, independent
+    ground-truth of what the server itself considers a match."""
     payload = _jmap_post(api, token, {
         "using": [CORE, MAIL],
         "methodCalls": [["Email/query",
@@ -160,7 +166,8 @@ def _query_ids(api, token, account_id, jmap_filter):
     return resp[1].get("ids") or []
 
 
-def _rfc822(subject, from_addr, to_addr, body, received=None, attach=False):
+def _rfc822(subject, from_addr, to_addr, body, received=None, attach=False,
+            delivered_to=None):
     msg = email.message.EmailMessage()
     msg["Subject"] = subject
     msg["From"] = from_addr
@@ -168,6 +175,8 @@ def _rfc822(subject, from_addr, to_addr, body, received=None, attach=False):
     msg["Message-ID"] = email.utils.make_msgid(domain="emumail.org")
     if received is not None:
         msg["Date"] = email.utils.format_datetime(received)
+    if delivered_to is not None:
+        msg["Delivered-To"] = delivered_to
     msg.set_content(body)
     if attach:
         msg.add_attachment(b"%PDF-1.4 fake invoice bytes", maintype="application",
@@ -217,24 +226,27 @@ def seeded_fastmail(stalwart_emulator):
 
     now = datetime.datetime.now(datetime.timezone.utc)
     plan = [
-        # subject, sender, body, age(days), attachment
+        # subject, sender, body, age(days), attachment, Delivered-To header
         ("Your Amazon.in order has shipped", "orders@amazon.in",
-         "Amazon shipment tracking AB123 out for delivery", 1, False),
+         "Amazon shipment tracking AB123 out for delivery", 1, False,
+         ALIAS_DELIVERED_TO),
         ("Amazon invoice for your recent order", "invoice@amazon.in",
-         "Amazon tax invoice attached for your records", 40, True),
+         "Amazon tax invoice attached for your records", 40, True, None),
         ("Flipkart delivery update", "noreply@flipkart.com",
-         "Your Flipkart parcel is out for delivery today", 2, False),
+         "Your Flipkart parcel is out for delivery today", 2, False, None),
         ("Netflix payment receipt", "info@netflix.com",
-         "Your Netflix subscription renewed for the month", 10, False),
+         "Your Netflix subscription renewed for the month", 10, False, None),
     ]
     messages = []
-    for subject, sender, body, age, attach in plan:
+    for subject, sender, body, age, attach, delivered_to in plan:
         received = now - datetime.timedelta(days=age)
-        raw = _rfc822(subject, sender, fm.address, body, received=received, attach=attach)
+        raw = _rfc822(subject, sender, fm.address, body, received=received,
+                      attach=attach, delivered_to=delivered_to)
         blob = _upload_blob(upload, fm.token, raw)
         jmap_id = _import(api, fm.token, account_id, inbox_id, blob, received)
         messages.append({"subject": subject, "sender": sender, "jmap_id": jmap_id,
-                         "age_days": age, "attach": attach})
+                         "age_days": age, "attach": attach,
+                         "delivered_to": delivered_to or ""})
 
     # One real SMTP send yahoo -> fastmail (same Stalwart, local delivery), then poll
     # RAW JMAP until it lands: this proves the send→fetch round-trip DELIVERS, so any
@@ -278,10 +290,11 @@ def test_seed_is_present_over_raw_jmap(seeded_fastmail):
 
 
 def test_text_filter_matches_on_the_compliant_jmap_server(seeded_fastmail):
-    """Bug 5b evidence: the ``{"text": query}`` filter our adapter emits is CORRECT
+    """POSITIVE CONTROL: the ``{"text": query}`` filter our adapter emits is CORRECT
     against a compliant JMAP server — ``Amazon`` matches the two Amazon messages,
-    ``Flipkart`` matches one, and an absent keyword matches none. So a 0-count read is
-    NEVER the filter's fault; it is the ``deliveredTo`` swallow downstream (5a)."""
+    ``Flipkart`` matches one, and an absent keyword matches none. This is what isolated
+    the original 0-count field report to the projection/swallow downstream rather than
+    the filter, and it stays here as the guard that keeps that attribution honest."""
     tok, api, acct = (seeded_fastmail.profile.token, seeded_fastmail.api,
                       seeded_fastmail.account_id)
     assert len(_query_ids(api, tok, acct, {"text": "Amazon"})) == 2
@@ -289,16 +302,19 @@ def test_text_filter_matches_on_the_compliant_jmap_server(seeded_fastmail):
     assert _query_ids(api, tok, acct, {"text": "ZZZ-absent-keyword-xyzzy"}) == []
 
 
-def test_deliveredTo_property_is_rejected_by_the_compliant_jmap_server(seeded_fastmail):
-    """ROOT CAUSE (5a/7): the EXACT batched body ``JmapAdapter.search()`` sends — an
+def test_email_properties_projection_is_accepted_by_the_compliant_jmap_server(
+        seeded_fastmail):
+    """§S1 AC-3: the EXACT batched body ``JmapAdapter.search()`` sends — an
     ``Email/query {text}`` back-referenced into an ``Email/get`` requesting the real
-    ``_EMAIL_PROPERTIES`` — has ``Email/query`` SUCCEED (2 ids) while the paired
-    ``Email/get`` FAILS with ``invalidArguments`` naming ``deliveredTo``, all inside one
-    HTTP 200. This is the server-side fact that the adapter's ``_parse`` then swallows."""
-    assert "deliveredTo" in _EMAIL_PROPERTIES, (
-        "guard tripped: this test pins the deliveredTo-rejection bug; if the property "
-        "was removed from _EMAIL_PROPERTIES the read-path fix has landed — delete this "
-        "test and the xfail markers below")
+    ``_EMAIL_PROPERTIES`` — is now ACCEPTED whole: both halves answer, neither is an
+    ``["error", …]`` methodResponse. This is the direct inverse of the pre-fix root
+    cause, where the same body had ``Email/query`` succeed while the paired
+    ``Email/get`` failed with ``invalidArguments`` naming ``deliveredTo``.
+
+    It also pins the projection itself: no ``deliveredTo``, and the delivered-to
+    correlation key carried by a conformant ``header:…`` projection instead."""
+    assert "deliveredTo" not in _EMAIL_PROPERTIES, _EMAIL_PROPERTIES
+    assert "header:Delivered-To:asText:all" in _EMAIL_PROPERTIES, _EMAIL_PROPERTIES
     tok, api, acct = (seeded_fastmail.profile.token, seeded_fastmail.api,
                       seeded_fastmail.account_id)
     payload = _jmap_post(api, tok, {
@@ -311,37 +327,56 @@ def test_deliveredTo_property_is_rejected_by_the_compliant_jmap_server(seeded_fa
     responses = payload["methodResponses"]
     by_call = {r[2]: r for r in responses}
     assert by_call["0"][0] == "Email/query" and len(by_call["0"][1]["ids"]) == 2, responses
-    assert by_call["1"][0] == "error", f"Email/get did not error: {responses}"
-    assert by_call["1"][1]["type"] == "invalidArguments", by_call["1"]
-    assert "deliveredTo" in by_call["1"][1].get("description", ""), by_call["1"]
+    assert by_call["1"][0] == "Email/get", f"Email/get errored: {responses}"
+    assert len(by_call["1"][1]["list"]) == 2, by_call["1"]
 
 
-def test_search_swallows_the_email_get_error_to_empty(seeded_fastmail):
-    """Bug 5a end-to-end: the PRODUCTION ``JmapAdapter.search()`` returns ``[]`` even
-    though ``Email/query`` matched — the ``Email/get`` ``invalidArguments`` error is
-    swallowed by ``_parse`` (which only scans for an ``Email/get`` *response*). No
-    exception, no surfaced error: a real failure masquerading as an empty mailbox."""
-    from vidushi_oa.mail.jmap import JmapAdapter
-    adapter = JmapAdapter(
-        _account_name(seeded_fastmail.profile), "[FM]", seeded_fastmail.profile.token,
-        session_url=seeded_fastmail.profile.jmap_url)
-    # Ground truth: 2 match. The adapter swallows the paired Email/get error to nothing.
-    ground_truth = _query_ids(seeded_fastmail.api, seeded_fastmail.profile.token,
-                              seeded_fastmail.account_id, {"text": "Amazon"})
-    assert len(ground_truth) == 2, ground_truth
-    assert adapter.search("Amazon") == [], \
-        "search no longer swallows the Email/get error — the deliveredTo fix has landed"
+def test_search_surfaces_the_email_get_error(seeded_fastmail):
+    """§S2, ``Email/get`` arm: when the server answers the back-referenced
+    ``Email/get`` with a method-level error inside an HTTP 200, the PRODUCTION
+    ``JmapAdapter.search()`` now RAISES naming the server's ``type`` AND
+    ``description`` — it no longer swallows the failure into a legitimate-looking
+    empty result.
+
+    Driven with an injected transport that reissues the batched call with the RETIRED
+    ``deliveredTo`` projection — the exact request the pre-fix adapter sent, and still
+    the cleanest way to make a compliant server error a back-referenced ``Email/get``
+    for real. The swallow lived in ``_parse``, which this exercises on the server's own
+    error payload."""
+    tok, api, acct = (seeded_fastmail.profile.token, seeded_fastmail.api,
+                      seeded_fastmail.account_id)
+    # Ground truth: 2 really match, so an empty return could only ever be the swallow.
+    assert len(_query_ids(api, tok, acct, {"text": "Amazon"})) == 2
+
+    def error_transport(method, url, headers, body):
+        if body is None:            # session GET
+            return 200, _jmap_get(url, tok)
+        return 200, _jmap_post(url, tok, {
+            "using": [CORE, MAIL],
+            "methodCalls": [
+                ["Email/query", {"accountId": acct, "filter": {"text": "Amazon"}}, "0"],
+                ["Email/get",
+                 {"accountId": acct,
+                  "#ids": {"resultOf": "0", "name": "Email/query", "path": "/ids"},
+                  "properties": ["id", "deliveredTo"]}, "1"]]})
+
+    adapter = JmapAdapter(_account_name(seeded_fastmail.profile), "[FM]", tok,
+                          session_url=seeded_fastmail.profile.jmap_url,
+                          transport=error_transport)
+    with pytest.raises(RuntimeError) as excinfo:
+        adapter.search("Amazon")
+    rendered = str(excinfo.value)
+    assert "invalidArguments" in rendered, rendered
+    assert "deliveredTo" in rendered, rendered
 
 
-def test_forced_query_error_is_also_swallowed_to_empty(seeded_fastmail):
-    """Bug 5a, forced-error arm: an INVALID filter makes ``Email/query`` ITSELF error
-    (``unsupportedFilter``) at HTTP 200. ``search()``'s ``_parse`` looks only for an
-    ``Email/get`` response, so this too collapses to ``[]`` — a server/filter error is
-    indistinguishable from a legitimately empty result at the voa surface. (Driven with
-    an injected transport because ``search()`` only ever emits a valid ``{text}``
-    filter; the swallow lives in ``_parse``, which this exercises on a real server's
-    error payload.)"""
-    from vidushi_oa.mail.jmap import JmapAdapter
+def test_forced_query_error_is_surfaced(seeded_fastmail):
+    """§S2, ``Email/query`` arm: an INVALID filter makes ``Email/query`` ITSELF error
+    (``unsupportedFilter``) at HTTP 200, and the back-referenced ``Email/get`` therefore
+    never runs. ``search()`` now RAISES naming that error rather than collapsing to
+    ``[]`` — a server/filter failure is no longer indistinguishable from a legitimately
+    empty result at the voa surface. (Driven with an injected transport because
+    ``search()`` only ever emits a valid ``{text}`` filter.)"""
     tok, api, acct = (seeded_fastmail.profile.token, seeded_fastmail.api,
                       seeded_fastmail.account_id)
     # Confirm the server really errors an invalid filter at HTTP 200 (not a 4xx).
@@ -370,8 +405,47 @@ def test_forced_query_error_is_also_swallowed_to_empty(seeded_fastmail):
     adapter = JmapAdapter(_account_name(seeded_fastmail.profile), "[FM]", tok,
                           session_url=seeded_fastmail.profile.jmap_url,
                           transport=error_transport)
-    assert adapter.search("anything") == [], \
-        "an Email/query error is no longer swallowed to an empty result"
+    with pytest.raises(RuntimeError) as excinfo:
+        adapter.search("anything")
+    assert "unsupportedFilter" in str(excinfo.value), str(excinfo.value)
+
+
+def test_delivered_to_is_a_string_against_the_real_server(seeded_fastmail):
+    """§S1 CARRY-IN — the assertion that would have caught the array bug automatically.
+
+    ``header:Delivered-To:asText:all`` returns a JSON **ARRAY** per RFC 8621 §4.1.4, and
+    ``Message.delivered_to`` is a ``str`` field. The fakes tier structurally could not
+    catch a list landing there (its canned payloads decide the shape); only reading the
+    RFC did. This closes that hole at the one place the shape is decided by a real,
+    compliant server:
+
+    * ``isinstance(..., str)`` — NOT merely truthy/non-empty. A raw ``["addr"]`` list is
+      truthy and non-empty, so a truthiness assertion would have passed on the bug.
+    * the message SEEDED WITH a ``Delivered-To`` header resolves to that header's value
+      (the masked-alias correlation key survives the array→str normalisation);
+    * the message seeded WITHOUT one degrades to ``""`` — a ``str``, never ``None`` and
+      never a list — which is the documented §S1 no-raise fallback."""
+    adapter = JmapAdapter(
+        _account_name(seeded_fastmail.profile), "[FM]", seeded_fastmail.profile.token,
+        session_url=seeded_fastmail.profile.jmap_url)
+    messages = adapter.search("Amazon")
+    assert len(messages) == 2, messages
+    for message in messages:
+        assert isinstance(message.delivered_to, str), (
+            f"delivered_to is {type(message.delivered_to).__name__}, not str: "
+            f"{message.delivered_to!r} — the RFC 8621 ':all' array leaked through")
+    by_subject = {message.subject: message for message in messages}
+    seeded = {row["subject"]: row for row in seeded_fastmail.messages}
+
+    tagged = by_subject["Your Amazon.in order has shipped"]
+    assert seeded["Your Amazon.in order has shipped"]["delivered_to"] == \
+        ALIAS_DELIVERED_TO, "precondition: this message was seeded WITH the header"
+    assert tagged.delivered_to == ALIAS_DELIVERED_TO, tagged.delivered_to
+
+    untagged = by_subject["Amazon invoice for your recent order"]
+    assert seeded["Amazon invoice for your recent order"]["delivered_to"] == "", \
+        "precondition: this message was seeded WITHOUT the header"
+    assert untagged.delivered_to == "", untagged.delivered_to
 
 
 def test_portable_query_qualifiers_are_not_translated_for_jmap(seeded_fastmail):
@@ -406,14 +480,11 @@ def test_mail_search_absent_keyword_is_a_clean_empty(seeded_fastmail, tmp_path):
     assert json.loads(r.stdout) == []
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Bug 5a/5b: JmapAdapter requests the non-RFC-8621 `deliveredTo` property; the "
-    "compliant server errors the Email/get and `_parse` swallows it, so mail-search "
-    "returns [] despite 2 real matches. Remove deliveredTo from _EMAIL_PROPERTIES "
-    "(or fetch it via a header projection) to fix."))
 def test_mail_search_returns_the_seeded_amazon_rows(seeded_fastmail, tmp_path):
-    """CONTRACT: ``voa mail-search Amazon`` must return the two seeded Amazon rows with
-    decoded subjects. XFAIL today (swallow); XPASS the moment the adapter is fixed."""
+    """CONTRACT (§S4): ``voa mail-search Amazon`` returns the two seeded Amazon rows
+    with decoded subjects. Was ``xfail(strict=True)`` while the ``deliveredTo``
+    projection made the server error the ``Email/get`` and ``_parse`` swallow it to
+    ``[]``; it PASSES now, against the real server."""
     env = _voa_env(tmp_path)
     account = _register_read(env, seeded_fastmail.profile)
     r = _voa(env, "mail-search", "Amazon", "--accounts", account)
@@ -424,15 +495,13 @@ def test_mail_search_returns_the_seeded_amazon_rows(seeded_fastmail, tmp_path):
                         "Your Amazon.in order has shipped"], rows
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Bug 7: mail-get uses the same deliveredTo projection, so Email/get errors -> "
-    "fetch_message returns None -> 'message not found'. (Even once fetched, note "
-    "_mail_row projects only id/uid/account/source_tag/subject/sender/date — no to/cc "
-    "and no body; JMAP also never populates `uid`, so a mail-search row cannot supply "
-    "the id mail-get needs. This contract asserts only the fetch-by-id succeeds.)"))
 def test_mail_get_opens_a_seeded_message_by_jmap_id(seeded_fastmail, tmp_path):
-    """CONTRACT: ``voa mail-get --uid <jmap-id>`` must resolve a seeded message and
-    return its decoded subject. XFAIL today (deliveredTo swallow -> not found)."""
+    """CONTRACT (§S4): ``voa mail-get --uid <jmap-id>`` resolves a seeded message and
+    returns its decoded subject. Was ``xfail(strict=True)`` — ``mail-get`` used the same
+    ``deliveredTo`` projection, so the ``Email/get`` errored, ``fetch_message`` returned
+    ``None`` and the verb reported "message not found". (``_mail_row`` still projects
+    only id/uid/account/source_tag/subject/sender/date — no to/cc and no body; that is
+    CR-OA-032. This contract asserts the fetch-by-id succeeds.)"""
     env = _voa_env(tmp_path)
     account = _register_read(env, seeded_fastmail.profile)
     target = seeded_fastmail.messages[0]
@@ -442,12 +511,10 @@ def test_mail_get_opens_a_seeded_message_by_jmap_id(seeded_fastmail, tmp_path):
     assert row["subject"] == target["subject"], row
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Same deliveredTo swallow: the round-trip message is delivered (proven over raw "
-    "JMAP in the seed) but mail-search cannot surface it."))
 def test_smtp_roundtrip_message_is_findable_via_mail_search(seeded_fastmail, tmp_path):
-    """CONTRACT: the SMTP-delivered round-trip message is findable through the real
-    ``voa mail-search`` verb. XFAIL today; the seed already proved it was delivered."""
+    """CONTRACT (§S4): the SMTP-delivered round-trip message is findable through the
+    real ``voa mail-search`` verb. Was ``xfail(strict=True)`` under the same swallow —
+    the seed had already proven over raw JMAP that the message was delivered."""
     assert seeded_fastmail.smtp_delivered, "precondition: the message was delivered"
     env = _voa_env(tmp_path)
     account = _register_read(env, seeded_fastmail.profile)
@@ -455,3 +522,31 @@ def test_smtp_roundtrip_message_is_findable_via_mail_search(seeded_fastmail, tmp
     assert r.returncode == 0, f"{r.stdout!r} {r.stderr!r}"
     rows = json.loads(r.stdout)
     assert any(seeded_fastmail.smtp_marker in row["subject"] for row in rows), rows
+
+
+def test_mail_search_row_uid_resolves_via_mail_get(seeded_fastmail, tmp_path):
+    """§S3 end-to-end (CR-OA-026 parity): a JMAP ``mail-search`` row carries a NON-NULL
+    ``uid`` equal to the message's JMAP ``Email`` id, and feeding that uid straight back
+    into ``voa mail-get --account <a> --uid <uid>`` resolves the same message at exit 0.
+
+    Pre-fix the JMAP ``_build_message`` never set ``uid``, so the search→get handoff the
+    CLI itself advertises (``next: mail-get --account … --uid …``) was unusable on a
+    Fastmail account regardless of the projection bug. ``Flipkart`` is used because it
+    matches exactly one seeded message, making the row unambiguous."""
+    env = _voa_env(tmp_path)
+    account = _register_read(env, seeded_fastmail.profile)
+    r = _voa(env, "mail-search", "Flipkart", "--accounts", account)
+    assert r.returncode == 0, f"{r.stdout!r} {r.stderr!r}"
+    rows = json.loads(r.stdout)
+    assert len(rows) == 1, rows
+    uid = rows[0]["uid"]
+    assert uid, f"the JMAP row carries no uid — mail-get cannot be driven from it: {rows}"
+    expected = next(m for m in seeded_fastmail.messages
+                    if m["subject"] == "Flipkart delivery update")
+    assert uid == expected["jmap_id"], (uid, expected["jmap_id"])
+
+    got = _voa(env, "mail-get", "--account", account, "--uid", uid)
+    assert got.returncode == 0, f"mail-get failed: {got.stdout!r} {got.stderr!r}"
+    fetched = json.loads(got.stdout)
+    assert fetched["subject"] == expected["subject"], fetched
+    assert fetched["uid"] == uid, fetched

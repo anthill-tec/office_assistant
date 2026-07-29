@@ -23,7 +23,8 @@
     `id` from `messageId[0]` (the RFC `Message-ID`), `thread_id` from
     `threadId`, subject/sender/to/date from the matching JMAP properties, and
     the delivered-to alias (masked-alias trick) surfaced as `delivered_to`
-    (preferring the JMAP `deliveredTo` property when present).
+    (read from the conformant `header:Delivered-To:asText:all` header
+    projection — the retired `deliveredTo` property is ignored).
   - `capabilities()` = `{"server_threads", "server_side_search", "projection"}`
     (JMAP has first-class threads, a server-side filter, and property
     projection; it is NOT `raw_query` — that's Gmail's X-GM-RAW extension).
@@ -72,7 +73,7 @@ def _canned_email_get_response(ids=("Ma1", "Ma2")):
             "from": [{"name": "Acme Billing", "email": "billing@acme.example"}],
             "to": [{"name": "Alex Doe", "email": "you@fastmail.com"}],
             "receivedAt": "2026-07-20T10:00:00Z",
-            "deliveredTo": "purchases-alias@fastmail.com",
+            "header:Delivered-To:asText:all": "purchases-alias@fastmail.com",
         },
         "Ma2": {
             "id": "Ma2",
@@ -82,7 +83,7 @@ def _canned_email_get_response(ids=("Ma1", "Ma2")):
             "from": [{"name": "Shop Receipts", "email": "receipts@shop.example"}],
             "to": [{"name": "Alex Doe", "email": "you@fastmail.com"}],
             "receivedAt": "2026-07-21T11:00:00Z",
-            "deliveredTo": "purchases-alias@fastmail.com",
+            "header:Delivered-To:asText:all": "purchases-alias@fastmail.com",
         },
     }
     return {
@@ -268,8 +269,9 @@ class JmapParseEmailGetIntoMessagesTest(unittest.TestCase):
 
 class JmapDeliveredToAliasTest(unittest.TestCase):
     """§S3 AC: the delivered-to alias (Fastmail's masked-alias correlation key)
-    is surfaced on the parsed `Message`, preferring the JMAP `deliveredTo`
-    property over the plain `to` recipient when both are present."""
+    is surfaced on the parsed `Message`, read from the conformant
+    `header:Delivered-To:asText:all` header projection in preference to the
+    plain `to` recipient when both are present."""
 
     def test_delivered_to_alias_is_surfaced_and_differs_from_the_to_recipient(self):
         transport = FakeTransport()
