@@ -53,7 +53,7 @@ Mainline + parallel Track workers, no Sandesh coordination. Two-phase per the ho
 | [CR-OA-028](CR-OA-028-schema-org-email-extraction.md) | schema.org email-markup structured extraction (`voa mail-extract`) + in-engine body retrieval | feature | COMPLETED (2026-07-28) | 020, 024, 026 | 10 |
 | [CR-OA-029](CR-OA-029-purge-real-pii-from-public-surfaces.md) | Purge real personal identifiers from public surfaces (skill + tests) + enforce the no-personal-data invariant repo-wide | bugfix | COMPLETED (2026-07-28) | 023 | 10 |
 | [CR-OA-030](CR-OA-030-jmap-read-path-correctness.md) | JMAP read-path correctness (drop `deliveredTo`, surface method errors, expose `uid`) | bugfix | COMPLETED (2026-07-29) | 020, 026 | 11 · 1.1.2 |
-| [CR-OA-031](CR-OA-031-portable-query-translation.md) | Portable query translation layer (per-provider, validated, never silently empty) | bugfix | PENDING | 020, 030 | 11 · 1.1.2 |
+| [CR-OA-031](CR-OA-031-portable-query-translation.md) | Portable query translation layer (per-provider, validated, never silently empty) | bugfix | COMPLETED (2026-07-30) | 020, 030 | 11 · 1.1.2 |
 | [CR-OA-032](CR-OA-032-mail-get-full-message.md) | `mail-get` returns a full message (decoded body, `to`/`cc`, decoded subject) | feature | PENDING | 026, 030 | 11 · 1.1.2 |
 | [CR-OA-033](CR-OA-033-validator-drift-detection.md) | Detect deployed-validator drift after an upgrade (`voa doctor` + remediation) | maintenance | PENDING | 018 | 11 · 1.1.2 |
 

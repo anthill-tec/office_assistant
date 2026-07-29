@@ -1,6 +1,6 @@
 # CR-OA-031 — Portable query translation layer (per-provider, validated, never silently empty)
 
-**Status:** PENDING
+**Status:** COMPLETED (shipped 2026-07-30 on develop)
 **Type:** bugfix
 **Priority:** High
 **Depends on:** 020, 030
