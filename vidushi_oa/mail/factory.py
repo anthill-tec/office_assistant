@@ -20,37 +20,52 @@ from vidushi_oa.mail.client import MailClient
 # to an endpoint override (`jmap_url` / `imap_host` / `imap_port` / `smtp_host` /
 # `smtp_port`). Consulted ONLY when set — unset means every account keeps its own
 # persisted endpoint (usually none), so a real deployment is untouched.
-_ENDPOINTS_ENV = "VIDUSHI_MAIL_ENDPOINTS"
+ENDPOINTS_ENV = "VIDUSHI_MAIL_ENDPOINTS"
 
 
-def _env_endpoints() -> dict:
+def env_endpoints() -> dict:
     """Parse the `VIDUSHI_MAIL_ENDPOINTS` override map, or `{}` when unset/blank.
 
     A malformed or non-object payload is IGNORED (treated as no override) after a
     structured warning naming the variable — a debug-only env var must never take
     every `voa mail-*` verb down with a raw traceback (AXI #6)."""
-    raw = os.environ.get(_ENDPOINTS_ENV)
+    raw = os.environ.get(ENDPOINTS_ENV)
     if not raw:
         return {}
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as e:
         sys.stderr.write(
-            f"vidushi-oa: {_ENDPOINTS_ENV} is not valid JSON ({e}); ignoring it — "
+            f"vidushi-oa: {ENDPOINTS_ENV} is not valid JSON ({e}); ignoring it — "
             f"every account keeps its own configured endpoint.\n")
         return {}
     if not isinstance(parsed, dict):
         sys.stderr.write(
-            f"vidushi-oa: {_ENDPOINTS_ENV} must be a JSON object keyed by account "
+            f"vidushi-oa: {ENDPOINTS_ENV} must be a JSON object keyed by account "
             f"name (got {type(parsed).__name__}); ignoring it — every account keeps "
             f"its own configured endpoint.\n")
         return {}
     clean = {k: v for k, v in parsed.items() if isinstance(v, dict)}
     for name in parsed.keys() - clean.keys():
         sys.stderr.write(
-            f"vidushi-oa: {_ENDPOINTS_ENV}[{name!r}] is not a JSON object; ignoring "
+            f"vidushi-oa: {ENDPOINTS_ENV}[{name!r}] is not a JSON object; ignoring "
             f"it — that account keeps its own configured endpoint.\n")
     return clean
+
+
+def effective_endpoint(entry, overrides=None) -> dict:
+    """The endpoint an account is ACTUALLY built with: its persisted endpoint with
+    the process-level `VIDUSHI_MAIL_ENDPOINTS` override layered on top, key by key.
+
+    The single definition of that precedence. `build_client` wires every adapter
+    through it and `voa doctor` reports through it, so no diagnostic can describe a
+    channel — above all its `tls_verify` — that differs from the one the adapters
+    dial. `overrides` is the already-parsed `env_endpoints()` map when a caller has
+    one (a fan-out over every account parses it once); omitted, it is read here."""
+    endpoint = dict(entry.get("endpoint") or {})
+    env = env_endpoints() if overrides is None else overrides
+    endpoint.update(env.get(entry.get("name")) or {})
+    return endpoint
 
 
 def _default_adapter_factory(provider, account, address, secret_ref, resolver,
@@ -127,7 +142,7 @@ def build_client(config_path=None, resolver=None, adapter_factory=None) -> MailC
     whole `mail-search`/`mail-accounts`/`mail-get` fan-out.
     """
     factory = adapter_factory or _default_adapter_factory
-    env_endpoints = _env_endpoints()
+    overrides = env_endpoints()
     client = MailClient()
     failures: list[dict] = []
     for entry in load_accounts(config_path):
@@ -136,8 +151,7 @@ def build_client(config_path=None, resolver=None, adapter_factory=None) -> MailC
             provider = entry["provider"]
             # The persisted per-account endpoint, then the process-level
             # VIDUSHI_MAIL_ENDPOINTS override (when set) layered on top by key.
-            endpoint = dict(entry.get("endpoint") or {})
-            endpoint.update(env_endpoints.get(name) or {})
+            endpoint = effective_endpoint(entry, overrides)
             kwargs = dict(
                 provider=provider,
                 account=name,

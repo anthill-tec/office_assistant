@@ -364,6 +364,9 @@ class MailAuthEndpointFlagTest(unittest.TestCase):
         self.env["VIDUSHI_SQLITE_PATH"] = os.path.join(self.tmp, "oa.db")
         self.env["VIDUSHI_DATA_DIR"] = self.tmp
         self.env.pop("PYTHON_KEYRING_BACKEND", None)
+        # An override inherited from the developer's own shell would silently rewrite
+        # every endpoint these cases assert on; each test that wants one sets it.
+        self.env.pop("VIDUSHI_MAIL_ENDPOINTS", None)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -520,6 +523,61 @@ class MailAuthEndpointFlagTest(unittest.TestCase):
         self.assertIn('--endpoint \'{"imap_host": "emu.local"}\'', step,
                       f"the suggested endpoint must drop ONLY tls_verify, keeping "
                       f"every other configured key; got {step!r}")
+
+    def test_doctor_reports_the_endpoint_the_adapters_are_actually_built_with(self):
+        """`build_client` layers `VIDUSHI_MAIL_ENDPOINTS` on top of the stored
+        endpoint before building any adapter, so a diagnostic that reads only the
+        stored one describes a channel nobody dials: an account whose TLS
+        verification the environment has switched OFF (or whose host it has
+        repointed) would read exactly like a hardened one."""
+        r = self._mail_auth(
+            "--provider", "gmail", "--address", "me@emu.test",
+            "--secret-ref", "vidushi-oa/gmail:me@emu.test", "--send")
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+
+        env = dict(self.env)
+        env["VIDUSHI_MAIL_ENDPOINTS"] = json.dumps({
+            "gmail:me@emu.test": {"imap_host": "emu.local", "tls_verify": False}})
+        r = subprocess.run([sys.executable, STORE, "doctor"],
+                           capture_output=True, text=True, env=env)
+        payload = json.loads(r.stdout)
+        row = payload["accounts"][0]
+
+        self.assertFalse(row["tls_verify"],
+                         f"an env-disabled tls_verify must not read as hardened: "
+                         f"{row!r}")
+        self.assertIn("imap_host=emu.local", row["endpoint"],
+                      f"the reported endpoint must be the EFFECTIVE one: {row!r}")
+        self.assertIn("tls_verify", row["endpoint_env_override"],
+                      f"the row must name the keys the environment supplied — "
+                      f"`mail-auth --endpoint` cannot clear those; got {row!r}")
+
+    def test_doctor_tls_remediation_for_an_env_override_names_the_env_var(self):
+        """`voa mail-auth --endpoint` cannot clear an env-supplied `tls_verify:
+        false` — the environment layer wins over whatever is stored — so advising it
+        would send the user round a loop that never restores verification."""
+        r = self._mail_auth(
+            "--provider", "gmail", "--address", "me@emu.test",
+            "--secret-ref", "vidushi-oa/gmail:me@emu.test", "--send")
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+
+        env = dict(self.env)
+        env["VIDUSHI_MAIL_ENDPOINTS"] = json.dumps({
+            "gmail:me@emu.test": {"tls_verify": False}})
+        r = subprocess.run([sys.executable, STORE, "doctor"],
+                           capture_output=True, text=True, env=env)
+        payload = json.loads(r.stdout)
+        steps = [s for s in payload["remediation"] if "tls_verify" in s["step"]]
+        self.assertEqual(len(steps), 1, f"expected one TLS step: {payload!r}")
+        step = steps[0]["step"]
+        self.assertIn("VIDUSHI_MAIL_ENDPOINTS", step,
+                      f"the step must name the variable that disabled verification; "
+                      f"got {step!r}")
+        self.assertNotIn("voa mail-auth --provider", step,
+                         f"the step must not advise a command that cannot clear an "
+                         f"env-level override; got {step!r}")
+        self.assertTrue(steps[0]["human_input"],
+                        f"changing the environment is not unattended: {steps[0]!r}")
 
     def test_mail_auth_help_lists_endpoint_flag(self):
         r = subprocess.run([sys.executable, STORE, "mail-auth", "--help"],

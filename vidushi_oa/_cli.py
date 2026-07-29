@@ -1349,6 +1349,8 @@ def cmd_doctor(a):
     unreachable or any account fails to resolve — after emitting the payload."""
     from vidushi_oa.backends import get_backend
     from vidushi_oa.mail import accounts
+    from vidushi_oa.mail.factory import (ENDPOINTS_ENV, effective_endpoint,
+                                         env_endpoints)
     from vidushi_oa.mail.secrets import (SecretResolver, KeyringBackend, preflight,
                                          detect_desktop, keyring_guidance, BACKEND_ENV)
     from vidushi_oa import __version__
@@ -1391,6 +1393,7 @@ def cmd_doctor(a):
     rows = []
     all_resolve = True
     tls_disabled = []
+    overrides = env_endpoints()
     for entry in accounts.load_accounts():
         ref = entry.get("secret_ref", "")
         try:
@@ -1408,16 +1411,23 @@ def cmd_doctor(a):
         # An endpoint override — above all its `tls_verify: false` key, which turns
         # certificate/hostname verification OFF for this account's IMAP/SMTP channels
         # — must never be invisible: without it here an account running unverified
-        # TLS reads identically to a hardened one in every diagnostic.
-        endpoint = entry.get("endpoint") or {}
+        # TLS reads identically to a hardened one in every diagnostic. It is the
+        # EFFECTIVE endpoint that is reported — the stored one with the process-level
+        # VIDUSHI_MAIL_ENDPOINTS map layered on exactly as `build_client` does — so
+        # an env-repointed host or an env-disabled `tls_verify` cannot hide here
+        # either; `env_override` records which keys the environment supplied, because
+        # `mail-auth --endpoint` cannot clear those.
+        env_override = overrides.get(entry.get("name")) or {}
+        endpoint = effective_endpoint(entry, overrides)
         if not bool(endpoint.get("tls_verify", True)):
-            tls_disabled.append((entry, endpoint))
+            tls_disabled.append((entry, endpoint, env_override))
         rows.append({"account": entry.get("name"), "provider": entry.get("provider"),
                      "auth_mode": entry.get("auth_mode", "password"),
                      "kind": kind, "resolves": resolves,
                      "send": bool(entry.get("send", False)),
                      "endpoint": ", ".join(f"{k}={endpoint[k]}"
                                            for k in sorted(endpoint)),
+                     "endpoint_env_override": ", ".join(sorted(env_override)),
                      "tls_verify": bool(endpoint.get("tls_verify", True)),
                      "hint": hint})
 
@@ -1440,16 +1450,35 @@ def cmd_doctor(a):
             f"prompt (or pipe it on stdin), or run `voa doctor --fix`.")
         remediation.append({"step": ma_step, "human_input": True})
         next_items.append(ma_step)
-    # The suggested command drops ONLY the `tls_verify` key — every other endpoint
-    # key (the emulator host/port an account may legitimately be pointed at) is
-    # re-sent verbatim — and passes the account's own `--secret-ref`, so the stored
+    # The suggested command drops ONLY the `tls_verify` key — every other STORED
+    # endpoint key (the emulator host/port an account may legitimately be pointed at)
+    # is re-sent verbatim — and passes the account's own `--secret-ref`, so the stored
     # credential is never re-read from stdin. `cmd_mail_auth` carries `send` /
     # `aliases` / `auth_mode` forward, so the step restores a verifying channel and
-    # changes nothing else; that is what makes it safe to run unattended.
-    for entry, endpoint in tls_disabled:
-        verifying = {k: v for k, v in endpoint.items() if k != "tls_verify"}
+    # changes nothing else; that is what makes it safe to run unattended. It is built
+    # from the STORED endpoint, never the effective one — re-sending an env-supplied
+    # host would PERSIST a debug override the environment only meant for this process.
+    #
+    # When it is the environment that turned verification off, `mail-auth` cannot
+    # reach it at all (the env layer wins over whatever is stored), so the step names
+    # the variable instead and asks a human to change it.
+    for entry, endpoint, env_override in tls_disabled:
+        name = entry.get("name")
+        if "tls_verify" in env_override:
+            tls_step = (
+                f"{name} runs with TLS certificate/hostname verification DISABLED by "
+                f"the {ENDPOINTS_ENV} environment override (not by its stored "
+                f"endpoint) — intended only for the local emulator. `voa mail-auth "
+                f"--endpoint` CANNOT clear it: the environment layer wins. Drop the "
+                f"\"tls_verify\" key from {ENDPOINTS_ENV}[{name!r}] (or unset "
+                f"{ENDPOINTS_ENV}) to restore a verifying channel.")
+            remediation.append({"step": tls_step, "human_input": True})
+            next_items.append(tls_step)
+            continue
+        stored = entry.get("endpoint") or {}
+        verifying = {k: v for k, v in stored.items() if k != "tls_verify"}
         tls_step = (
-            f"{entry.get('name')} runs with TLS certificate/hostname verification "
+            f"{name} runs with TLS certificate/hostname verification "
             f"DISABLED (endpoint tls_verify=false) — intended only for the local "
             f"emulator. Restore a verifying channel with `voa mail-auth --provider "
             f"{entry.get('provider')} --address {entry.get('address')} "

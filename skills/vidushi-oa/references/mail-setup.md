@@ -86,7 +86,10 @@ voa mail-auth --provider gmail --address you@example.test \
 
 The `VIDUSHI_MAIL_ENDPOINTS` env var (a JSON object keyed by account *name*, mapping to the same shape)
 layers the same override on at run time without touching the registry; unset — the normal case — every
-account keeps its own configuration, and a malformed value is ignored with a warning.
+account keeps its own configuration, and a malformed value is ignored with a warning. `voa doctor` reports
+the **effective** endpoint — stored plus that env layer, exactly as the adapters are built — and names the
+env-supplied keys in `endpoint_env_override`; an env-disabled `tls_verify` is remediated by editing the
+variable, since `mail-auth --endpoint` cannot reach it.
 
 ## Step 3 — verify
 

@@ -229,9 +229,17 @@ class ImapAdapter(MailAdapter):
         after the provider accepted the message may not turn a delivered send into
         an error.
 
-        Once the provider has accepted the message, `_file_sent_copy` files it in
-        Sent and retires the Drafts copy — the IMAP counterpart of the JMAP
-        `onSuccessUpdateEmail` patch."""
+        A submission the server accepted for SOME recipients only is a failure, not
+        a send: `smtplib.sendmail` raises `SMTPRecipientsRefused` only when EVERY
+        `RCPT TO` was refused, and otherwise returns the per-recipient refusal dict
+        quietly. That dict is read, and a non-empty one raises structurally naming
+        each refused address — BEFORE `_file_sent_copy` runs, so the Drafts copy is
+        never expunged and no caller records the correspondence as delivered for
+        recipients that never received it.
+
+        Once the provider has accepted the message for every recipient,
+        `_file_sent_copy` files it in Sent and retires the Drafts copy — the IMAP
+        counterpart of the JMAP `onSuccessUpdateEmail` patch."""
         mailbox = folder or self._drafts_mailbox_name()
         raw_bytes = self._fetch_draft_bytes(draft_id, mailbox)
         parsed = email.message_from_bytes(raw_bytes)
@@ -246,12 +254,20 @@ class ImapAdapter(MailAdapter):
             smtp.starttls(context=self._ssl_context())
             smtp.ehlo_or_helo_if_needed()
             self._smtp_login(smtp)
-            smtp.sendmail(from_addr, recipients, raw_bytes)
+            refused = smtp.sendmail(from_addr, recipients, raw_bytes) or {}
         finally:
             try:
                 smtp.quit()
             except (smtplib.SMTPException, OSError):
                 pass
+        if refused:
+            raise RuntimeError(
+                "SMTP submission refused "
+                f"{len(refused)} of {len(recipients)} recipient(s): "
+                + "; ".join(f"{addr} ({_refusal_text(reason)})"
+                            for addr, reason in sorted(refused.items()))
+                + f" — draft {draft_id} was NOT sent to them and has been kept in "
+                  "Drafts; fix or drop those addresses and send it again")
         self._file_sent_copy(raw_bytes, draft_id, mailbox)
         return message_id
 
@@ -559,6 +575,20 @@ def _response_text(data) -> str:
     parts = [chunk.decode(errors="replace") for chunk in data or []
              if isinstance(chunk, bytes) and chunk.strip()]
     return " ".join(parts)
+
+
+def _refusal_text(reason) -> str:
+    """The human-readable text of one `smtplib.sendmail` per-recipient refusal.
+
+    `smtplib` reports each refused recipient as a `(code, response_bytes)` pair; a
+    subclass or a fake may hand back something else, so anything unrecognised is
+    rendered as-is rather than raising while building an error message."""
+    if isinstance(reason, tuple) and len(reason) == 2:
+        code, response = reason
+        if isinstance(response, bytes):
+            response = response.decode(errors="replace")
+        return f"{code} {response}".strip()
+    return str(reason)
 
 
 def _warn(message) -> None:

@@ -49,7 +49,7 @@ whereas the other markers stay in-scope only for the three shipped surfaces abov
 ## Acceptance criteria
 
 ### §S1
-- [ ] `git grep -nE "new\.book1604|antojk@gmail|antojk@anthilllabs|Antony John" -- 'skills/*' 'tests/*'` returns **zero** matches outside the guard's own marker-definition line(s).
+- [ ] `git grep -nE "new\.book1604|antojk|anthilllabs|Antony John" -- 'skills/*' 'tests/*'` returns **zero** matches outside the guard's own marker-definition line(s). (The alternation is exactly the guard's `_REAL_PERSONAL_MARKERS` set plus the display name — bare local-parts and domains, so no criterion here spells out a real address.)
 - [ ] `skills/vidushi-oa/SKILL.md` names only fictitious example addresses (no `antojk@…`); its subscription/business guidance still reads sensibly with the placeholders.
 - [ ] The affected test suites still pass unchanged in behaviour with the substituted fixtures.
 

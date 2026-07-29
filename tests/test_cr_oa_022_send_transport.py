@@ -133,9 +133,13 @@ class FakeSMTP:
 
     `sendmail_error`/`quit_error`, when set, are raised instead — a submission that
     fails must still close its connection, and a `QUIT` that fails must not turn a
-    delivered message into an error."""
+    delivered message into an error.
 
-    def __init__(self, sendmail_error=None, quit_error=None):
+    `refused` is the per-recipient refusal dict `sendmail` RETURNS (never raises)
+    when the server accepted some `RCPT TO`s and refused others — a real partial
+    delivery, which `smtplib` reports only through this return value."""
+
+    def __init__(self, sendmail_error=None, quit_error=None, refused=None):
         self.ehlo_calls = []
         self.starttls_calls = []
         self.login_calls = []
@@ -145,6 +149,7 @@ class FakeSMTP:
         self.commands = []
         self.sendmail_error = sendmail_error
         self.quit_error = quit_error
+        self.refused = refused or {}
         self._greeted = False
 
     def _require_greeting(self, command):
@@ -185,7 +190,7 @@ class FakeSMTP:
             raise self.sendmail_error
         self.sendmail_calls.append((from_addr, to_addrs, msg))
         self.commands.append("sendmail")
-        return {}
+        return dict(self.refused)
 
     def quit(self):
         self.quit_calls += 1
@@ -631,6 +636,82 @@ class ImapSendDraftClosesTheSubmissionConnectionTest(unittest.TestCase):
         self.assertTrue(message_id)
         self.assertEqual([c[0] for c in fake_imap.append_calls], ["Sent"],
                          "the post-delivery bookkeeping must still run")
+
+
+class ImapSendDraftPartialRecipientRefusalTest(unittest.TestCase):
+    """A submission the server accepted for SOME recipients only is a FAILURE.
+
+    `smtplib.sendmail` raises `SMTPRecipientsRefused` only when EVERY `RCPT TO` was
+    refused; with at least one acceptance it returns the refusal dict and raises
+    nothing. Ignoring that return value reports a partial delivery as a clean send
+    AND destroys the Drafts copy the user would have re-sent after fixing the bad
+    address — while `cmd_mail_send` goes on to record the correspondence and resolve
+    the linked case's OPEN action for recipients who never received anything."""
+
+    def _yahoo(self, fake):
+        factory, _ = _make_conn_factory(fake)
+        return YahooImapAdapter(
+            account="yahoo_main", source_tag="[YH]", host="imap.mail.yahoo.com",
+            user="me@yahoo.com", password="app-pw", conn_factory=factory,
+        )
+
+    def _draft_bytes(self):
+        return compose(from_addr="me@yahoo.com", to="support@example.com",
+                       subject="Return request", body="Requesting an RMA.",
+                       cc="typo@example.com")
+
+    def _refusal(self):
+        return {"typo@example.com": (550, b"5.1.1 unknown user")}
+
+    def _send(self, adapter, fake_smtp):
+        with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=fake_smtp):
+            with self.assertRaises(RuntimeError) as ctx:
+                adapter.send_draft("901")
+        return ctx.exception
+
+    def test_a_partially_refused_submission_is_a_structured_error(self):
+        fake_smtp = FakeSMTP(refused=self._refusal())
+        adapter = self._yahoo(FakeImapConn(fetch_body=self._draft_bytes()))
+
+        error = self._send(adapter, fake_smtp)
+
+        self.assertIn("typo@example.com", str(error),
+                      f"the refused recipient must be named: {error}")
+        self.assertIn("550", str(error),
+                      f"the server's refusal reason must be carried: {error}")
+
+    def test_a_partially_refused_submission_keeps_the_drafts_copy(self):
+        fake_smtp = FakeSMTP(refused=self._refusal())
+        fake_imap = FakeImapConn(fetch_body=self._draft_bytes())
+
+        self._send(self._yahoo(fake_imap), fake_smtp)
+
+        self.assertEqual(fake_imap.append_calls, [],
+                         "no Sent copy may be filed for a partial delivery")
+        self.assertEqual([c for c in fake_imap.uid_calls if c[0] != "FETCH"], [],
+                         "the Drafts copy must be neither de-flagged nor expunged "
+                         f"after a partial refusal; got {fake_imap.uid_calls!r}")
+
+    def test_a_partially_refused_submission_still_closes_the_connection(self):
+        fake_smtp = FakeSMTP(refused=self._refusal())
+
+        self._send(self._yahoo(FakeImapConn(fetch_body=self._draft_bytes())),
+                   fake_smtp)
+
+        self.assertEqual(fake_smtp.quit_calls, 1,
+                         "a partial refusal must not leak its TLS socket")
+
+    def test_a_fully_accepted_submission_is_unaffected(self):
+        fake_smtp = FakeSMTP()
+        fake_imap = FakeImapConn(fetch_body=self._draft_bytes())
+        adapter = self._yahoo(fake_imap)
+
+        with patch("vidushi_oa.mail.imap.smtplib.SMTP", return_value=fake_smtp):
+            message_id = adapter.send_draft("901")
+
+        self.assertTrue(message_id)
+        self.assertEqual([c[0] for c in fake_imap.append_calls], ["Sent"],
+                         "an empty refusal dict must still file the Sent copy")
 
 
 class ImapSendDraftFilesTheSentCopyTest(unittest.TestCase):
